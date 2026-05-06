@@ -1,0 +1,76 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.os.name }}
+    runs-on: ${{ matrix.os.runs-on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - { name: linux-amd64,    runs-on: ubuntu-latest, ext: '',    target: cetic }
+          - { name: linux-arm64,    runs-on: ubuntu-24.04-arm, ext: '', target: cetic }
+          - { name: darwin-amd64,   runs-on: macos-13, ext: '',         target: cetic }
+          - { name: darwin-arm64,   runs-on: macos-14, ext: '',         target: cetic }
+          - { name: windows-amd64,  runs-on: windows-latest, ext: .exe, target: cetic }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Build PyInstaller binary
+        run: pyinstaller --clean --noconfirm cetic.spec
+
+      - name: Rename binary
+        shell: bash
+        run: mv "dist/${{ matrix.os.target }}${{ matrix.os.ext }}" "dist/cetic-${{ matrix.os.name }}${{ matrix.os.ext }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cetic-${{ matrix.os.name }}
+          path: dist/cetic-${{ matrix.os.name }}*
+          if-no-files-found: error
+
+  release:
+    name: Publish Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum cetic-* > SHA256SUMS
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/cetic-*
+            dist/SHA256SUMS
+          generate_release_notes: true
+          draft: false
+          prerelease: false
