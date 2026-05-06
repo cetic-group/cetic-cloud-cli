@@ -18,8 +18,7 @@ jobs:
         os:
           - { name: linux-amd64,    runs-on: ubuntu-latest, ext: '',    target: cetic }
           - { name: linux-arm64,    runs-on: ubuntu-24.04-arm, ext: '', target: cetic }
-          - { name: darwin-amd64,   runs-on: macos-13, ext: '',         target: cetic }
-          - { name: darwin-arm64,   runs-on: macos-14, ext: '',         target: cetic }
+          - { name: darwin-arm64,   runs-on: macos-latest, ext: '',     target: cetic }
           - { name: windows-amd64,  runs-on: windows-latest, ext: .exe, target: cetic }
     steps:
       - uses: actions/checkout@v4
