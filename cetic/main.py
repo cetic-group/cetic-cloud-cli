@@ -41,6 +41,7 @@ from cetic.commands import (
     region,
     scale_set,
     support,
+    template,
     vm,
     volume,
     vpc,
@@ -69,6 +70,7 @@ app.add_typer(k8s.app, name="k8s")
 app.add_typer(billing.app, name="billing")
 app.add_typer(scale_set.container_app, name="scale-set")
 app.add_typer(scale_set.vm_app, name="vm-scale-set")
+app.add_typer(template.app, name="template")
 app.add_typer(api_key.app, name="api-key")
 app.add_typer(member.app, name="member")
 app.add_typer(support.app, name="support")
