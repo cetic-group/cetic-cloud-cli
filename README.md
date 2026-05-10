@@ -53,6 +53,8 @@ The CLI reads configuration from environment variables (priority over config fil
 
 Generate an API key in the CETIC Cloud console under **Settings → API Keys**, or use `cetic auth login` for interactive authentication.
 
+> **Trousseau système** : les mots de passe admin des registries de conteneurs (`cetic registry`) sont stockés dans le trousseau système via la lib `keyring` (Keychain macOS, libsecret/GNOME Keyring Linux, Credential Manager Windows). Le CLI propose la sauvegarde à la création — vous pouvez aussi répondre `n` et fournir le mot de passe au login interactif.
+
 ## Quickstart
 
 ```bash
@@ -85,6 +87,19 @@ cetic ip allocate --region RNN
 # Databases
 cetic db pg create --name app-db --plan dev
 cetic db pg credentials <id>
+
+# Container registry (CCR)
+cetic registry create -n myreg --region RNN              # default: --no-public --private
+cetic registry create -n public-reg --region RNN --public --no-private
+cetic registry update myreg --public                     # toggle Internet exposure on
+cetic registry update myreg --tags env=prod,team=core    # edit tags
+cetic registry login myreg                               # docker login via subprocess + trousseau
+cetic registry user add myreg --username ci
+cetic registry acl set myreg --user ci --repo "myapp/*" --actions pull,push
+cetic registry repos myreg --all
+cetic registry tags myreg myapp/api
+cetic registry tag delete myreg myapp/api v1.0.0 --yes
+cetic registry gc myreg --wait
 
 # Templates (custom)
 cetic template list

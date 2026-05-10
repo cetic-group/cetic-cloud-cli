@@ -9,6 +9,12 @@ Utilisation :
   cetic key add --name "dev" --file ~/.ssh/id_ed25519.pub
   cetic key list
   cetic key delete <id>
+  cetic registry create -n myreg -r RNN              # privé par défaut
+  cetic registry create -n pub -r RNN --public --no-private
+  cetic registry update myreg --public               # toggle expose à chaud
+  cetic registry login myreg
+  cetic registry repos myreg --all
+  cetic registry user add myreg --username ci
 
 Variables d'environnement :
   CCP_API_KEY    — clé API (Bearer token)
@@ -28,8 +34,6 @@ from cetic.commands import (
     billing,
     bucket,
     config_cmd,
-    quota,
-    tag,
     container,
     db,
     ip,
@@ -38,9 +42,12 @@ from cetic.commands import (
     lb,
     member,
     org,
+    quota,
     region,
+    registry,
     scale_set,
     support,
+    tag,
     template,
     vm,
     volume,
@@ -76,6 +83,7 @@ app.add_typer(member.app, name="member")
 app.add_typer(support.app, name="support")
 app.add_typer(org.app, name="org")
 app.add_typer(quota.app, name="quota")
+app.add_typer(registry.app, name="registry")
 app.add_typer(tag.app, name="tag")
 
 
