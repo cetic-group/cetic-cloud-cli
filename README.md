@@ -55,6 +55,98 @@ Generate an API key in the CETIC Cloud console under **Settings → API Keys**, 
 
 > **Trousseau système** : les mots de passe admin des registries de conteneurs (`cetic registry`) sont stockés dans le trousseau système via la lib `keyring` (Keychain macOS, libsecret/GNOME Keyring Linux, Credential Manager Windows). Le CLI propose la sauvegarde à la création — vous pouvez aussi répondre `n` et fournir le mot de passe au login interactif.
 
+### Keyring SA token (depuis v0.8.0)
+
+Les **tokens de service account** (`ccp_sa_*`) sont également stockables dans le
+trousseau système. À la création / rotation, le CLI affiche le token UNE SEULE
+FOIS et propose la sauvegarde :
+
+```bash
+cetic service-account create --name ci-pipeline --expires-in-days 365 \
+  --save-keyring                                  # stocke sans prompt
+# ou sans le flag : prompt interactif Y/n
+cetic service-account create --name ci-pipeline --expires-in-days 365
+```
+
+À la rotation, le token est remplacé dans le trousseau :
+
+```bash
+cetic service-account rotate ci-pipeline --save-keyring
+```
+
+À la révocation, l'entrée du trousseau est supprimée automatiquement
+(`cetic service-account revoke <id>`). Les service names utilisés :
+
+| Service trousseau | Famille |
+|---|---|
+| `cetic-registry` | Mots de passe admin de registry |
+| `cetic-service-account` | Tokens `ccp_sa_*` |
+
+## IAM quickstart (depuis v0.8.0)
+
+CETIC Cloud expose un système IAM AWS-style en additif du RBAC owner/admin/member/viewer.
+Cf. [docs/iam](https://docs.cloud.cetic-group.com/services/iam) pour le détail du modèle.
+
+1. **Examiner les 10 rôles built-in** (catalogue CETIC, non éditables) :
+
+   ```bash
+   cetic iam built-ins list                       # AdminAll, RegistryAdmin, BucketReader, ...
+   cetic iam roles get RegistryAdmin --reveal-policy
+   ```
+
+2. **Créer un rôle custom** depuis un fichier JSON :
+
+   ```json
+   // ci-deployer.policy.json
+   {
+     "statements": [
+       {
+         "sid": "AllowRegistryPushOnMyReg",
+         "effect": "Allow",
+         "actions": ["registry:Pull", "registry:Push"],
+         "resources": ["arn:ccp:registry:rnn:00000000-0000-0000-0000-000000000000:registry/myreg/*"]
+       }
+     ]
+   }
+   ```
+
+   ```bash
+   cetic iam roles create --name CIDeployer \
+     --policy-file ./ci-deployer.policy.json \
+     --description "Push CI vers myreg"
+   ```
+
+   Les ARN dans `resources` sont validés côté CLI **avant** l'appel API
+   (parse strict identique au backend — `apps/api/app/services/iam_arn.py`).
+
+3. **Attacher le rôle à un service account ou un membre** :
+
+   ```bash
+   cetic iam roles attach CIDeployer \
+     --principal-type service_account --principal-id ci-pipeline \
+     --expires-at 2027-01-01T00:00:00Z
+   ```
+
+   `--principal-id` accepte UUID OU nom (api_key/service_account) OU email
+   (org_member). `ccks_workload` exige un UUID.
+
+4. **Simuler une décision** avant déploiement :
+
+   ```bash
+   cetic iam simulate \
+     --action registry:Pull \
+     --resource "arn:ccp:registry:rnn:UUID:registry/myreg" \
+     --principal-type service_account --principal-id ci-pipeline
+   ```
+
+   Sortie colorée : vert (Allow), rouge (ExplicitDeny), gris (ImplicitDeny).
+
+5. **Voir mes permissions effectives** :
+
+   ```bash
+   cetic iam who-am-i --effective-permissions
+   ```
+
 ## Quickstart
 
 ```bash
@@ -87,6 +179,19 @@ cetic ip allocate --region RNN
 # Databases
 cetic db pg create --name app-db --plan dev
 cetic db pg credentials <id>
+
+# IAM Roles v1 (AWS-style, depuis v0.8.0)
+cetic iam roles list                                     # custom + built-ins
+cetic iam built-ins list                                 # 10 rôles built-in CETIC
+cetic iam roles create --name CIDeployer --policy-file ./ci-deployer.policy.json
+cetic iam roles attach CIDeployer --principal-type service_account --principal-id ci-pipeline
+cetic iam who-am-i --effective-permissions
+cetic iam simulate --action registry:Pull --resource "arn:ccp:registry:rnn:UUID:registry/myreg"
+
+# Service accounts (token ccp_sa_, distinct des API keys)
+cetic service-account create --name ci-pipeline --expires-in-days 365 --save-keyring
+cetic service-account rotate ci-pipeline --save-keyring   # nouveau token, ancien invalidé
+cetic service-account revoke ci-pipeline --yes
 
 # Container registry (CCR)
 cetic registry create -n myreg --region RNN              # default: --no-public --private

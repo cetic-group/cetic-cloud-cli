@@ -17,6 +17,7 @@ from rich.prompt import Prompt
 
 # Service names — chaque famille a son propre namespace dans le trousseau.
 SERVICE_REGISTRY = "cetic-registry"
+SERVICE_SA = "cetic-service-account"
 
 
 def _service_username(resource_id: str, username: str) -> str:
@@ -72,3 +73,47 @@ def offer_save_password(resource_id: str, username: str, password: str) -> None:
     if typer.confirm("Sauvegarder dans le trousseau système ?", default=True):
         if save_admin_password(resource_id, username, password):
             rprint("[green]✓[/green] Mot de passe enregistré dans le trousseau.")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Service Account tokens (IAM v1)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def save_sa_token(sa_id: str, token: str) -> bool:
+    """Persiste un token de Service Account dans le trousseau système."""
+    try:
+        import keyring
+
+        keyring.set_password(SERVICE_SA, sa_id, token)
+    except Exception as e:  # noqa: BLE001
+        rprint(f"[yellow]Trousseau indisponible ({e}). Token non sauvegardé.[/yellow]")
+        return False
+    return True
+
+
+def get_sa_token(sa_id: str) -> str | None:
+    """Lit le token SA stocké, ou None s'il est absent / inaccessible."""
+    try:
+        import keyring
+
+        return keyring.get_password(SERVICE_SA, sa_id)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def delete_sa_token(sa_id: str) -> None:
+    """Supprime l'entrée SA du trousseau (silencieux si absente)."""
+    try:
+        import keyring
+
+        keyring.delete_password(SERVICE_SA, sa_id)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def offer_save_sa_token(sa_id: str, token: str) -> None:
+    """Propose interactivement de sauvegarder un SA token dans le trousseau."""
+    if typer.confirm("Sauvegarder dans le trousseau système ?", default=True):
+        if save_sa_token(sa_id, token):
+            rprint("[green]✓[/green] Token enregistré dans le trousseau.")

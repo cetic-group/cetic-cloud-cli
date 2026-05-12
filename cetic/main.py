@@ -36,6 +36,7 @@ from cetic.commands import (
     config_cmd,
     container,
     db,
+    iam,
     ip,
     k8s,
     key,
@@ -46,6 +47,7 @@ from cetic.commands import (
     region,
     registry,
     scale_set,
+    service_account,
     support,
     tag,
     template,
@@ -72,11 +74,13 @@ app.add_typer(volume.app, name="volume")
 app.add_typer(bucket.app, name="bucket")
 app.add_typer(lb.app, name="lb")
 app.add_typer(ip.app, name="ip")
+app.add_typer(iam.app, name="iam")
 app.add_typer(db.app, name="db")
 app.add_typer(k8s.app, name="k8s")
 app.add_typer(billing.app, name="billing")
 app.add_typer(scale_set.container_app, name="scale-set")
 app.add_typer(scale_set.vm_app, name="vm-scale-set")
+app.add_typer(service_account.app, name="service-account")
 app.add_typer(template.app, name="template")
 app.add_typer(api_key.app, name="api-key")
 app.add_typer(member.app, name="member")
