@@ -63,11 +63,19 @@ def put(path: str, json: dict[str, Any] | None = None) -> Any:
     return resp.json() if resp.content else None
 
 
-def delete(path: str) -> None:
+def delete(path: str) -> Any:
+    """DELETE — retourne le body JSON décodé si présent (ex: bulk delete),
+    sinon None pour les 204."""
     url = config.get_api_url().rstrip("/") + path
     with httpx.Client(timeout=30) as client:
         resp = client.delete(url, headers=_headers())
     _raise_for_status(resp)
+    if resp.content:
+        try:
+            return resp.json()
+        except Exception:
+            return None
+    return None
 
 
 def _raise_for_status(resp: httpx.Response) -> None:

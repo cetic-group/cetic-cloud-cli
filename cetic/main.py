@@ -47,6 +47,7 @@ from cetic.commands import (
     region,
     registry,
     scale_set,
+    secret,
     service_account,
     support,
     tag,
@@ -80,6 +81,7 @@ app.add_typer(k8s.app, name="k8s")
 app.add_typer(billing.app, name="billing")
 app.add_typer(scale_set.container_app, name="scale-set")
 app.add_typer(scale_set.vm_app, name="vm-scale-set")
+app.add_typer(secret.app, name="secret")
 app.add_typer(service_account.app, name="service-account")
 app.add_typer(template.app, name="template")
 app.add_typer(api_key.app, name="api-key")
