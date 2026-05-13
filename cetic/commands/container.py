@@ -58,14 +58,28 @@ def create(
     template: str = typer.Option("debian-12", "--template", "-t"),
     vnet_id: str = typer.Option(..., "--vnet", help="UUID du VNet"),
     ssh_key_ids: list[str] = typer.Option(None, "--ssh-key", help="UUID(s) des clés SSH (répéter)"),
+    root_password: str = typer.Option(
+        ..., "--root-password",
+        prompt=True, hide_input=True, confirmation_prompt=True,
+        help="Mot de passe root (8 chars min). Demandé interactivement si non fourni.",
+    ),
 ) -> None:
-    """Crée un container."""
+    """Crée un container.
+
+    Le mot de passe root est obligatoire (politique CCP v1.4.0+, 8 chars min).
+    Si non fourni via `--root-password`, Typer le demande interactivement
+    (avec masquage + confirmation).
+    """
+    if len(root_password) < 8:
+        rprint("[red]Erreur : le mot de passe root doit faire au moins 8 caractères.[/red]")
+        raise typer.Exit(1)
     body = {
         "name": name,
         "region": region,
         "plan": plan,
         "template": template,
         "vnet_id": vnet_id,
+        "root_password": root_password,
     }
     if ssh_key_ids:
         body["ssh_key_ids"] = ssh_key_ids
