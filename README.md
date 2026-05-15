@@ -82,6 +82,71 @@ cetic service-account rotate ci-pipeline --save-keyring
 | `cetic-registry` | Mots de passe admin de registry |
 | `cetic-service-account` | Tokens `ccp_sa_*` |
 
+## Application Gateways (depuis v0.11.0)
+
+Service L7 distinct du Load Balancer L4 (`cetic lb`). L'AppGW route le trafic
+HTTP/HTTPS par hostname et path, gère les certificats Let's Encrypt
+automatiquement (SNI multi-domaine), et applique des politiques L7 (rate
+limit, IP allow/deny, WAF, CORS, basic auth) — tout en un seul produit.
+
+1. **Créer une gateway** (provisionne en ~3-5 min) :
+
+   ```bash
+   cetic appgw create --name web-edge --region RNN --plan small \
+     --vpc prod --vnet web-tier
+   ```
+
+2. **Ajouter un listener** (hostname + cert ACME automatique) :
+
+   ```bash
+   # Sous-domaine ccp auto (pas besoin de DNS client)
+   cetic appgw listener add web-edge \
+     --hostname web-edge-abc.app.cloud.cetic-group.com
+
+   # Domaine custom (CNAME requis vers CETIC + validation DNS-01)
+   cetic appgw listener add web-edge --hostname api.example.com --custom-domain
+   ```
+
+3. **Créer un target group + ajouter des backends** (containers, VMs, ou IPs) :
+
+   ```bash
+   cetic appgw tg create web-edge --name api-pool --algorithm leastconn
+   cetic appgw tg member add web-edge --tg-id <tg-uuid> \
+     --container <container-uuid> --port 8080
+   cetic appgw tg member add web-edge --tg-id <tg-uuid> \
+     --vm <vm-uuid> --port 3000 --weight 200
+   ```
+
+4. **Créer une route** (host implicite via listener + path + policies) :
+
+   ```bash
+   # Route simple : tout vers un target group
+   cetic appgw route create web-edge \
+     --listener-id <listener-uuid> --target-group-id <tg-uuid>
+
+   # Route path-based avec rate limit + WAF
+   cetic appgw route create web-edge \
+     --listener-id <listener-uuid> --target-group-id <api-tg-uuid> \
+     --path /api --priority 50 --rate-limit 100 --waf-preset strict
+
+   # Route avec IP allowlist (admin endpoint)
+   cetic appgw route create web-edge \
+     --listener-id <listener-uuid> --target-group-id <admin-tg-uuid> \
+     --path /admin --allow-cidr 10.0.0.0/8 --allow-cidr 192.168.1.0/24
+   ```
+
+5. **Vérifier la santé des backends** (couleurs : vert UP, rouge DOWN) :
+
+   ```bash
+   cetic appgw health web-edge
+   ```
+
+Plans disponibles : `small` (50 routes, 100 req/s), `medium` (200 routes, 1000
+req/s), `large` (1000 routes, 10000 req/s + GeoIP).
+
+> AppGW vs LB : utilisez `cetic appgw` pour HTTP/HTTPS avec routage host/path
+> et politiques L7 ; gardez `cetic lb` pour TCP/UDP brut (Postgres, gRPC, jeux).
+
 ## IAM quickstart (depuis v0.8.0)
 
 CETIC Cloud expose un système IAM AWS-style en additif du RBAC owner/admin/member/viewer.
@@ -175,6 +240,15 @@ cetic vpc list
 cetic vpc create --name prod --region RNN --cidr 10.10.0.0/16
 cetic ip list
 cetic ip allocate --region RNN
+
+# Application Gateways (L7 HTTP/HTTPS routing, depuis v0.11.0)
+cetic appgw create --name web-edge --region RNN --plan small --vpc prod --vnet web-tier
+cetic appgw listener add web-edge --hostname api.example.com --custom-domain
+cetic appgw tg create web-edge --name api-pool
+cetic appgw tg member add web-edge --tg-id <tg-uuid> --container <ct-uuid> --port 8080
+cetic appgw route create web-edge --listener-id <lst-uuid> --target-group-id <tg-uuid> \
+  --path /api --rate-limit 100 --waf-preset strict
+cetic appgw health web-edge                                  # UP/DOWN par backend
 
 # Databases
 cetic db pg create --name app-db --plan dev

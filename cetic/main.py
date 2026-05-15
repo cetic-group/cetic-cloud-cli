@@ -30,6 +30,7 @@ from rich import print as rprint
 from cetic import __version__
 from cetic.commands import (
     api_key,
+    appgw,
     auth,
     billing,
     bucket,
@@ -74,6 +75,7 @@ app.add_typer(vpc.app, name="vpc")
 app.add_typer(volume.app, name="volume")
 app.add_typer(bucket.app, name="bucket")
 app.add_typer(lb.app, name="lb")
+app.add_typer(appgw.app, name="appgw")
 app.add_typer(ip.app, name="ip")
 app.add_typer(iam.app, name="iam")
 app.add_typer(db.app, name="db")
