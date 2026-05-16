@@ -966,6 +966,449 @@ def test_route_delete_404(runner, mock_api):
 
 
 # ---------------------------------------------------------------------------
+# Sub-app : tg update (v0.12.0)
+# ---------------------------------------------------------------------------
+
+
+def test_tg_update_renames(runner, mock_api):
+    captured: dict[str, Any] = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={"id": TG_ID, "name": "api-pool-v2", "algorithm": "leastconn"},
+        )
+
+    mock_api.patch(f"/v1/app-gateways/{GW_ID}/target-groups/{TG_ID}").mock(
+        side_effect=_capture
+    )
+    result = runner.invoke(
+        app,
+        [
+            "appgw", "tg", "update", GW_ID,
+            "--tg-id", TG_ID,
+            "--name", "api-pool-v2",
+            "--algorithm", "leastconn",
+        ],
+    )
+    assert result.exit_code == 0, result.stdout
+    assert captured["body"] == {"name": "api-pool-v2", "algorithm": "leastconn"}
+
+
+def test_tg_update_health_check_fields(runner, mock_api):
+    captured: dict[str, Any] = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"id": TG_ID})
+
+    mock_api.patch(f"/v1/app-gateways/{GW_ID}/target-groups/{TG_ID}").mock(
+        side_effect=_capture
+    )
+    result = runner.invoke(
+        app,
+        [
+            "appgw", "tg", "update", GW_ID,
+            "--tg-id", TG_ID,
+            "--hc-protocol", "https",
+            "--hc-method", "get",
+            "--hc-path", "/health",
+            "--hc-expect-status", "204",
+            "--hc-interval-sec", "10",
+            "--hc-timeout-sec", "5",
+            "--hc-healthy-threshold", "3",
+            "--hc-unhealthy-threshold", "5",
+        ],
+    )
+    assert result.exit_code == 0, result.stdout
+    assert captured["body"] == {
+        "hc_protocol": "https",
+        "hc_method": "GET",
+        "hc_path": "/health",
+        "hc_expect_status": 204,
+        "hc_interval_sec": 10,
+        "hc_timeout_sec": 5,
+        "hc_healthy_threshold": 3,
+        "hc_unhealthy_threshold": 5,
+    }
+
+
+def test_tg_update_no_fields_fails(runner, mock_api):
+    result = runner.invoke(
+        app,
+        ["appgw", "tg", "update", GW_ID, "--tg-id", TG_ID],
+    )
+    assert result.exit_code == 1
+    assert "aucun champ" in result.stdout.lower()
+
+
+def test_tg_update_invalid_algorithm_fails(runner, mock_api):
+    result = runner.invoke(
+        app,
+        [
+            "appgw", "tg", "update", GW_ID,
+            "--tg-id", TG_ID,
+            "--algorithm", "random",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "Algorithme invalide" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# Sub-app : listener get (v0.12.0)
+# ---------------------------------------------------------------------------
+
+
+def test_listener_get_found(runner, mock_api):
+    mock_api.get(f"/v1/app-gateways/{GW_ID}/listeners").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "id": LISTENER_ID,
+                    "hostname": "api.example.com",
+                    "acme_status": "issued",
+                    "custom_domain": True,
+                },
+                {
+                    "id": "22" * 16,
+                    "hostname": "admin.example.com",
+                    "acme_status": "pending",
+                },
+            ],
+        )
+    )
+    result = runner.invoke(
+        app,
+        ["appgw", "listener", "get", GW_ID, "--listener-id", LISTENER_ID],
+    )
+    assert result.exit_code == 0, result.stdout
+    assert "api.example.com" in result.stdout
+
+
+def test_listener_get_not_found(runner, mock_api):
+    mock_api.get(f"/v1/app-gateways/{GW_ID}/listeners").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    result = runner.invoke(
+        app,
+        ["appgw", "listener", "get", GW_ID, "--listener-id", LISTENER_ID],
+    )
+    assert result.exit_code == 1
+    assert "aucun listener" in result.stdout.lower()
+
+
+# ---------------------------------------------------------------------------
+# Sub-app : route create avec basic auth (v0.12.0)
+# ---------------------------------------------------------------------------
+
+
+def test_route_create_with_basic_auth(runner, mock_api):
+    captured: dict[str, Any] = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            201,
+            json={
+                "id": ROUTE_ID,
+                "basic_auth_secret_ref": "secret/appgw/route-xyz",
+            },
+        )
+
+    mock_api.post(f"/v1/app-gateways/{GW_ID}/routes").mock(side_effect=_capture)
+    result = runner.invoke(
+        app,
+        [
+            "appgw", "route", "create", GW_ID,
+            "--listener-id", LISTENER_ID,
+            "--target-group-id", TG_ID,
+            "--basic-auth-user", "alice:s3cret",
+            "--basic-auth-user", "bob:hunter2",
+        ],
+    )
+    assert result.exit_code == 0, result.stdout
+    assert captured["body"]["basic_auth_users"] == [
+        {"user": "alice", "password": "s3cret"},
+        {"user": "bob", "password": "hunter2"},
+    ]
+
+
+def test_route_create_basic_auth_password_with_colon(runner, mock_api):
+    """Le séparateur est le PREMIER `:` — pwd peut contenir des `:`."""
+    captured: dict[str, Any] = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(201, json={"id": ROUTE_ID})
+
+    mock_api.post(f"/v1/app-gateways/{GW_ID}/routes").mock(side_effect=_capture)
+    result = runner.invoke(
+        app,
+        [
+            "appgw", "route", "create", GW_ID,
+            "--listener-id", LISTENER_ID,
+            "--target-group-id", TG_ID,
+            "--basic-auth-user", "alice:p4ss:w:rd",
+        ],
+    )
+    assert result.exit_code == 0, result.stdout
+    assert captured["body"]["basic_auth_users"] == [
+        {"user": "alice", "password": "p4ss:w:rd"},
+    ]
+
+
+def test_route_create_basic_auth_invalid_format(runner, mock_api):
+    result = runner.invoke(
+        app,
+        [
+            "appgw", "route", "create", GW_ID,
+            "--listener-id", LISTENER_ID,
+            "--target-group-id", TG_ID,
+            "--basic-auth-user", "noseparator",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "user:password" in result.stdout
+
+
+def test_route_create_basic_auth_duplicate_user(runner, mock_api):
+    result = runner.invoke(
+        app,
+        [
+            "appgw", "route", "create", GW_ID,
+            "--listener-id", LISTENER_ID,
+            "--target-group-id", TG_ID,
+            "--basic-auth-user", "alice:x",
+            "--basic-auth-user", "alice:y",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "dupliqué" in result.stdout.lower() or "duplique" in result.stdout.lower()
+
+
+# ---------------------------------------------------------------------------
+# Sub-app : route get + update (v0.12.0)
+# ---------------------------------------------------------------------------
+
+
+def test_route_get_masks_basic_auth_when_configured(runner, mock_api):
+    mock_api.get(f"/v1/app-gateways/{GW_ID}/routes").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "id": ROUTE_ID,
+                    "priority": 100,
+                    "path_match": "/admin",
+                    "basic_auth_secret_ref": "secret/appgw/admin",
+                    "waf_preset": "strict",
+                }
+            ],
+        )
+    )
+    result = runner.invoke(
+        app,
+        ["appgw", "route", "get", GW_ID, "--route-id", ROUTE_ID],
+    )
+    assert result.exit_code == 0, result.stdout
+    assert "configuré" in result.stdout
+    # Le secret_ref brut ne doit pas être affiché.
+    assert "secret/appgw/admin" not in result.stdout
+
+
+def test_route_get_basic_auth_disabled(runner, mock_api):
+    mock_api.get(f"/v1/app-gateways/{GW_ID}/routes").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "id": ROUTE_ID,
+                    "priority": 100,
+                    "path_match": "/api",
+                    "basic_auth_secret_ref": None,
+                    "waf_preset": "off",
+                }
+            ],
+        )
+    )
+    result = runner.invoke(
+        app,
+        ["appgw", "route", "get", GW_ID, "--route-id", ROUTE_ID],
+    )
+    assert result.exit_code == 0, result.stdout
+    assert "désactivé" in result.stdout
+
+
+def test_route_get_not_found(runner, mock_api):
+    mock_api.get(f"/v1/app-gateways/{GW_ID}/routes").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    result = runner.invoke(
+        app,
+        ["appgw", "route", "get", GW_ID, "--route-id", ROUTE_ID],
+    )
+    assert result.exit_code == 1
+    assert "aucune route" in result.stdout.lower()
+
+
+def test_route_update_priority_only(runner, mock_api):
+    captured: dict[str, Any] = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"id": ROUTE_ID, "priority": 200})
+
+    mock_api.patch(f"/v1/app-gateways/{GW_ID}/routes/{ROUTE_ID}").mock(
+        side_effect=_capture
+    )
+    result = runner.invoke(
+        app,
+        [
+            "appgw", "route", "update", GW_ID,
+            "--route-id", ROUTE_ID,
+            "--priority", "200",
+        ],
+    )
+    assert result.exit_code == 0, result.stdout
+    assert captured["body"] == {"priority": 200}
+
+
+def test_route_update_basic_auth_enable(runner, mock_api):
+    captured: dict[str, Any] = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"id": ROUTE_ID})
+
+    mock_api.patch(f"/v1/app-gateways/{GW_ID}/routes/{ROUTE_ID}").mock(
+        side_effect=_capture
+    )
+    result = runner.invoke(
+        app,
+        [
+            "appgw", "route", "update", GW_ID,
+            "--route-id", ROUTE_ID,
+            "--basic-auth-user", "alice:newpwd",
+            "--basic-auth-user", "bob:newpwd",
+        ],
+    )
+    assert result.exit_code == 0, result.stdout
+    assert captured["body"]["basic_auth_users"] == [
+        {"user": "alice", "password": "newpwd"},
+        {"user": "bob", "password": "newpwd"},
+    ]
+    # En mode enable on n'envoie PAS basic_auth_secret_ref.
+    assert "basic_auth_secret_ref" not in captured["body"]
+
+
+def test_route_update_basic_auth_disable(runner, mock_api):
+    captured: dict[str, Any] = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"id": ROUTE_ID})
+
+    mock_api.patch(f"/v1/app-gateways/{GW_ID}/routes/{ROUTE_ID}").mock(
+        side_effect=_capture
+    )
+    result = runner.invoke(
+        app,
+        [
+            "appgw", "route", "update", GW_ID,
+            "--route-id", ROUTE_ID,
+            "--no-basic-auth",
+        ],
+    )
+    assert result.exit_code == 0, result.stdout
+    assert captured["body"] == {"basic_auth_secret_ref": None}
+
+
+def test_route_update_basic_auth_conflicting_flags(runner, mock_api):
+    result = runner.invoke(
+        app,
+        [
+            "appgw", "route", "update", GW_ID,
+            "--route-id", ROUTE_ID,
+            "--basic-auth-user", "alice:x",
+            "--no-basic-auth",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "incompatibles" in result.stdout
+
+
+def test_route_update_no_fields_fails(runner, mock_api):
+    result = runner.invoke(
+        app,
+        ["appgw", "route", "update", GW_ID, "--route-id", ROUTE_ID],
+    )
+    assert result.exit_code == 1
+    assert "aucun champ" in result.stdout.lower()
+
+
+# ---------------------------------------------------------------------------
+# acme-providers (v0.12.0)
+# ---------------------------------------------------------------------------
+
+
+def test_acme_providers_list_of_dicts(runner, mock_api):
+    mock_api.get("/v1/app-gateways/acme/dns-providers").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "name": "ionos",
+                    "label": "IONOS",
+                    "required_credentials": ["IONOS_API_KEY"],
+                },
+                {
+                    "name": "ovh",
+                    "label": "OVHcloud",
+                    "required_credentials": [
+                        "OVH_APPLICATION_KEY",
+                        "OVH_APPLICATION_SECRET",
+                        "OVH_CONSUMER_KEY",
+                    ],
+                },
+            ],
+        )
+    )
+    result = runner.invoke(app, ["appgw", "acme-providers"])
+    assert result.exit_code == 0, result.stdout
+    assert "ionos" in result.stdout
+    assert "OVHcloud" in result.stdout
+    assert "Providers DNS-01 disponibles (2)" in result.stdout
+
+
+def test_acme_providers_envelope_form(runner, mock_api):
+    mock_api.get("/v1/app-gateways/acme/dns-providers").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "providers": [
+                    {"name": "cloudflare", "label": "Cloudflare"},
+                ]
+            },
+        )
+    )
+    result = runner.invoke(app, ["appgw", "acme-providers"])
+    assert result.exit_code == 0, result.stdout
+    assert "cloudflare" in result.stdout
+
+
+def test_acme_providers_500(runner, mock_api):
+    mock_api.get("/v1/app-gateways/acme/dns-providers").mock(
+        return_value=httpx.Response(500, json={"detail": "boom"})
+    )
+    result = runner.invoke(app, ["appgw", "acme-providers"])
+    assert result.exit_code == 1
+    assert "Erreur serveur" in result.stdout
+
+
+# ---------------------------------------------------------------------------
 # Garde-fous : branding + structure
 # ---------------------------------------------------------------------------
 
@@ -984,7 +1427,13 @@ def test_no_legacy_brand_terminology():
 
 
 def test_appgw_app_command_count():
-    """v0.11.0 : 7 top-level + 4 listener + 3 tg + 2 tg member + 3 route = 19 commandes.
+    """v0.12.0 : 8 top-level + 5 listener + 4 tg + 2 tg member + 5 route = 24 commandes.
+
+    v0.11.0 → v0.12.0 ajoute :
+    - top-level : `acme-providers`
+    - listener  : `get`
+    - tg        : `update`
+    - route     : `get`, `update`
 
     Note : Typer stocke `c.name=None` quand `@app.command()` est utilisé sans
     paramètre `name=...`. Dans ce cas le nom CLI dérive de la fonction.
@@ -995,24 +1444,31 @@ def test_appgw_app_command_count():
         return {c.name or c.callback.__name__.replace("_", "-") for c in commands}
 
     top_level = _names(appgw.app.registered_commands)
-    # list, get, create, delete, attach-ip, detach-ip, health
-    assert len(top_level) == 7, top_level
-    for expected in ("list", "get", "create", "delete", "attach-ip", "detach-ip", "health"):
+    # list, get, create, delete, attach-ip, detach-ip, health, acme-providers
+    assert len(top_level) == 8, top_level
+    for expected in (
+        "list", "get", "create", "delete",
+        "attach-ip", "detach-ip", "health", "acme-providers",
+    ):
         assert expected in top_level, f"{expected} manquant dans {top_level}"
 
     listener_cmds = _names(appgw.listener_app.registered_commands)
-    assert len(listener_cmds) == 4, listener_cmds  # add, list, delete, renew-cert
-    for expected in ("add", "list", "delete", "renew-cert"):
+    assert len(listener_cmds) == 5, listener_cmds  # add, get, list, delete, renew-cert
+    for expected in ("add", "get", "list", "delete", "renew-cert"):
         assert expected in listener_cmds, f"listener {expected} manquant"
 
     tg_cmds = _names(appgw.tg_app.registered_commands)
-    assert len(tg_cmds) == 3, tg_cmds  # create, list, delete
+    assert len(tg_cmds) == 4, tg_cmds  # create, list, update, delete
+    for expected in ("create", "list", "update", "delete"):
+        assert expected in tg_cmds, f"tg {expected} manquant"
 
     tg_member_cmds = _names(appgw.tg_member_app.registered_commands)
     assert len(tg_member_cmds) == 2, tg_member_cmds  # add, remove
 
     route_cmds = _names(appgw.route_app.registered_commands)
-    assert len(route_cmds) == 3, route_cmds  # create, list, delete
+    assert len(route_cmds) == 5, route_cmds  # create, get, list, update, delete
+    for expected in ("create", "get", "list", "update", "delete"):
+        assert expected in route_cmds, f"route {expected} manquant"
 
     total = (
         len(top_level)
@@ -1021,7 +1477,7 @@ def test_appgw_app_command_count():
         + len(tg_member_cmds)
         + len(route_cmds)
     )
-    assert total == 19
+    assert total == 24
 
 
 def test_format_api_error_messages():

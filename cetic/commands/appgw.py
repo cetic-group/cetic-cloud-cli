@@ -388,6 +388,45 @@ def listener_list(
     )
 
 
+@listener_app.command(name="get")
+def listener_get(
+    id_or_name: str = typer.Argument(..., metavar="GW_ID|GW_NAME"),
+    listener_id: str = typer.Option(..., "--listener-id", help="UUID du listener"),
+) -> None:
+    """Affiche les détails d'un listener (recherche locale dans la liste).
+
+    Le backend ne propose pas de GET singleton pour les listeners ; cette
+    commande liste la gateway puis filtre côté client par UUID (préfixe
+    accepté également, si le préfixe est unique).
+    """
+    gid = _resolve_appgw(id_or_name)
+    try:
+        items = client.get(f"{APPGW_PATH}/{gid}/listeners")
+    except client.APIError as e:
+        raise _bail(e) from e
+    matches = [
+        item for item in items
+        if item.get("id") == listener_id
+        or (item.get("id") or "").startswith(listener_id)
+    ]
+    if not matches:
+        rprint(
+            f"[red]Erreur : aucun listener {listener_id} sur cette gateway.[/red]"
+        )
+        raise typer.Exit(1)
+    if len(matches) > 1:
+        rprint(
+            f"[red]Erreur : préfixe {listener_id} ambigu "
+            f"({len(matches)} listeners correspondent).[/red]"
+        )
+        raise typer.Exit(1)
+    listener = matches[0]
+    render_one(
+        listener,
+        title=f"Listener {listener.get('hostname', listener['id'])}",
+    )
+
+
 @listener_app.command(name="delete")
 def listener_delete(
     id_or_name: str = typer.Argument(..., metavar="GW_ID|GW_NAME"),
@@ -506,6 +545,141 @@ def tg_delete(
     rprint("[green]✓[/green] Target group supprimé.")
 
 
+_TG_ALGORITHMS = {"roundrobin", "leastconn", "source"}
+_TG_HC_PROTOCOLS = {"http", "https", "tcp"}
+_TG_HC_METHODS = {"GET", "HEAD", "POST"}
+
+
+@tg_app.command(name="update")
+def tg_update(
+    id_or_name: str = typer.Argument(..., metavar="GW_ID|GW_NAME"),
+    tg_id: str = typer.Option(..., "--tg-id", help="UUID du target group"),
+    name: str | None = typer.Option(
+        None, "--name", help="Nouveau nom du target group (slug)"
+    ),
+    algorithm: str | None = typer.Option(
+        None, "--algorithm",
+        help="Algorithme de répartition : roundrobin / leastconn / source",
+    ),
+    hc_protocol: str | None = typer.Option(
+        None, "--hc-protocol",
+        help="Protocole de health check : http / https / tcp",
+    ),
+    hc_method: str | None = typer.Option(
+        None, "--hc-method",
+        help="Méthode HTTP de health check : GET / HEAD / POST",
+    ),
+    hc_path: str | None = typer.Option(
+        None, "--hc-path", help="Chemin de health check (ex: /health)"
+    ),
+    hc_expect_status: int | None = typer.Option(
+        None, "--hc-expect-status",
+        help="Code HTTP attendu pour considérer le backend UP (100-599)",
+    ),
+    hc_interval_sec: int | None = typer.Option(
+        None, "--hc-interval-sec",
+        help="Intervalle entre deux checks, en secondes (1-300)",
+    ),
+    hc_timeout_sec: int | None = typer.Option(
+        None, "--hc-timeout-sec",
+        help="Timeout d'un check, en secondes (1-60)",
+    ),
+    hc_healthy_threshold: int | None = typer.Option(
+        None, "--hc-healthy-threshold",
+        help="Nombre de checks OK consécutifs avant UP (1-10)",
+    ),
+    hc_unhealthy_threshold: int | None = typer.Option(
+        None, "--hc-unhealthy-threshold",
+        help="Nombre de checks KO consécutifs avant DOWN (1-10)",
+    ),
+) -> None:
+    """Met à jour un target group (PATCH partiel, seuls les champs fournis sont modifiés).
+
+    Exemples :
+      # Renommer + changer l'algorithme
+      cetic appgw tg update web-edge --tg-id <tg-uuid> \\
+        --name api-pool-v2 --algorithm leastconn
+
+      # Affiner le health check
+      cetic appgw tg update web-edge --tg-id <tg-uuid> \\
+        --hc-path /health --hc-interval-sec 10 --hc-healthy-threshold 3
+    """
+    if algorithm is not None and algorithm not in _TG_ALGORITHMS:
+        rprint(
+            f"[red]Algorithme invalide '{algorithm}'. "
+            f"Valeurs attendues : {', '.join(sorted(_TG_ALGORITHMS))}.[/red]"
+        )
+        raise typer.Exit(1)
+    if hc_protocol is not None and hc_protocol not in _TG_HC_PROTOCOLS:
+        rprint(
+            f"[red]Protocole de health check invalide '{hc_protocol}'. "
+            f"Valeurs attendues : {', '.join(sorted(_TG_HC_PROTOCOLS))}.[/red]"
+        )
+        raise typer.Exit(1)
+    if hc_method is not None and hc_method.upper() not in _TG_HC_METHODS:
+        rprint(
+            f"[red]Méthode HTTP de health check invalide '{hc_method}'. "
+            f"Valeurs attendues : {', '.join(sorted(_TG_HC_METHODS))}.[/red]"
+        )
+        raise typer.Exit(1)
+    if hc_expect_status is not None and (hc_expect_status < 100 or hc_expect_status > 599):
+        rprint("[red]Erreur : --hc-expect-status doit être compris entre 100 et 599.[/red]")
+        raise typer.Exit(1)
+    if hc_interval_sec is not None and (hc_interval_sec < 1 or hc_interval_sec > 300):
+        rprint("[red]Erreur : --hc-interval-sec doit être compris entre 1 et 300.[/red]")
+        raise typer.Exit(1)
+    if hc_timeout_sec is not None and (hc_timeout_sec < 1 or hc_timeout_sec > 60):
+        rprint("[red]Erreur : --hc-timeout-sec doit être compris entre 1 et 60.[/red]")
+        raise typer.Exit(1)
+    if hc_healthy_threshold is not None and (hc_healthy_threshold < 1 or hc_healthy_threshold > 10):
+        rprint("[red]Erreur : --hc-healthy-threshold doit être compris entre 1 et 10.[/red]")
+        raise typer.Exit(1)
+    if hc_unhealthy_threshold is not None and (
+        hc_unhealthy_threshold < 1 or hc_unhealthy_threshold > 10
+    ):
+        rprint("[red]Erreur : --hc-unhealthy-threshold doit être compris entre 1 et 10.[/red]")
+        raise typer.Exit(1)
+
+    body: dict[str, Any] = {}
+    if name is not None:
+        body["name"] = name
+    if algorithm is not None:
+        body["algorithm"] = algorithm
+    if hc_protocol is not None:
+        body["hc_protocol"] = hc_protocol
+    if hc_method is not None:
+        body["hc_method"] = hc_method.upper()
+    if hc_path is not None:
+        body["hc_path"] = hc_path
+    if hc_expect_status is not None:
+        body["hc_expect_status"] = hc_expect_status
+    if hc_interval_sec is not None:
+        body["hc_interval_sec"] = hc_interval_sec
+    if hc_timeout_sec is not None:
+        body["hc_timeout_sec"] = hc_timeout_sec
+    if hc_healthy_threshold is not None:
+        body["hc_healthy_threshold"] = hc_healthy_threshold
+    if hc_unhealthy_threshold is not None:
+        body["hc_unhealthy_threshold"] = hc_unhealthy_threshold
+
+    if not body:
+        rprint(
+            "[red]Erreur : aucun champ à modifier. "
+            "Fournissez au moins une option (--name, --algorithm, --hc-*).[/red]"
+        )
+        raise typer.Exit(1)
+
+    gid = _resolve_appgw(id_or_name)
+    try:
+        tg = client.patch(f"{APPGW_PATH}/{gid}/target-groups/{tg_id}", json=body)
+    except client.APIError as e:
+        raise _bail(e) from e
+    rprint(
+        f"[green]✓[/green] Target group mis à jour : "
+        f"[bold]{(tg or {}).get('id', tg_id)}[/bold]"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Sub-app : tg member (members d'un target group)
 # ---------------------------------------------------------------------------
@@ -606,6 +780,52 @@ def tg_member_remove(
 _WAF_PRESETS = {"off", "permissive", "strict"}
 
 
+def _parse_basic_auth_users(entries: list[str]) -> list[dict[str, str]]:
+    """Parse les `--basic-auth-user user:password` en liste de dicts.
+
+    Le séparateur est le PREMIER `:` (les passwords peuvent contenir des `:`).
+    Lève typer.Exit(1) si une entrée est mal formée ou si un nom est dupliqué.
+    """
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for raw in entries:
+        if ":" not in raw:
+            rprint(
+                f"[red]Erreur : --basic-auth-user '{raw}' doit être au format "
+                "user:password.[/red]"
+            )
+            raise typer.Exit(1)
+        user, password = raw.split(":", 1)
+        user = user.strip()
+        if not user or not password:
+            rprint(
+                f"[red]Erreur : --basic-auth-user '{raw}' : user et password "
+                "sont obligatoires (format user:password).[/red]"
+            )
+            raise typer.Exit(1)
+        if len(user) > 64:
+            rprint(
+                f"[red]Erreur : nom d'utilisateur '{user}' trop long "
+                "(max 64 caractères).[/red]"
+            )
+            raise typer.Exit(1)
+        if len(password) > 128:
+            rprint(
+                f"[red]Erreur : mot de passe de l'utilisateur '{user}' trop long "
+                "(max 128 caractères).[/red]"
+            )
+            raise typer.Exit(1)
+        if user in seen:
+            rprint(
+                f"[red]Erreur : utilisateur '{user}' dupliqué dans "
+                "--basic-auth-user.[/red]"
+            )
+            raise typer.Exit(1)
+        seen.add(user)
+        out.append({"user": user, "password": password})
+    return out
+
+
 @route_app.command(name="create")
 def route_create(
     id_or_name: str = typer.Argument(..., metavar="GW_ID|GW_NAME"),
@@ -637,6 +857,14 @@ def route_create(
         "off", "--waf-preset",
         help="Preset WAF : off / permissive / strict",
     ),
+    basic_auth_user: list[str] = typer.Option(
+        [], "--basic-auth-user",
+        help=(
+            "Active basic auth pour cette route. Format user:password (répétable). "
+            "Les mots de passe sont hashés bcrypt + chiffrés côté serveur — "
+            "ils ne sont jamais retournés en lecture."
+        ),
+    ),
 ) -> None:
     """Crée une route (condition host+path → target group + policies L7).
 
@@ -654,6 +882,13 @@ def route_create(
       cetic appgw route create web-edge \\
         --listener-id <listener-uuid> --target-group-id <admin-tg-uuid> \\
         --path /admin --allow-cidr 10.0.0.0/8 --allow-cidr 192.168.1.0/24
+
+      # Route protégée par basic auth (2 utilisateurs)
+      cetic appgw route create web-edge \\
+        --listener-id <listener-uuid> --target-group-id <admin-tg-uuid> \\
+        --path /admin \\
+        --basic-auth-user alice:s3cret \\
+        --basic-auth-user bob:hunter2
     """
     if waf_preset not in _WAF_PRESETS:
         rprint(
@@ -661,6 +896,7 @@ def route_create(
             f"Valeurs attendues : {', '.join(sorted(_WAF_PRESETS))}.[/red]"
         )
         raise typer.Exit(1)
+    basic_auth_users = _parse_basic_auth_users(list(basic_auth_user))
     gid = _resolve_appgw(id_or_name)
     body: dict[str, Any] = {
         "listener_id": listener_id,
@@ -676,6 +912,8 @@ def route_create(
         body["allow_cidrs"] = list(allow_cidr)
     if deny_cidr:
         body["deny_cidrs"] = list(deny_cidr)
+    if basic_auth_users:
+        body["basic_auth_users"] = basic_auth_users
     try:
         route = client.post(f"{APPGW_PATH}/{gid}/routes", json=body)
     except client.APIError as e:
@@ -725,6 +963,184 @@ def route_list(
     )
 
 
+@route_app.command(name="get")
+def route_get(
+    id_or_name: str = typer.Argument(..., metavar="GW_ID|GW_NAME"),
+    route_id: str = typer.Option(..., "--route-id", help="UUID de la route"),
+) -> None:
+    """Affiche les détails d'une route (recherche locale dans la liste).
+
+    Pour la sortie table, le statut basic auth est résumé en
+    « configuré (N utilisateurs) » à partir de `basic_auth_secret_ref` ;
+    les credentials individuels ne sont JAMAIS retournés par le backend.
+    """
+    gid = _resolve_appgw(id_or_name)
+    try:
+        items = client.get(f"{APPGW_PATH}/{gid}/routes")
+    except client.APIError as e:
+        raise _bail(e) from e
+    matches = [
+        r for r in items
+        if r.get("id") == route_id
+        or (r.get("id") or "").startswith(route_id)
+    ]
+    if not matches:
+        rprint(f"[red]Erreur : aucune route {route_id} sur cette gateway.[/red]")
+        raise typer.Exit(1)
+    if len(matches) > 1:
+        rprint(
+            f"[red]Erreur : préfixe {route_id} ambigu "
+            f"({len(matches)} routes correspondent).[/red]"
+        )
+        raise typer.Exit(1)
+    route = matches[0]
+
+    # Masquer la présence/absence d'un secret basic auth derrière un libellé
+    # lisible. On ne touche au champ qu'en sortie table — json/yaml gardent la
+    # forme brute (basic_auth_secret_ref string ou null, comme le backend).
+    display = dict(route)
+    secret_ref = route.get("basic_auth_secret_ref")
+    if secret_ref:
+        display["basic_auth"] = "configuré (credentials masqués côté serveur)"
+    else:
+        display["basic_auth"] = "désactivé"
+    display.pop("basic_auth_secret_ref", None)
+
+    render_one(display, title=f"Route {route.get('id', route_id)}")
+
+
+@route_app.command(name="update")
+def route_update(
+    id_or_name: str = typer.Argument(..., metavar="GW_ID|GW_NAME"),
+    route_id: str = typer.Option(..., "--route-id", help="UUID de la route"),
+    priority: int | None = typer.Option(
+        None, "--priority",
+        help="Ordre d'évaluation (entier ; plus bas = évalué en premier)",
+    ),
+    path: str | None = typer.Option(
+        None, "--path",
+        help="Nouveau pattern de path (ex: /api ou /api/*)",
+    ),
+    target_group_id: str | None = typer.Option(
+        None, "--target-group-id",
+        help="Nouveau target group de destination (UUID)",
+    ),
+    rate_limit: int | None = typer.Option(
+        None, "--rate-limit",
+        help="Nouvelle limite requêtes/seconde/IP pour cette route (1-100000)",
+    ),
+    allow_cidr: list[str] = typer.Option(
+        [], "--allow-cidr",
+        help="Remplace l'allow list par ces CIDR (répétable). Omis = inchangé.",
+    ),
+    deny_cidr: list[str] = typer.Option(
+        [], "--deny-cidr",
+        help="Remplace la deny list par ces CIDR (répétable). Omis = inchangé.",
+    ),
+    waf_preset: str | None = typer.Option(
+        None, "--waf-preset",
+        help="Nouveau preset WAF : off / permissive / strict",
+    ),
+    basic_auth_user: list[str] = typer.Option(
+        [], "--basic-auth-user",
+        help=(
+            "Active basic auth en remplaçant les utilisateurs existants. "
+            "Format user:password (répétable). Incompatible avec --no-basic-auth."
+        ),
+    ),
+    no_basic_auth: bool = typer.Option(
+        False, "--no-basic-auth",
+        help="Désactive basic auth sur cette route. Incompatible avec --basic-auth-user.",
+    ),
+) -> None:
+    """Met à jour une route (PATCH partiel — seuls les champs fournis sont modifiés).
+
+    Gestion basic auth (3 cas) :
+      • `--basic-auth-user user:pwd ...` (1 ou plus) → active/remplace la liste
+      • `--no-basic-auth`                            → désactive
+      • aucun des deux                                → préserve l'état actuel
+
+    Exemples :
+      # Augmenter la priorité (=> évaluée plus tard)
+      cetic appgw route update web-edge --route-id <uuid> --priority 200
+
+      # Changer le rate limit et le preset WAF
+      cetic appgw route update web-edge --route-id <uuid> \\
+        --rate-limit 50 --waf-preset strict
+
+      # Remplacer entièrement les utilisateurs basic auth
+      cetic appgw route update web-edge --route-id <uuid> \\
+        --basic-auth-user alice:newpwd --basic-auth-user bob:newpwd
+
+      # Retirer la protection basic auth
+      cetic appgw route update web-edge --route-id <uuid> --no-basic-auth
+
+      # Remplacer la deny list par une liste vide (= aucune restriction)
+      cetic appgw route update web-edge --route-id <uuid> --deny-cidr ""
+    """
+    if basic_auth_user and no_basic_auth:
+        rprint(
+            "[red]Erreur : --basic-auth-user et --no-basic-auth sont "
+            "incompatibles.[/red]"
+        )
+        raise typer.Exit(1)
+    if waf_preset is not None and waf_preset not in _WAF_PRESETS:
+        rprint(
+            f"[red]Preset WAF invalide '{waf_preset}'. "
+            f"Valeurs attendues : {', '.join(sorted(_WAF_PRESETS))}.[/red]"
+        )
+        raise typer.Exit(1)
+    if rate_limit is not None and (rate_limit < 1 or rate_limit > 100_000):
+        rprint(
+            "[red]Erreur : --rate-limit doit être compris entre 1 et 100000.[/red]"
+        )
+        raise typer.Exit(1)
+
+    body: dict[str, Any] = {}
+    if priority is not None:
+        body["priority"] = priority
+    if path is not None:
+        body["path_match"] = path
+    if target_group_id is not None:
+        body["target_group_id"] = target_group_id
+    if rate_limit is not None:
+        body["rate_limit_per_sec"] = rate_limit
+    if allow_cidr:
+        body["allow_cidrs"] = list(allow_cidr)
+    if deny_cidr:
+        body["deny_cidrs"] = list(deny_cidr)
+    if waf_preset is not None:
+        body["waf_preset"] = waf_preset
+
+    if basic_auth_user:
+        body["basic_auth_users"] = _parse_basic_auth_users(list(basic_auth_user))
+    elif no_basic_auth:
+        # Convention v1 : le backend accepte basic_auth_secret_ref=null pour
+        # désactiver (le payload AppgwRouteUpdate l'expose explicitement).
+        body["basic_auth_secret_ref"] = None
+
+    if not body:
+        rprint(
+            "[red]Erreur : aucun champ à modifier. Fournissez au moins une "
+            "option (--priority, --path, --rate-limit, --waf-preset, "
+            "--allow-cidr, --deny-cidr, --target-group-id, --basic-auth-user "
+            "ou --no-basic-auth).[/red]"
+        )
+        raise typer.Exit(1)
+
+    gid = _resolve_appgw(id_or_name)
+    try:
+        route = client.patch(
+            f"{APPGW_PATH}/{gid}/routes/{route_id}", json=body
+        )
+    except client.APIError as e:
+        raise _bail(e) from e
+    rprint(
+        f"[green]✓[/green] Route mise à jour : "
+        f"[bold]{(route or {}).get('id', route_id)}[/bold]"
+    )
+
+
 @route_app.command(name="delete")
 def route_delete(
     id_or_name: str = typer.Argument(..., metavar="GW_ID|GW_NAME"),
@@ -740,3 +1156,59 @@ def route_delete(
     except client.APIError as e:
         raise _bail(e) from e
     rprint("[green]✓[/green] Route supprimée.")
+
+
+# ---------------------------------------------------------------------------
+# acme-providers : catalogue providers DNS-01 supportés
+# ---------------------------------------------------------------------------
+
+
+@app.command(name="acme-providers")
+def acme_providers() -> None:
+    """Liste les providers DNS-01 supportés pour les certificats ACME.
+
+    Utile pour choisir la valeur à passer au backend lors de la configuration
+    d'un certificat custom domain (lookup via le catalogue serveur, pas figé
+    côté CLI).
+    """
+    try:
+        data = client.get(f"{APPGW_PATH}/acme/dns-providers")
+    except client.APIError as e:
+        raise _bail(e) from e
+
+    # Tolérant à 2 formes : liste plate de strings/dicts, ou dict {"providers": [...]}.
+    items: list[Any]
+    if isinstance(data, dict):
+        items = data.get("providers") or data.get("items") or []
+    elif isinstance(data, list):
+        items = data
+    else:
+        items = []
+
+    rows: list[dict[str, Any]] = []
+    for entry in items:
+        if isinstance(entry, str):
+            rows.append({"name": entry, "label": "—", "credentials": "—"})
+        elif isinstance(entry, dict):
+            creds = entry.get("required_credentials") or entry.get("credentials") or []
+            if isinstance(creds, list):
+                creds_str = ", ".join(str(c) for c in creds) or "—"
+            else:
+                creds_str = str(creds)
+            rows.append(
+                {
+                    "name": entry.get("name") or entry.get("id") or "—",
+                    "label": entry.get("label") or entry.get("display_name") or "—",
+                    "credentials": creds_str,
+                }
+            )
+
+    render_list(
+        rows,
+        title=f"Providers DNS-01 disponibles ({len(rows)})",
+        columns=[
+            ("name", "Identifiant"),
+            ("label", "Libellé"),
+            ("credentials", "Credentials requis"),
+        ],
+    )
