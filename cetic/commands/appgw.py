@@ -865,6 +865,13 @@ def route_create(
             "ils ne sont jamais retournés en lecture."
         ),
     ),
+    strip_prefix: bool = typer.Option(
+        False, "--strip-prefix/--no-strip-prefix",
+        help=(
+            "Si activé et `--path` non vide (mode prefix/exact), strippe le "
+            "préfixe avant forward au backend. Ex: `/web-app/foo` devient `/foo`."
+        ),
+    ),
 ) -> None:
     """Crée une route (condition host+path → target group + policies L7).
 
@@ -903,6 +910,7 @@ def route_create(
         "target_group_id": target_group_id,
         "priority": priority,
         "waf_preset": waf_preset,
+        "strip_prefix": strip_prefix,
     }
     if path:
         body["path_match"] = path
@@ -942,6 +950,7 @@ def route_list(
             "priority": str(r.get("priority", "—")),
             "listener": (r.get("listener_id") or "—")[:8],
             "path": r.get("path_match") or "(tous)",
+            "strip_prefix": "oui" if r.get("strip_prefix") else "non",
             "target_group": (r.get("target_group_id") or "—")[:8],
             "rate_limit": str(r.get("rate_limit_per_sec") or "—"),
             "waf": r.get("waf_preset", "off"),
@@ -956,6 +965,7 @@ def route_list(
             ("priority", "Priorité"),
             ("listener", "Listener"),
             ("path", "Path"),
+            ("strip_prefix", "Strip prefix"),
             ("target_group", "Target group"),
             ("rate_limit", "Rate limit"),
             ("waf", "WAF"),
@@ -1052,6 +1062,13 @@ def route_update(
         False, "--no-basic-auth",
         help="Désactive basic auth sur cette route. Incompatible avec --basic-auth-user.",
     ),
+    strip_prefix: bool | None = typer.Option(
+        None, "--strip-prefix/--no-strip-prefix",
+        help=(
+            "Active/désactive le strip du préfixe `path_match` avant forward "
+            "au backend (ex: `/web-app/foo` → `/foo`). Omis = inchangé."
+        ),
+    ),
 ) -> None:
     """Met à jour une route (PATCH partiel — seuls les champs fournis sont modifiés).
 
@@ -1111,6 +1128,8 @@ def route_update(
         body["deny_cidrs"] = list(deny_cidr)
     if waf_preset is not None:
         body["waf_preset"] = waf_preset
+    if strip_prefix is not None:
+        body["strip_prefix"] = strip_prefix
 
     if basic_auth_user:
         body["basic_auth_users"] = _parse_basic_auth_users(list(basic_auth_user))
@@ -1123,8 +1142,8 @@ def route_update(
         rprint(
             "[red]Erreur : aucun champ à modifier. Fournissez au moins une "
             "option (--priority, --path, --rate-limit, --waf-preset, "
-            "--allow-cidr, --deny-cidr, --target-group-id, --basic-auth-user "
-            "ou --no-basic-auth).[/red]"
+            "--allow-cidr, --deny-cidr, --target-group-id, --basic-auth-user, "
+            "--no-basic-auth ou --strip-prefix/--no-strip-prefix).[/red]"
         )
         raise typer.Exit(1)
 

@@ -819,6 +819,8 @@ def test_route_create_minimal(runner, mock_api):
     assert captured["body"]["target_group_id"] == TG_ID
     assert captured["body"]["priority"] == 100
     assert captured["body"]["waf_preset"] == "off"
+    # strip_prefix is always sent (defaults to False on create).
+    assert captured["body"]["strip_prefix"] is False
     assert "path_match" not in captured["body"]
     assert "rate_limit_per_sec" not in captured["body"]
 
@@ -1324,6 +1326,128 @@ def test_route_update_basic_auth_disable(runner, mock_api):
     )
     assert result.exit_code == 0, result.stdout
     assert captured["body"] == {"basic_auth_secret_ref": None}
+
+
+def test_route_create_with_strip_prefix(runner, mock_api):
+    captured: dict[str, Any] = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            201,
+            json={
+                "id": ROUTE_ID,
+                "path_match": "/web-app",
+                "strip_prefix": True,
+            },
+        )
+
+    mock_api.post(f"/v1/app-gateways/{GW_ID}/routes").mock(side_effect=_capture)
+    result = runner.invoke(
+        app,
+        [
+            "appgw", "route", "create", GW_ID,
+            "--listener-id", LISTENER_ID,
+            "--target-group-id", TG_ID,
+            "--path", "/web-app",
+            "--strip-prefix",
+        ],
+    )
+    assert result.exit_code == 0, result.stdout
+    assert captured["body"]["strip_prefix"] is True
+    assert captured["body"]["path_match"] == "/web-app"
+
+
+def test_route_update_strip_prefix_enable(runner, mock_api):
+    captured: dict[str, Any] = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"id": ROUTE_ID, "strip_prefix": True})
+
+    mock_api.patch(f"/v1/app-gateways/{GW_ID}/routes/{ROUTE_ID}").mock(
+        side_effect=_capture
+    )
+    result = runner.invoke(
+        app,
+        [
+            "appgw", "route", "update", GW_ID,
+            "--route-id", ROUTE_ID,
+            "--strip-prefix",
+        ],
+    )
+    assert result.exit_code == 0, result.stdout
+    assert captured["body"] == {"strip_prefix": True}
+
+
+def test_route_update_strip_prefix_disable(runner, mock_api):
+    captured: dict[str, Any] = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"id": ROUTE_ID, "strip_prefix": False})
+
+    mock_api.patch(f"/v1/app-gateways/{GW_ID}/routes/{ROUTE_ID}").mock(
+        side_effect=_capture
+    )
+    result = runner.invoke(
+        app,
+        [
+            "appgw", "route", "update", GW_ID,
+            "--route-id", ROUTE_ID,
+            "--no-strip-prefix",
+        ],
+    )
+    assert result.exit_code == 0, result.stdout
+    assert captured["body"] == {"strip_prefix": False}
+
+
+def test_route_update_strip_prefix_omitted_preserved(runner, mock_api):
+    """Omettre --strip-prefix/--no-strip-prefix ne touche pas au champ."""
+    captured: dict[str, Any] = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"id": ROUTE_ID})
+
+    mock_api.patch(f"/v1/app-gateways/{GW_ID}/routes/{ROUTE_ID}").mock(
+        side_effect=_capture
+    )
+    result = runner.invoke(
+        app,
+        [
+            "appgw", "route", "update", GW_ID,
+            "--route-id", ROUTE_ID,
+            "--priority", "200",
+        ],
+    )
+    assert result.exit_code == 0, result.stdout
+    # Only --priority was passed → no strip_prefix in body.
+    assert "strip_prefix" not in captured["body"]
+
+
+def test_route_list_shows_strip_prefix(runner, mock_api):
+    mock_api.get(f"/v1/app-gateways/{GW_ID}/routes").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "id": ROUTE_ID,
+                    "priority": 10,
+                    "listener_id": LISTENER_ID,
+                    "path_match": "/web-app",
+                    "strip_prefix": True,
+                    "target_group_id": TG_ID,
+                    "waf_preset": "off",
+                },
+            ],
+        )
+    )
+    result = runner.invoke(app, ["appgw", "route", "list", GW_ID])
+    assert result.exit_code == 0, result.stdout
+    # The Strip prefix column should show "oui" when strip_prefix=True.
+    assert "Strip prefix" in result.stdout
+    assert "oui" in result.stdout
 
 
 def test_route_update_basic_auth_conflicting_flags(runner, mock_api):
