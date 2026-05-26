@@ -11,6 +11,24 @@ pool_app = typer.Typer(help="Node pools d'un cluster K8s")
 app.add_typer(pool_app, name="pool")
 
 
+VALID_TIERS = ("dev", "prod")
+VALID_KUBECONFIG_MODES = ("private", "public")
+
+# Rich styling par tier — aligné console / docs.
+_TIER_STYLE = {
+    "dev": "cyan",
+    "prod": "yellow",  # `amber` n'existe pas natif Rich ; `yellow` est la couleur amber/ambre.
+}
+
+
+def _fmt_tier(tier: str | None) -> str:
+    """Renvoie le tier coloré pour le rendu table Rich."""
+    if not tier:
+        return "—"
+    style = _TIER_STYLE.get(tier, "white")
+    return f"[{style}]{tier}[/{style}]"
+
+
 @app.command(name="list")
 def list_clusters(region: str | None = typer.Option(None, "--region", "-r")) -> None:
     """Liste les clusters K8s du tenant."""
@@ -21,12 +39,15 @@ def list_clusters(region: str | None = typer.Option(None, "--region", "-r")) -> 
         raise typer.Exit(1)
     rows = [
         {"id": c["id"][:8], "name": c["name"], "region": c["region"],
-         "k8s_version": c.get("k8s_version", "—"), "status": c["status"]}
+         "k8s_version": c.get("k8s_version", "—"),
+         "tier": _fmt_tier(c.get("tier")),
+         "status": c["status"]}
         for c in items
     ]
     render_list(rows, title=f"Clusters K8s ({len(rows)})",
                 columns=[("id", "ID"), ("name", "Nom"), ("region", "Région"),
-                         ("k8s_version", "Version"), ("status", "Statut")])
+                         ("k8s_version", "Version"), ("tier", "Tier"),
+                         ("status", "Statut")])
 
 
 @app.command()
@@ -41,10 +62,28 @@ def get(cluster_id: str = typer.Argument(...)) -> None:
 
 
 @app.command()
-def kubeconfig(cluster_id: str = typer.Argument(...)) -> None:
+def kubeconfig(
+    cluster_id: str = typer.Argument(...),
+    mode: str = typer.Option(
+        "private",
+        "--mode",
+        help="Endpoint du kubeconfig : private (VNet, défaut) | public (Gateway).",
+        case_sensitive=False,
+    ),
+) -> None:
     """Récupère le kubeconfig admin du cluster (à coller dans `~/.kube/config`)."""
+    mode_norm = mode.lower()
+    if mode_norm not in VALID_KUBECONFIG_MODES:
+        rprint(
+            f"[red]--mode invalide : '{mode}'. "
+            f"Valeurs autorisées : {', '.join(VALID_KUBECONFIG_MODES)}.[/red]"
+        )
+        raise typer.Exit(1)
     try:
-        kc = client.get(f"/v1/k8s/clusters/{cluster_id}/kubeconfig")
+        kc = client.get(
+            f"/v1/k8s/clusters/{cluster_id}/kubeconfig",
+            params={"mode": mode_norm},
+        )
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
@@ -62,6 +101,12 @@ def create(
     vnet_id: str = typer.Option(..., "--vnet"),
     k8s_version: str = typer.Option("v1.31.0", "--version"),
     os_template_key: str = typer.Option(..., "--template", help="Clé de template QEMU (ex: clks-capi-debian-13)"),
+    tier: str = typer.Option(
+        "dev",
+        "--tier",
+        help="Tier: dev=1 LXC proxy, prod=2 LXC HA actif/passif",
+        case_sensitive=False,
+    ),
     # Pool initial
     pool_name: str = typer.Option("default", "--pool-name"),
     pool_plan: str = typer.Option("small", "--pool-plan"),
@@ -82,6 +127,14 @@ def create(
     apiserver_internal_ip: str | None = typer.Option(None, "--apiserver-internal-ip"),
 ) -> None:
     """Crée un cluster K8s (provisioning ~5-15 min, asynchrone)."""
+    tier_norm = tier.lower()
+    if tier_norm not in VALID_TIERS:
+        rprint(
+            f"[red]--tier invalide : '{tier}'. "
+            f"Valeurs autorisées : {', '.join(VALID_TIERS)}.[/red]"
+        )
+        raise typer.Exit(1)
+
     pool_body: dict = {"name": pool_name, "plan": pool_plan, "replicas": pool_replicas}
     if pool_min is not None:
         pool_body["min_size"] = pool_min
@@ -95,6 +148,7 @@ def create(
         "vnet_id": vnet_id,
         "k8s_version": k8s_version,
         "os_template_key": os_template_key,
+        "tier": tier_norm,
         "initial_pool": pool_body,
         "autoscaler_scale_down_delay_after_add": scale_down_delay,
         "autoscaler_scale_down_unneeded_time": scale_down_unneeded,
