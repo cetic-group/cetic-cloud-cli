@@ -6,6 +6,42 @@ from rich import print as rprint
 from cetic import client
 from cetic.commands._render import render_list, render_one
 
+
+def _parse_label_arg(label_str: str) -> tuple[str, str]:
+    """Parse `key=value` → (key, value). Raise typer.BadParameter if invalid."""
+    if "=" not in label_str:
+        raise typer.BadParameter(f"Invalid label '{label_str}', expected 'key=value'")
+    key, _, value = label_str.partition("=")
+    key = key.strip()
+    if not key:
+        raise typer.BadParameter(f"Invalid label '{label_str}', empty key")
+    return key, value
+
+
+def _parse_taint_arg(taint_str: str) -> dict[str, str | None]:
+    """Parse `key=value:effect` or `key:effect` → dict. Raise on invalid."""
+    if ":" not in taint_str:
+        raise typer.BadParameter(
+            f"Invalid taint '{taint_str}', expected 'key=value:effect' "
+            f"(effect ∈ NoSchedule|PreferNoSchedule|NoExecute)"
+        )
+    head, _, effect = taint_str.rpartition(":")
+    effect = effect.strip()
+    if effect not in ("NoSchedule", "PreferNoSchedule", "NoExecute"):
+        raise typer.BadParameter(
+            f"Invalid taint effect '{effect}', must be NoSchedule|PreferNoSchedule|NoExecute"
+        )
+    if "=" in head:
+        key, _, value = head.partition("=")
+        key = key.strip()
+        value = value.strip() or None
+    else:
+        key = head.strip()
+        value = None
+    if not key:
+        raise typer.BadParameter(f"Invalid taint '{taint_str}', empty key")
+    return {"key": key, "value": value, "effect": effect}
+
 app = typer.Typer(help="CETIC Cloud Kubernetes Service (CLKS)")
 pool_app = typer.Typer(help="Node pools d'un cluster K8s")
 app.add_typer(pool_app, name="pool")
@@ -272,6 +308,17 @@ def create(
     replicas: int = typer.Option(1, "--replicas"),
     min_size: int | None = typer.Option(None, "--min", help="Active autoscaler"),
     max_size: int | None = typer.Option(None, "--max"),
+    labels: list[str] | None = typer.Option(
+        None, "--label",
+        help="Label nœud au format key=value (répétable). Ex: --label env=prod --label zone=fr"
+    ),
+    taints: list[str] | None = typer.Option(
+        None, "--taint",
+        help=(
+            "Taint nœud au format key=value:effect ou key:effect (répétable). "
+            "effect ∈ NoSchedule|PreferNoSchedule|NoExecute"
+        ),
+    ),
 ) -> None:
     """Crée un node pool."""
     body: dict = {"name": name, "plan": plan, "replicas": replicas}
@@ -279,6 +326,11 @@ def create(
         body["min_size"] = min_size
     if max_size is not None:
         body["max_size"] = max_size
+    if labels:
+        parsed_labels = [_parse_label_arg(lbl) for lbl in labels]
+        body["labels"] = {k: v for k, v in parsed_labels}
+    if taints:
+        body["taints"] = [_parse_taint_arg(t) for t in taints]
     try:
         p = client.post(f"/v1/k8s/clusters/{cluster_id}/node-pools", json=body)
     except client.APIError as e:
@@ -294,8 +346,37 @@ def update(
     replicas: int | None = typer.Option(None, "--replicas"),
     min_size: int | None = typer.Option(None, "--min"),
     max_size: int | None = typer.Option(None, "--max"),
+    labels: list[str] | None = typer.Option(
+        None, "--label",
+        help=(
+            "Label nœud au format key=value (répétable). "
+            "Remplace l'ensemble des labels existants si au moins un est passé."
+        ),
+    ),
+    taints: list[str] | None = typer.Option(
+        None, "--taint",
+        help=(
+            "Taint nœud au format key=value:effect ou key:effect (répétable). "
+            "Remplace l'ensemble des taints existants si au moins un est passé. "
+            "effect ∈ NoSchedule|PreferNoSchedule|NoExecute"
+        ),
+    ),
+    labels_clear: bool = typer.Option(
+        False, "--labels-clear",
+        help="Vide tous les labels du pool (incompatible avec --label).",
+    ),
+    taints_clear: bool = typer.Option(
+        False, "--taints-clear",
+        help="Vide tous les taints du pool (incompatible avec --taint).",
+    ),
 ) -> None:
-    """Modifie un pool (replicas, bornes autoscaler)."""
+    """Modifie un pool (replicas, bornes autoscaler, labels, taints)."""
+    if labels and labels_clear:
+        rprint("[red]--label et --labels-clear sont incompatibles.[/red]")
+        raise typer.Exit(1)
+    if taints and taints_clear:
+        rprint("[red]--taint et --taints-clear sont incompatibles.[/red]")
+        raise typer.Exit(1)
     body: dict = {}
     if replicas is not None:
         body["replicas"] = replicas
@@ -303,6 +384,15 @@ def update(
         body["min_size"] = min_size
     if max_size is not None:
         body["max_size"] = max_size
+    if labels:
+        parsed_labels = [_parse_label_arg(lbl) for lbl in labels]
+        body["labels"] = {k: v for k, v in parsed_labels}
+    elif labels_clear:
+        body["labels"] = {}
+    if taints:
+        body["taints"] = [_parse_taint_arg(t) for t in taints]
+    elif taints_clear:
+        body["taints"] = []
     if not body:
         rprint("[yellow]Aucun paramètre à modifier.[/yellow]")
         raise typer.Exit(0)

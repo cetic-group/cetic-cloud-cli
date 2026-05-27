@@ -247,3 +247,262 @@ def test_kubeconfig_mode_invalid_rejected(runner, mock_api):
     assert not any(
         "/kubeconfig" in str(call.request.url) for call in mock_api.calls
     )
+
+
+# ---------------------------------------------------------------------------
+# _parse_label_arg — unit tests (no HTTP)
+# ---------------------------------------------------------------------------
+
+
+def test_parse_label_valid_simple():
+    from cetic.commands.k8s import _parse_label_arg
+
+    key, value = _parse_label_arg("env=prod")
+    assert key == "env"
+    assert value == "prod"
+
+
+def test_parse_label_value_with_equals():
+    """Valeur qui contient un '=' → seul le premier '=' est le délimiteur."""
+    from cetic.commands.k8s import _parse_label_arg
+
+    key, value = _parse_label_arg("annotation=foo=bar")
+    assert key == "annotation"
+    assert value == "foo=bar"
+
+
+def test_parse_label_empty_value_allowed():
+    from cetic.commands.k8s import _parse_label_arg
+
+    key, value = _parse_label_arg("tier=")
+    assert key == "tier"
+    assert value == ""
+
+
+def test_parse_label_no_equals_raises():
+    import pytest
+    import typer
+    from cetic.commands.k8s import _parse_label_arg
+
+    with pytest.raises(typer.BadParameter, match="key=value"):
+        _parse_label_arg("no-equals")
+
+
+def test_parse_label_empty_key_raises():
+    import pytest
+    import typer
+    from cetic.commands.k8s import _parse_label_arg
+
+    with pytest.raises(typer.BadParameter, match="empty key"):
+        _parse_label_arg("=value")
+
+
+# ---------------------------------------------------------------------------
+# _parse_taint_arg — unit tests (no HTTP)
+# ---------------------------------------------------------------------------
+
+
+def test_parse_taint_key_value_effect():
+    from cetic.commands.k8s import _parse_taint_arg
+
+    result = _parse_taint_arg("dedicated=gpu:NoSchedule")
+    assert result == {"key": "dedicated", "value": "gpu", "effect": "NoSchedule"}
+
+
+def test_parse_taint_key_only_effect():
+    from cetic.commands.k8s import _parse_taint_arg
+
+    result = _parse_taint_arg("spot:PreferNoSchedule")
+    assert result == {"key": "spot", "value": None, "effect": "PreferNoSchedule"}
+
+
+def test_parse_taint_noexecute():
+    from cetic.commands.k8s import _parse_taint_arg
+
+    result = _parse_taint_arg("maintenance=true:NoExecute")
+    assert result["effect"] == "NoExecute"
+    assert result["key"] == "maintenance"
+    assert result["value"] == "true"
+
+
+def test_parse_taint_no_colon_raises():
+    import pytest
+    import typer
+    from cetic.commands.k8s import _parse_taint_arg
+
+    with pytest.raises(typer.BadParameter, match="key=value:effect"):
+        _parse_taint_arg("dedicated=gpu")
+
+
+def test_parse_taint_invalid_effect_raises():
+    import pytest
+    import typer
+    from cetic.commands.k8s import _parse_taint_arg
+
+    with pytest.raises(typer.BadParameter, match="NoSchedule|PreferNoSchedule|NoExecute"):
+        _parse_taint_arg("key=val:BadEffect")
+
+
+def test_parse_taint_empty_key_raises():
+    import pytest
+    import typer
+    from cetic.commands.k8s import _parse_taint_arg
+
+    with pytest.raises(typer.BadParameter, match="empty key"):
+        _parse_taint_arg(":NoSchedule")
+
+
+# ---------------------------------------------------------------------------
+# pool create — --label + --taint integration
+# ---------------------------------------------------------------------------
+
+POOL_ID = "cccccccc-dddd-eeee-ffff-000000000000"
+
+
+def _pool(pid: str = POOL_ID, name: str = "gpu-pool") -> dict[str, Any]:
+    return {"id": pid, "name": name, "plan": "small", "replicas": 1, "status": "Provisioning"}
+
+
+def test_pool_create_labels_sent(runner, mock_api):
+    captured: dict[str, Any] = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(201, json=_pool())
+
+    mock_api.post(f"/v1/k8s/clusters/{CLUSTER_ID}/node-pools").mock(side_effect=_capture)
+    result = runner.invoke(app, [
+        "k8s", "pool", "create", CLUSTER_ID,
+        "--name", "gpu-pool",
+        "--label", "env=prod",
+        "--label", "zone=fr",
+    ])
+    assert result.exit_code == 0, result.stdout
+    assert captured["body"]["labels"] == {"env": "prod", "zone": "fr"}
+    assert "taints" not in captured["body"]
+
+
+def test_pool_create_taints_sent(runner, mock_api):
+    captured: dict[str, Any] = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(201, json=_pool())
+
+    mock_api.post(f"/v1/k8s/clusters/{CLUSTER_ID}/node-pools").mock(side_effect=_capture)
+    result = runner.invoke(app, [
+        "k8s", "pool", "create", CLUSTER_ID,
+        "--name", "gpu-pool",
+        "--taint", "dedicated=gpu:NoSchedule",
+        "--taint", "spot:PreferNoSchedule",
+    ])
+    assert result.exit_code == 0, result.stdout
+    taints = captured["body"]["taints"]
+    assert len(taints) == 2
+    assert taints[0] == {"key": "dedicated", "value": "gpu", "effect": "NoSchedule"}
+    assert taints[1] == {"key": "spot", "value": None, "effect": "PreferNoSchedule"}
+    assert "labels" not in captured["body"]
+
+
+def test_pool_create_no_labels_taints_not_in_body(runner, mock_api):
+    captured: dict[str, Any] = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(201, json=_pool())
+
+    mock_api.post(f"/v1/k8s/clusters/{CLUSTER_ID}/node-pools").mock(side_effect=_capture)
+    result = runner.invoke(app, [
+        "k8s", "pool", "create", CLUSTER_ID,
+        "--name", "gpu-pool",
+    ])
+    assert result.exit_code == 0, result.stdout
+    assert "labels" not in captured["body"]
+    assert "taints" not in captured["body"]
+
+
+def test_pool_create_invalid_label_rejected(runner, mock_api):
+    result = runner.invoke(app, [
+        "k8s", "pool", "create", CLUSTER_ID,
+        "--name", "gpu-pool",
+        "--label", "bad-no-equals",
+    ])
+    assert result.exit_code != 0
+
+
+def test_pool_create_invalid_taint_effect_rejected(runner, mock_api):
+    result = runner.invoke(app, [
+        "k8s", "pool", "create", CLUSTER_ID,
+        "--name", "gpu-pool",
+        "--taint", "key=val:BadEffect",
+    ])
+    assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# pool update — --label + --taint + --labels-clear / --taints-clear
+# ---------------------------------------------------------------------------
+
+
+def test_pool_update_labels_sent(runner, mock_api):
+    captured: dict[str, Any] = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json=_pool())
+
+    mock_api.patch(f"/v1/k8s/clusters/{CLUSTER_ID}/node-pools/{POOL_ID}").mock(
+        side_effect=_capture
+    )
+    result = runner.invoke(app, [
+        "k8s", "pool", "update", CLUSTER_ID, POOL_ID,
+        "--label", "env=staging",
+    ])
+    assert result.exit_code == 0, result.stdout
+    assert captured["body"]["labels"] == {"env": "staging"}
+
+
+def test_pool_update_labels_clear_sends_empty_dict(runner, mock_api):
+    captured: dict[str, Any] = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json=_pool())
+
+    mock_api.patch(f"/v1/k8s/clusters/{CLUSTER_ID}/node-pools/{POOL_ID}").mock(
+        side_effect=_capture
+    )
+    result = runner.invoke(app, [
+        "k8s", "pool", "update", CLUSTER_ID, POOL_ID,
+        "--labels-clear",
+    ])
+    assert result.exit_code == 0, result.stdout
+    assert captured["body"]["labels"] == {}
+
+
+def test_pool_update_taints_clear_sends_empty_list(runner, mock_api):
+    captured: dict[str, Any] = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json=_pool())
+
+    mock_api.patch(f"/v1/k8s/clusters/{CLUSTER_ID}/node-pools/{POOL_ID}").mock(
+        side_effect=_capture
+    )
+    result = runner.invoke(app, [
+        "k8s", "pool", "update", CLUSTER_ID, POOL_ID,
+        "--taints-clear",
+    ])
+    assert result.exit_code == 0, result.stdout
+    assert captured["body"]["taints"] == []
+
+
+def test_pool_update_label_and_labels_clear_conflict(runner, mock_api):
+    result = runner.invoke(app, [
+        "k8s", "pool", "update", CLUSTER_ID, POOL_ID,
+        "--label", "env=prod",
+        "--labels-clear",
+    ])
+    assert result.exit_code == 1
+    assert "incompatibles" in result.stdout
