@@ -290,7 +290,7 @@ def list_registries(
         raise _bail(e) from e
     rows = [
         {
-            "id": r["id"][:8],
+            "id": r["id"],
             "name": r["name"],
             "region": r.get("region", "—"),
             "expose": _format_expose(r),
@@ -595,7 +595,7 @@ def acl_list(
         raise _bail(e) from e
     rows = [
         {
-            "id": a["id"][:8],
+            "id": a["id"],
             "username": a.get("username", "—"),
             "repo": a.get("repo", "—"),
             "actions": ",".join(a.get("actions", [])),

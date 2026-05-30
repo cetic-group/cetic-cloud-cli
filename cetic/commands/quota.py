@@ -33,7 +33,7 @@ def list_requests(
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
     rows = [
-        {"id": r["id"][:8], "field": r["field"], "requested": r["requested_value"],
+        {"id": r["id"], "field": r["field"], "requested": r["requested_value"],
          "current": r.get("current_value", "—"), "status": r["status"],
          "created": r.get("created_at", "")[:10]}
         for r in items

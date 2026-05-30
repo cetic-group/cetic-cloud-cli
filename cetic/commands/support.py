@@ -24,7 +24,7 @@ def list_tickets(
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
     rows = [
-        {"id": t["id"][:8], "subject": t["subject"][:60],
+        {"id": t["id"], "subject": t["subject"][:60],
          "category": t.get("category", "—"), "priority": t.get("priority", "—"),
          "status": t["status"], "updated": (t.get("updated_at") or "")[:10]}
         for t in items

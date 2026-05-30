@@ -26,7 +26,7 @@ def list_vpcs() -> None:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
     rows = [
-        {"id": v["id"][:8], "name": v["name"], "region": v["region"],
+        {"id": v["id"], "name": v["name"], "region": v["region"],
          "status": v.get("status", "—"),
          "vnets": len(v.get("vnets", []))}
         for v in items
@@ -89,7 +89,7 @@ def list_vnets(vpc_id: str = typer.Argument(..., help="UUID du VPC parent")) -> 
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
     rows = [
-        {"id": v["id"][:8], "name": v["name"], "cidr": v["cidr"],
+        {"id": v["id"], "name": v["name"], "cidr": v["cidr"],
          "snat": "✓" if v.get("snat") else "—"}
         for v in items
     ]
@@ -158,7 +158,7 @@ def list_ip_reservations(vnet_id: str = typer.Argument(..., help="UUID du VNet")
         raise typer.Exit(1)
     rows = [
         {
-            "id": r["id"][:8],
+            "id": r["id"],
             "name": r["name"],
             "ip": r["ip"],
             "range_end": r.get("range_end") or "—",
@@ -225,7 +225,7 @@ def list_fw_rules(vnet_id: str = typer.Argument(..., help="UUID du VNet")) -> No
         raise typer.Exit(1)
     rows = [
         {
-            "id": r["id"][:8],
+            "id": r["id"],
             "dir": r.get("direction", "—"),
             "action": r.get("action", "—"),
             "proto": r.get("proto") or "any",
@@ -276,7 +276,7 @@ def create(
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
     rprint(f"[green]✓[/green] Règle créée : [bold]{r['id']}[/bold]")
-    render_one(r, title=f"Règle {r['id'][:8]}")
+    render_one(r, title=f"Règle {r['id']}")
 
 
 
@@ -310,9 +310,9 @@ def list_peerings(vpc_id: str = typer.Argument(..., help="UUID du VPC")) -> None
         raise typer.Exit(1)
     rows = [
         {
-            "id": p["id"][:8],
-            "requester": p.get("requester_vpc_id", "")[:8],
-            "accepter": p.get("accepter_vpc_id", "")[:8],
+            "id": p["id"],
+            "requester": p.get("requester_vpc_id", ""),
+            "accepter": p.get("accepter_vpc_id", ""),
             "status": p.get("status", "—"),
             "created_at": p.get("created_at", "")[:10],
         }

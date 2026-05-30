@@ -18,7 +18,7 @@ def list_orgs() -> None:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
     rows = [
-        {"id": o["id"][:8], "name": o["name"],
+        {"id": o["id"], "name": o["name"],
          "default": "✓" if o.get("is_default") else "—",
          "has_payment": "✓" if o.get("has_payment_method") else "—",
          "has_subscription": "✓" if o.get("has_subscription") else "—"}

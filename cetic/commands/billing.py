@@ -155,7 +155,7 @@ def budget_list() -> None:
         raise typer.Exit(1)
     rows = [
         {
-            "id": b["id"][:8],
+            "id": b["id"],
             "plafond": _eur(b["monthly_budget_cents"]),
             "seuils": ", ".join(str(t) + "%" for t in b["alert_thresholds_pct"]),
             "hard_stop": "✓" if b.get("hard_stop_at_100") else "—",
@@ -223,7 +223,7 @@ def commit_list() -> None:
         raise typer.Exit(1)
     rows = [
         {
-            "id": c["id"][:8],
+            "id": c["id"],
             "type": "Annuel" if c["commit_type"] == "yearly" else "Mensuel",
             "remise": f"-{c['discount_pct']}%",
             "debut": c["start_at"][:10],

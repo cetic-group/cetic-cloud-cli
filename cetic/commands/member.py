@@ -18,7 +18,7 @@ def list_members() -> None:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
     rows = [
-        {"id": m["id"][:8], "email": m["email"], "role": m["role"],
+        {"id": m["id"], "email": m["email"], "role": m["role"],
          "accepted": "✓" if m.get("accepted_at") else "—",
          "added_at": (m.get("created_at") or "")[:10]}
         for m in items
@@ -92,8 +92,8 @@ def accessible_orgs() -> None:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
     rows = [
-        {"id": o["id"][:8], "name": o.get("name", "—"),
-         "tenant_id": (o.get("owner_tenant_id") or "")[:8],
+        {"id": o["id"], "name": o.get("name", "—"),
+         "tenant_id": (o.get("owner_tenant_id") or ""),
          "role": o.get("role", "owner")}
         for o in orgs
     ]

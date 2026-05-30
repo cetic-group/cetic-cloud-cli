@@ -21,7 +21,7 @@ def list_vms(
         raise typer.Exit(1)
     rows = [
         {
-            "id": v["id"][:8], "name": v["name"], "region": v["region"],
+            "id": v["id"], "name": v["name"], "region": v["region"],
             "plan": v["plan"], "status": v["status"], "ip": v.get("ip_address") or "—",
         }
         for v in items
@@ -142,7 +142,7 @@ def list_snapshots(vm_id: str = typer.Argument(...)) -> None:
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
-    rows = [{"id": s["id"][:8], "name": s["name"], "status": s["status"],
+    rows = [{"id": s["id"], "name": s["name"], "status": s["status"],
              "size": s.get("size_bytes") or "—", "created_at": s.get("created_at", "")[:10]}
             for s in items]
     render_list(rows, title=f"Snapshots de la VM {vm_id[:8]} ({len(rows)})",

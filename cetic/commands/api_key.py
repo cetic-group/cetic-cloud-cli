@@ -18,7 +18,7 @@ def list_keys() -> None:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
     rows = [
-        {"id": k["id"][:8], "name": k["name"], "prefix": k.get("prefix", "—"),
+        {"id": k["id"], "name": k["name"], "prefix": k.get("prefix", "—"),
          "scopes": ",".join(k.get("scopes", [])),
          "expires_at": (k.get("expires_at") or "—")[:10],
          "last_used_at": (k.get("last_used_at") or "—")[:10]}

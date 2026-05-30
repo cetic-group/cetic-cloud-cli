@@ -22,7 +22,7 @@ def list_containers(
 
     rows = [
         {
-            "id": c["id"][:8],
+            "id": c["id"],
             "name": c["name"],
             "region": c["region"],
             "plan": c["plan"],
@@ -155,7 +155,7 @@ def list_snapshots(container_id: str = typer.Argument(...)) -> None:
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
-    rows = [{"id": s["id"][:8], "name": s["name"], "status": s["status"],
+    rows = [{"id": s["id"], "name": s["name"], "status": s["status"],
              "size": s.get("size_bytes") or "—", "created_at": s.get("created_at", "")[:10]}
             for s in items]
     render_list(rows, title=f"Snapshots du container {container_id[:8]} ({len(rows)})",

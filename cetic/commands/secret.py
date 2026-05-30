@@ -225,7 +225,7 @@ def list_secrets(
 
     rows = [
         {
-            "id": s["id"][:8],
+            "id": s["id"],
             "name": s["name"],
             "version": str(s.get("version", 1)),
             "rotated": (s.get("last_rotated_at") or "—")[:10],

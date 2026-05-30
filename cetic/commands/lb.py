@@ -20,7 +20,7 @@ def list_lbs(region: str | None = typer.Option(None, "--region", "-r")) -> None:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
     rows = [
-        {"id": lb["id"][:8], "name": lb["name"], "region": lb["region"],
+        {"id": lb["id"], "name": lb["name"], "region": lb["region"],
          "plan": lb.get("plan") or "—",
          "status": lb["status"],
          "vip": lb.get("vip_address") or "—",

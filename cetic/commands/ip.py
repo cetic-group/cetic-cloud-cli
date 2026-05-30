@@ -18,7 +18,7 @@ def list_ips(region: str | None = typer.Option(None, "--region", "-r")) -> None:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
     rows = [
-        {"id": p["id"][:8], "address": p.get("ip_address") or "—",
+        {"id": p["id"], "address": p.get("ip_address") or "—",
          "region": p["region"], "status": p["status"],
          "attached_to": (p.get("container_instance_id") or p.get("vm_instance_id")
                          or p.get("load_balancer_id") or "—")}

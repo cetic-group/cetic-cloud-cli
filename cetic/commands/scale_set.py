@@ -17,7 +17,7 @@ def _list(endpoint: str, kind: str) -> None:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
     rows = [
-        {"id": s["id"][:8], "name": s["name"], "region": s["region"],
+        {"id": s["id"], "name": s["name"], "region": s["region"],
          "plan": s["plan"], "replicas": s.get("desired_replicas") or s.get("replicas", 0),
          "status": s["status"]}
         for s in items

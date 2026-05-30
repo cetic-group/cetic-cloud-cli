@@ -24,7 +24,7 @@ def _list_engine(engine: str, region: str | None) -> None:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
     rows = [
-        {"id": d["id"][:8], "name": d["name"], "region": d["region"],
+        {"id": d["id"], "name": d["name"], "region": d["region"],
          "tier": d.get("tier", "—"), "plan": d["plan"], "status": d["status"],
          "endpoint": d.get("endpoint_vnet_ip") or "—"}
         for d in items

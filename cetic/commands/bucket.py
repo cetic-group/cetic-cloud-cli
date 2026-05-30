@@ -18,7 +18,7 @@ def list_buckets(region: str | None = typer.Option(None, "--region", "-r")) -> N
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
     rows = [
-        {"id": b["id"][:8], "name": b["name"], "region": b["region"], "status": b["status"]}
+        {"id": b["id"], "name": b["name"], "region": b["region"], "status": b["status"]}
         for b in items
     ]
     render_list(rows, title=f"Buckets ({len(rows)})",
@@ -95,7 +95,7 @@ def list_keys(
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
     rows = [
-        {"id": k["id"][:8], "label": k["label"], "region": k["region"],
+        {"id": k["id"], "label": k["label"], "region": k["region"],
          "access_level": k.get("access_level", "—"),
          "prefix": k.get("access_key_prefix", "—"),
          "expires": (k.get("expires_at") or "—")[:10]}

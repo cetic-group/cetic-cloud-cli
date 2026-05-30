@@ -115,7 +115,7 @@ def roles_list(
         raise _bail(e) from e
     rows = [
         {
-            "id": r["id"][:8],
+            "id": r["id"],
             "name": r["name"],
             "kind": "built-in" if r.get("is_built_in") else "custom",
             "statements": str(len((r.get("policy_document") or {}).get("statements") or [])),
@@ -328,7 +328,7 @@ def builtins_list() -> None:
         raise _bail(e) from e
     rows = [
         {
-            "id": r["id"][:8],
+            "id": r["id"],
             "name": r["name"],
             "statements": str(len((r.get("policy_document") or {}).get("statements") or [])),
             "description": (r.get("description") or "—")[:60],

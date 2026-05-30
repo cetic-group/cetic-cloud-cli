@@ -102,7 +102,7 @@ def list_sas() -> None:
         raise _bail(e) from e
     rows = [
         {
-            "id": s["id"][:8],
+            "id": s["id"],
             "name": s["name"],
             "prefix": s.get("token_prefix", "—"),
             "created": (s.get("created_at") or "—")[:10],

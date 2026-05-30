@@ -120,7 +120,7 @@ def list_gateways(
         raise _bail(e) from e
     rows = [
         {
-            "id": gw["id"][:8],
+            "id": gw["id"],
             "name": gw["name"],
             "region": gw.get("region", "—"),
             "plan": gw.get("plan", "—"),
@@ -295,7 +295,7 @@ def health(
             rows.append(
                 {
                     "target_group": tg_name,
-                    "member_id": (member.get("id") or "—")[:8],
+                    "member_id": (member.get("id") or "—"),
                     "address": f"{member.get('address', '—')}:{member.get('port', '—')}",
                     "status": _format_health_status(member.get("status", "—")),
                     "last_check": (member.get("last_check_at") or "—")[:19],
@@ -367,7 +367,7 @@ def listener_list(
         raise _bail(e) from e
     rows = [
         {
-            "id": item["id"][:8],
+            "id": item["id"],
             "hostname": item.get("hostname", "—"),
             "acme_status": item.get("acme_status", "—"),
             "custom_domain": "oui" if item.get("custom_domain") else "non",
@@ -507,7 +507,7 @@ def tg_list(
         raise _bail(e) from e
     rows = [
         {
-            "id": tg["id"][:8],
+            "id": tg["id"],
             "name": tg.get("name", "—"),
             "algorithm": tg.get("algorithm", "—"),
             "hc_path": tg.get("hc_path", "—"),
@@ -946,12 +946,12 @@ def route_list(
     items = sorted(items, key=lambda r: r.get("priority", 100))
     rows = [
         {
-            "id": r["id"][:8],
+            "id": r["id"],
             "priority": str(r.get("priority", "—")),
-            "listener": (r.get("listener_id") or "—")[:8],
+            "listener": (r.get("listener_id") or "—"),
             "path": r.get("path_match") or "(tous)",
             "strip_prefix": "oui" if r.get("strip_prefix") else "non",
-            "target_group": (r.get("target_group_id") or "—")[:8],
+            "target_group": (r.get("target_group_id") or "—"),
             "rate_limit": str(r.get("rate_limit_per_sec") or "—"),
             "waf": r.get("waf_preset", "off"),
         }

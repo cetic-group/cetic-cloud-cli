@@ -18,7 +18,7 @@ def list_volumes(region: str | None = typer.Option(None, "--region", "-r")) -> N
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
     rows = [
-        {"id": v["id"][:8], "name": v["name"], "region": v["region"],
+        {"id": v["id"], "name": v["name"], "region": v["region"],
          "size_gb": v["size_gb"], "status": v["status"],
          "attached_to": (v.get("attached_to_container_id") or v.get("attached_to_vm_id") or "—")}
         for v in items

@@ -74,7 +74,7 @@ def list_clusters(region: str | None = typer.Option(None, "--region", "-r")) -> 
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
     rows = [
-        {"id": c["id"][:8], "name": c["name"], "region": c["region"],
+        {"id": c["id"], "name": c["name"], "region": c["region"],
          "k8s_version": c.get("k8s_version", "—"),
          "tier": _fmt_tier(c.get("tier")),
          "status": c["status"]}
@@ -287,7 +287,7 @@ def list_pools(cluster_id: str = typer.Argument(...)) -> None:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
     rows = [
-        {"id": p["id"][:8], "name": p["name"], "plan": p["plan"],
+        {"id": p["id"], "name": p["name"], "plan": p["plan"],
          "replicas": p["replicas"],
          "min": p.get("min_size") or "—",
          "max": p.get("max_size") or "—",
