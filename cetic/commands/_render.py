@@ -1,32 +1,36 @@
 """Helpers de rendu — table / json / yaml selon CCP_OUTPUT."""
 
-import re
+import sys
 from typing import Any
 
-from rich import print as rprint
+from rich.console import Console
 from rich.table import Table
 
 from cetic import config
 
-# UUID complet (8-4-4-4-12). Sert à raccourcir les identifiants UNIQUEMENT
-# dans l'affichage des LISTES en table — jamais en JSON/YAML (qui doivent
-# rester exploitables par jq/yq/Terraform/scripts), ni dans le détail
-# (`render_one`) où l'on veut l'identifiant complet.
-_UUID_RE = re.compile(
-    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
-)
 
+def _cell(value: Any) -> str:
+    """Rend une valeur de cellule de table — JAMAIS tronquée.
 
-def _short_for_table(value: Any) -> str:
-    """Rend une valeur lisible en table de liste : un UUID est raccourci à
-    `xxxxxxxx…`. Les autres valeurs sont rendues telles quelles.
+    Les identifiants (UUID inclus) sont affichés en entier, comme en
+    JSON/YAML, pour rester exploitables par copier-coller / scripts.
     """
     if value is None:
         return "—"
-    s = str(value)
-    if _UUID_RE.match(s):
-        return s[:8] + "…"
-    return s
+    return str(value)
+
+
+def _console() -> Console:
+    """Console Rich qui ne tronque jamais.
+
+    Quand stdout n'est pas un TTY (pipe, redirection, CI), Rich retombe sur
+    une largeur de 80 colonnes et tronquerait les cellules. On force alors une
+    largeur généreuse. Sur un vrai terminal on garde la largeur détectée et on
+    s'appuie sur `overflow="fold"` (wrap multi-lignes) pour ne rien couper.
+    """
+    if not sys.stdout.isatty():
+        return Console(width=200)
+    return Console()
 
 
 def render_list(
@@ -42,19 +46,20 @@ def render_list(
     fmt = config.get_output()
     if fmt == "json":
         import json
-        rprint(json.dumps(items, ensure_ascii=False, indent=2, default=str))
+        print(json.dumps(items, ensure_ascii=False, indent=2, default=str))
         return
     if fmt == "yaml":
         import yaml
-        rprint(yaml.safe_dump(items, allow_unicode=True, sort_keys=False))
+        print(yaml.safe_dump(items, allow_unicode=True, sort_keys=False))
         return
 
     table = Table(title=title)
     for _, label in columns:
-        table.add_column(label, style="white")
+        # Ne jamais tronquer : on wrappe (fold) au lieu de couper avec « … ».
+        table.add_column(label, style="white", overflow="fold", no_wrap=False)
     for item in items:
-        table.add_row(*[_short_for_table(item.get(k)) for k, _ in columns])
-    rprint(table)
+        table.add_row(*[_cell(item.get(k)) for k, _ in columns])
+    _console().print(table)
 
 
 def render_one(item: dict[str, Any], *, title: str) -> None:
@@ -62,21 +67,21 @@ def render_one(item: dict[str, Any], *, title: str) -> None:
     fmt = config.get_output()
     if fmt == "json":
         import json
-        rprint(json.dumps(item, ensure_ascii=False, indent=2, default=str))
+        print(json.dumps(item, ensure_ascii=False, indent=2, default=str))
         return
     if fmt == "yaml":
         import yaml
-        rprint(yaml.safe_dump(item, allow_unicode=True, sort_keys=False))
+        print(yaml.safe_dump(item, allow_unicode=True, sort_keys=False))
         return
 
     table = Table(title=title, show_header=False)
-    table.add_column("Champ", style="cyan", no_wrap=True)
-    table.add_column("Valeur", style="white")
+    table.add_column("Champ", style="cyan", overflow="fold", no_wrap=False)
+    table.add_column("Valeur", style="white", overflow="fold", no_wrap=False)
     for k, v in item.items():
         if isinstance(v, list | dict):
             v = str(v)
         table.add_row(k, "—" if v is None else str(v))
-    rprint(table)
+    _console().print(table)
 
 
 def render_table(
