@@ -1,6 +1,10 @@
 # PyInstaller spec for cetic CLI
 # Build: pyinstaller cetic.spec
+# Cross-build: set PYI_TARGET_ARCH (e.g. x86_64) to override the target architecture.
+import os
+
 block_cipher = None
+target_arch = os.environ.get("PYI_TARGET_ARCH") or None
 
 a = Analysis(
     ['cetic/main.py'],
@@ -69,7 +73,7 @@ exe = EXE(
     runtime_tmpdir=None,
     console=True,
     disable_windowed_traceback=False,
-    target_arch=None,
+    target_arch=target_arch,
     codesign_identity=None,
     entitlements_file=None,
 )
