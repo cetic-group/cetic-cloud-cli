@@ -23,8 +23,16 @@ Download for your platform from the [Releases](https://github.com/cetic-group/ce
 curl -L https://github.com/cetic-group/cetic-cloud-cli/releases/latest/download/cetic-linux-amd64 -o cetic
 chmod +x cetic && sudo mv cetic /usr/local/bin/
 
+# Linux ARM64
+curl -L https://github.com/cetic-group/cetic-cloud-cli/releases/latest/download/cetic-linux-arm64 -o cetic
+chmod +x cetic && sudo mv cetic /usr/local/bin/
+
 # macOS Apple Silicon
 curl -L https://github.com/cetic-group/cetic-cloud-cli/releases/latest/download/cetic-darwin-arm64 -o cetic
+chmod +x cetic && sudo mv cetic /usr/local/bin/
+
+# macOS Intel
+curl -L https://github.com/cetic-group/cetic-cloud-cli/releases/latest/download/cetic-darwin-amd64 -o cetic
 chmod +x cetic && sudo mv cetic /usr/local/bin/
 
 # Windows x86_64 (PowerShell)
