@@ -30,7 +30,7 @@ def credits() -> None:
         {
             "type": t["credit_type"],
             "montant": _eur(t["amount_cents"]),
-            "description": (t.get("description") or "—")[:50],
+            "description": (t.get("description") or "—"),
             "date": t["created_at"][:10],
         }
         for t in c.get("transactions", [])[:20]
@@ -103,7 +103,7 @@ def pricing(
                 "plan": p.get("plan") or "—",
                 "horaire": f"{p['hourly_price_cents']} cts/h",
                 "mensuel": f"{p['monthly_price_eur']:.2f} €",
-                "description": (p.get("description") or "—")[:40],
+                "description": (p.get("description") or "—"),
             }
             for p in items
         ]
@@ -129,7 +129,7 @@ def free_tier() -> None:
             "inclus": str(r["included_quantity"]),
             "consomme": f"{r['consumed_quantity']:.2f}",
             "restant": f"{r['remaining_quantity']:.2f}",
-            "description": (r.get("description") or "—")[:50],
+            "description": (r.get("description") or "—"),
         }
         for r in items
     ]
@@ -289,7 +289,7 @@ def promo_available() -> None:
             "code": p["code"],
             "remise": f"-{p['discount_pct']}%",
             "duree": f"{p['duration_months']} mois",
-            "description": (p.get("description") or "—")[:60],
+            "description": (p.get("description") or "—"),
         }
         for p in items
     ]

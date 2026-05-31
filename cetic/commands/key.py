@@ -113,7 +113,7 @@ def list_keys() -> None:
         return
 
     table = Table(title="Clés SSH")
-    table.add_column("ID", style="dim", no_wrap=True)
+    table.add_column("ID", style="dim", overflow="fold", no_wrap=False)
     table.add_column("Nom", style="cyan")
     table.add_column("Fingerprint", style="white")
     table.add_column("Scope", no_wrap=True)
@@ -123,7 +123,7 @@ def list_keys() -> None:
         scope_val = k.get("scope") or "user"
         style = _SCOPE_STYLE.get(scope_val, "white")
         table.add_row(
-            k["id"][:8] + "…",
+            k["id"],
             k["name"],
             k["fingerprint"],
             f"[{style}]{scope_val}[/{style}]",

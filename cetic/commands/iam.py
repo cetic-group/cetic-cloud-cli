@@ -119,7 +119,7 @@ def roles_list(
             "name": r["name"],
             "kind": "built-in" if r.get("is_built_in") else "custom",
             "statements": str(len((r.get("policy_document") or {}).get("statements") or [])),
-            "description": (r.get("description") or "—")[:50],
+            "description": (r.get("description") or "—"),
         }
         for r in items
     ]
@@ -331,7 +331,7 @@ def builtins_list() -> None:
             "id": r["id"],
             "name": r["name"],
             "statements": str(len((r.get("policy_document") or {}).get("statements") or [])),
-            "description": (r.get("description") or "—")[:60],
+            "description": (r.get("description") or "—"),
         }
         for r in items
     ]
@@ -410,8 +410,8 @@ def who_am_i(
         {
             "role": p.get("role_name", "—"),
             "effect": p.get("effect", "—"),
-            "actions": ",".join(p.get("actions", []))[:40],
-            "resources": ",".join(p.get("resources", []))[:50],
+            "actions": ",".join(p.get("actions", [])),
+            "resources": ",".join(p.get("resources", [])),
             "sid": p.get("statement_sid") or "—",
         }
         for p in perms
@@ -518,8 +518,8 @@ def simulate(
             {
                 "role": m.get("role_name", "—"),
                 "effect": m.get("effect", "—"),
-                "actions": ",".join(m.get("actions", []))[:40],
-                "resources": ",".join(m.get("resources", []))[:50],
+                "actions": ",".join(m.get("actions", [])),
+                "resources": ",".join(m.get("resources", [])),
                 "sid": m.get("statement_sid") or "—",
             }
             for m in matched
