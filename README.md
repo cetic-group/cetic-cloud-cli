@@ -54,7 +54,6 @@ The CLI reads configuration from environment variables (priority over config fil
 | Variable | Description | Default |
 |---|---|---|
 | `CCP_API_KEY` | API key (Bearer token) | — *(required)* |
-| `CCP_API_URL` | API endpoint | `https://api.cloud.cetic-group.com` |
 | `CCP_REGION` | Active region | `RNN` |
 | `CCP_OUTPUT` | Output format | `table` *(table / json / yaml)* |
 | `CCP_LANG` | Language | `fr` *(fr / en)* |
