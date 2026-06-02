@@ -336,7 +336,7 @@ def test_health_404(runner, mock_api):
 # ---------------------------------------------------------------------------
 
 
-def test_listener_add_auto_subdomain(runner, mock_api):
+def test_listener_add_without_acme_warns(runner, mock_api):
     captured: dict[str, Any] = {}
 
     def _capture(request: httpx.Request) -> httpx.Response:
@@ -346,8 +346,7 @@ def test_listener_add_auto_subdomain(runner, mock_api):
             json={
                 "id": LISTENER_ID,
                 "hostname": "web-edge-abc.app.cloud.cetic-group.com",
-                "acme_status": "pending",
-                "custom_domain": False,
+                "acme_status": "none",
             },
         )
 
@@ -360,11 +359,12 @@ def test_listener_add_auto_subdomain(runner, mock_api):
         ],
     )
     assert result.exit_code == 0, result.stdout
-    assert captured["body"]["hostname"] == "web-edge-abc.app.cloud.cetic-group.com"
-    assert captured["body"]["custom_domain"] is False
+    assert captured["body"] == {"hostname": "web-edge-abc.app.cloud.cetic-group.com"}
+    assert "acme_challenge" not in captured["body"]
+    assert "aucun certificat ne sera émis" in result.stdout
 
 
-def test_listener_add_custom_domain(runner, mock_api):
+def test_listener_add_http01(runner, mock_api):
     captured: dict[str, Any] = {}
 
     def _capture(request: httpx.Request) -> httpx.Response:
@@ -374,8 +374,8 @@ def test_listener_add_custom_domain(runner, mock_api):
             json={
                 "id": LISTENER_ID,
                 "hostname": "api.example.com",
+                "acme_challenge": "http01",
                 "acme_status": "pending",
-                "custom_domain": True,
             },
         )
 
@@ -385,11 +385,121 @@ def test_listener_add_custom_domain(runner, mock_api):
         [
             "appgw", "listener", "add", GW_ID,
             "--hostname", "api.example.com",
-            "--custom-domain",
+            "--acme-challenge", "http01",
         ],
     )
     assert result.exit_code == 0, result.stdout
-    assert captured["body"]["custom_domain"] is True
+    assert captured["body"]["hostname"] == "api.example.com"
+    assert captured["body"]["acme_challenge"] == "http01"
+    assert "acme_dns_provider" not in captured["body"]
+    assert "acme_dns_credentials" not in captured["body"]
+    assert "émission certificat en cours" in result.stdout
+
+
+def test_listener_add_dns01_with_provider_and_credentials(runner, mock_api):
+    captured: dict[str, Any] = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            201,
+            json={
+                "id": LISTENER_ID,
+                "hostname": "api.example.com",
+                "acme_challenge": "dns01",
+                "acme_status": "pending",
+            },
+        )
+
+    mock_api.post(f"/v1/app-gateways/{GW_ID}/listeners").mock(side_effect=_capture)
+    result = runner.invoke(
+        app,
+        [
+            "appgw", "listener", "add", GW_ID,
+            "--hostname", "api.example.com",
+            "--acme-challenge", "dns01",
+            "--acme-dns-provider", "cloudflare",
+            "--acme-dns-credential", "api_token=xxx",
+            "--acme-dns-credential", "zone_id=z1",
+        ],
+    )
+    assert result.exit_code == 0, result.stdout
+    assert captured["body"]["acme_challenge"] == "dns01"
+    assert captured["body"]["acme_dns_provider"] == "cloudflare"
+    assert captured["body"]["acme_dns_credentials"] == {
+        "api_token": "xxx",
+        "zone_id": "z1",
+    }
+
+
+def test_listener_add_dns01_without_provider_fails(runner, mock_api):
+    result = runner.invoke(
+        app,
+        [
+            "appgw", "listener", "add", GW_ID,
+            "--hostname", "api.example.com",
+            "--acme-challenge", "dns01",
+            "--acme-dns-credential", "api_token=xxx",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "dns01" in result.stdout
+    assert "--acme-dns-provider" in result.stdout
+
+
+def test_listener_add_dns01_without_credential_fails(runner, mock_api):
+    result = runner.invoke(
+        app,
+        [
+            "appgw", "listener", "add", GW_ID,
+            "--hostname", "api.example.com",
+            "--acme-challenge", "dns01",
+            "--acme-dns-provider", "cloudflare",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "--acme-dns-credential" in result.stdout
+
+
+def test_listener_add_invalid_acme_challenge_fails(runner, mock_api):
+    result = runner.invoke(
+        app,
+        [
+            "appgw", "listener", "add", GW_ID,
+            "--hostname", "api.example.com",
+            "--acme-challenge", "tls01",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "--acme-challenge" in result.stdout
+
+
+def test_listener_add_credential_missing_equals_fails(runner, mock_api):
+    result = runner.invoke(
+        app,
+        [
+            "appgw", "listener", "add", GW_ID,
+            "--hostname", "api.example.com",
+            "--acme-challenge", "dns01",
+            "--acme-dns-provider", "cloudflare",
+            "--acme-dns-credential", "noequals",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "KEY=VALUE" in result.stdout
+
+
+def test_listener_add_custom_domain_flag_removed(runner, mock_api):
+    """Le flag --custom-domain a été retiré (no-op) → doit échouer."""
+    result = runner.invoke(
+        app,
+        [
+            "appgw", "listener", "add", GW_ID,
+            "--hostname", "api.example.com",
+            "--custom-domain",
+        ],
+    )
+    assert result.exit_code != 0
 
 
 def test_listener_add_422_error(runner, mock_api):
