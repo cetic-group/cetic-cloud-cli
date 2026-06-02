@@ -29,6 +29,24 @@ from cetic.commands._render import render_list, render_one
 
 APPGW_PATH = "/v1/app-gateways"
 
+_ACME_CHALLENGES = ("http01", "dns01")
+
+
+def _parse_credentials(entries: list[str]) -> dict[str, str]:
+    """["api_token=xxx", ...] → {"api_token": "xxx"} ; ValueError si pas de '='."""
+    out: dict[str, str] = {}
+    for raw in entries:
+        if "=" not in raw:
+            raise ValueError(
+                f"Credential « {raw} » invalide. Format attendu : KEY=VALUE."
+            )
+        key, value = raw.split("=", 1)
+        key = key.strip()
+        if not key:
+            raise ValueError(f"Credential « {raw} » : clé manquante.")
+        out[key] = value
+    return out
+
 app = typer.Typer(help="Application Gateways L7 — routage HTTP/HTTPS managé")
 listener_app = typer.Typer(help="Listeners (hostnames + certificats SNI)")
 tg_app = typer.Typer(help="Target groups (pools de backends + health check)")
@@ -326,33 +344,94 @@ def listener_add(
         ..., "--hostname",
         help="Hostname à servir (ex: api.example.com)",
     ),
-    custom_domain: bool = typer.Option(
-        False, "--custom-domain",
+    acme_challenge: str | None = typer.Option(
+        None, "--acme-challenge",
         help=(
-            "Le hostname est un domaine custom du client (CNAME requis vers CETIC). "
-            "Active la validation DNS-01 pour Let's Encrypt."
+            "Challenge ACME pour émettre un certificat Let's Encrypt : "
+            "http01 ou dns01. Sans cette option, aucun certificat n'est émis."
         ),
     ),
+    acme_dns_provider: str | None = typer.Option(
+        None, "--acme-dns-provider",
+        help="Provider DNS pour dns01 (cf. cetic appgw acme-providers).",
+    ),
+    acme_dns_credential: list[str] = typer.Option(  # noqa: B008 — Typer pattern
+        None, "--acme-dns-credential",
+        help="Credential DNS, répétable. Format : KEY=VALUE (ex: api_token=xxx).",
+    ),
 ) -> None:
-    """Ajoute un listener (hostname + certificat Let's Encrypt automatique).
+    """Ajoute un listener (hostname + certificat Let's Encrypt optionnel).
+
+    Sans `--acme-challenge`, le listener est créé sans certificat (HTTP seul, ou
+    SNI à configurer ultérieurement). Pour émettre un certificat Let's Encrypt,
+    précisez le challenge ACME :
+      • http01 : validation par fichier HTTP (le hostname doit pointer vers la GW)
+      • dns01  : validation par enregistrement DNS (provider + credentials requis)
 
     Exemples :
-      # Sous-domaine ccp auto
+      # Listener sans certificat
       cetic appgw listener add web-edge --hostname myapp-xyz.app.cloud.cetic-group.com
 
-      # Custom domain (CNAME tenant → CETIC requis)
-      cetic appgw listener add web-edge --hostname api.example.com --custom-domain
+      # Certificat Let's Encrypt via HTTP-01
+      cetic appgw listener add web-edge --hostname api.example.com \\
+        --acme-challenge http01
+
+      # Certificat Let's Encrypt via DNS-01 (provider + credentials requis)
+      cetic appgw listener add web-edge --hostname api.example.com \\
+        --acme-challenge dns01 \\
+        --acme-dns-provider cloudflare --acme-dns-credential api_token=xxx
     """
+    acme_dns_credential = acme_dns_credential or []
+
+    body: dict[str, Any] = {"hostname": hostname}
+
+    if acme_challenge is not None:
+        if acme_challenge not in _ACME_CHALLENGES:
+            rprint(
+                f"[red]Erreur : --acme-challenge doit être l'un de "
+                f"{', '.join(_ACME_CHALLENGES)}.[/red]"
+            )
+            raise typer.Exit(1)
+        body["acme_challenge"] = acme_challenge
+        if acme_challenge == "dns01":
+            if not acme_dns_provider:
+                rprint(
+                    "[red]Erreur : le challenge dns01 requiert "
+                    "--acme-dns-provider (cf. cetic appgw acme-providers).[/red]"
+                )
+                raise typer.Exit(1)
+            if not acme_dns_credential:
+                rprint(
+                    "[red]Erreur : le challenge dns01 requiert au moins "
+                    "un --acme-dns-credential KEY=VALUE.[/red]"
+                )
+                raise typer.Exit(1)
+            try:
+                creds = _parse_credentials(acme_dns_credential)
+            except ValueError as e:
+                rprint(f"[red]Erreur : {e}[/red]")
+                raise typer.Exit(1)
+            body["acme_dns_provider"] = acme_dns_provider
+            body["acme_dns_credentials"] = creds
+
     gid = _resolve_appgw(id_or_name)
-    body: dict[str, Any] = {"hostname": hostname, "custom_domain": custom_domain}
     try:
         listener = client.post(f"{APPGW_PATH}/{gid}/listeners", json=body)
     except client.APIError as e:
         raise _bail(e) from e
-    rprint(
-        f"[green]✓[/green] Listener ajouté : [bold]{listener.get('hostname', hostname)}[/bold] "
-        f"(émission certificat en cours, statut: {listener.get('acme_status', 'pending')})"
-    )
+
+    name = listener.get("hostname", hostname)
+    if acme_challenge is not None:
+        rprint(
+            f"[green]✓[/green] Listener ajouté : [bold]{name}[/bold] "
+            f"(émission certificat en cours, statut: "
+            f"{listener.get('acme_status', 'pending')})"
+        )
+    else:
+        rprint(f"[green]✓[/green] Listener ajouté : [bold]{name}[/bold]")
+        rprint(
+            "[yellow]⚠ aucun certificat ne sera émis (pas de --acme-challenge).[/yellow]"
+        )
 
 
 @listener_app.command(name="list")
@@ -369,8 +448,8 @@ def listener_list(
         {
             "id": item["id"],
             "hostname": item.get("hostname", "—"),
+            "acme_challenge": item.get("acme_challenge") or "—",
             "acme_status": item.get("acme_status", "—"),
-            "custom_domain": "oui" if item.get("custom_domain") else "non",
             "last_renewal": (item.get("acme_last_renewal_at") or "—")[:10],
         }
         for item in items
@@ -381,8 +460,8 @@ def listener_list(
         columns=[
             ("id", "ID"),
             ("hostname", "Hostname"),
+            ("acme_challenge", "Challenge"),
             ("acme_status", "Cert"),
-            ("custom_domain", "Custom"),
             ("last_renewal", "Renouvelé le"),
         ],
     )
