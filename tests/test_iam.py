@@ -581,8 +581,8 @@ def test_simulate_explicit_principal(runner, mock_api):
 
 def test_iam_app_registered_in_main():
     from cetic.main import app as main_app
-    typer_groups = [g.typer_instance for g in main_app.registered_groups if g.typer_instance is not None]
-    assert any(g.info.name == "iam" for g in typer_groups), \
+    group_names = [g.name for g in main_app.registered_groups if g.typer_instance is not None]
+    assert "iam" in group_names, \
         "iam_app non enregistré dans main.app"
 
 
