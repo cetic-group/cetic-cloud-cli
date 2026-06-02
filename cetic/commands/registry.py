@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import time
 from typing import Any
+from urllib.parse import unquote
 
 import typer
 from rich import print as rprint
@@ -682,7 +683,10 @@ def repos(
             m = re.search(r"[?&]last=([^&]+)", next_url)
             if not m:
                 break
-            params = {"n": limit, "last": m.group(1)}
+            # Le header Link est percent-encodé (`myapp%2Fb`) ; on décode avant
+            # de le repasser en paramètre, sinon httpx ré-encode le `%` → `%252F`
+            # (double-encodage) et le curseur envoyé au registry est corrompu.
+            params = {"n": limit, "last": unquote(m.group(1))}
     except client.APIError as e:
         raise _bail(e) from e
     # Normalize : Distribution renvoie souvent juste {"repositories": ["foo/bar"]}
