@@ -21,7 +21,7 @@ def list_ips(region: str | None = typer.Option(None, "--region", "-r")) -> None:
         {"id": p["id"], "address": p.get("ip_address") or "—",
          "label": p.get("label") or "—",
          "region": p["region"], "status": p["status"],
-         "attached_to": (p.get("container_instance_id") or p.get("vm_instance_id")
+         "attached_to": (p.get("container_id") or p.get("vm_instance_id")
                          or p.get("load_balancer_id") or "—")}
         for p in items
     ]
