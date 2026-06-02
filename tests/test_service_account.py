@@ -220,6 +220,6 @@ def test_revoke_404_french(runner, mock_api):
 def test_service_account_app_registered_in_main():
     from cetic.main import app as main_app
 
-    typer_groups = [g.typer_instance for g in main_app.registered_groups if g.typer_instance is not None]
-    assert any(g.info.name == "service-account" for g in typer_groups), \
+    group_names = [g.name for g in main_app.registered_groups if g.typer_instance is not None]
+    assert "service-account" in group_names, \
         "service_account_app non enregistré dans main.app"
