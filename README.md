@@ -106,12 +106,14 @@ limit, IP allow/deny, WAF, CORS, basic auth) — tout en un seul produit.
 2. **Ajouter un listener** (hostname + cert ACME automatique) :
 
    ```bash
-   # Sous-domaine ccp auto (pas besoin de DNS client)
+   # Domaine pointant déjà vers la gateway (challenge HTTP-01)
    cetic appgw listener add web-edge \
-     --hostname web-edge-abc.app.cloud.cetic-group.com
+     --hostname web-edge-abc.app.cloud.cetic-group.com --acme-challenge http01
 
-   # Domaine custom (CNAME requis vers CETIC + validation DNS-01)
-   cetic appgw listener add web-edge --hostname api.example.com --custom-domain
+   # Domaine custom validé par DNS (challenge DNS-01 + credentials provider)
+   cetic appgw listener add web-edge --hostname api.example.com \
+     --acme-challenge dns01 --acme-dns-provider cloudflare \
+     --acme-dns-credential api_token=xxx
    ```
 
 3. **Créer un target group + ajouter des backends** (containers, VMs, ou IPs) :
@@ -246,11 +248,21 @@ cetic bucket create --name backups --region RNN
 cetic vpc list
 cetic vpc create --name prod --region RNN --cidr 10.10.0.0/16
 cetic ip list
-cetic ip allocate --region RNN
+cetic ip allocate --region RNN --label passerelle-prod --description "IP fixe de prod"
+cetic ip allocate --region RNN --quantity 3 --label ip-fixe-api   # 3 IPs d'un coup
+cetic ip update <ip-uuid> --label nouveau-nom
+
+# Load Balancers L4 avec certificat Let's Encrypt (depuis v0.19.0)
+cetic lb create --name web-lb --region RNN --vnet <vnet-uuid> \
+  --listener-protocol https --listener-port 443 \
+  --domain www.example.com --acme-challenge http01 \
+  --backend container:<ct-uuid>:8080
+cetic lb acme-providers                                      # catalogue DNS-01
+cetic lb backend add <lb-uuid> <listener-uuid> --container <ct-uuid> --port 8080
 
 # Application Gateways (L7 HTTP/HTTPS routing, depuis v0.11.0)
 cetic appgw create --name web-edge --region RNN --plan small --vpc prod --vnet web-tier
-cetic appgw listener add web-edge --hostname api.example.com --custom-domain
+cetic appgw listener add web-edge --hostname api.example.com --acme-challenge http01
 cetic appgw tg create web-edge --name api-pool
 cetic appgw tg member add web-edge --tg-id <tg-uuid> --container <ct-uuid> --port 8080
 cetic appgw route create web-edge --listener-id <lst-uuid> --target-group-id <tg-uuid> \
