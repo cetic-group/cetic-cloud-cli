@@ -66,7 +66,7 @@ tests/
   auto depuis `~/.config/cetic/config.toml` au 1er run) ; header `X-CCP-Client: cli` +
   `User-Agent: cetic-cli/<version>` sur toutes les requêtes (alimente l'audit trail
   plateforme) ; fix `config view` (préfixe `CCP_` au lieu de `CL_` pour détecter la
-  source env). PR #<n>.
+  source env). PR #14.
 - `v0.19.1` — fix : `registry repos --all` double-encodait le curseur de pagination (`%2F` → `%252F`) ;
   fix tests iam/service-account (assertion sur registered_groups). PR #13.
 - `v0.19.0` — feat : `ip allocate --label/--description/--quantity` (batch 1-8) + `ip update` + colonne
