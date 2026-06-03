@@ -25,10 +25,15 @@ def _get_token() -> str | None:
 
 
 def _headers() -> dict[str, str]:
+    from cetic import __version__
+    headers = {
+        "X-CCP-Client": "cli",
+        "User-Agent": f"cetic-cli/{__version__}",
+    }
     token = _get_token()
     if token:
-        return {"Authorization": f"Bearer {token}"}
-    return {}
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
 
 
 def get(path: str, params: dict[str, Any] | None = None) -> Any:
