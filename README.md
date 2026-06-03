@@ -247,8 +247,8 @@ cetic bucket list
 cetic bucket create --name backups --region RNN
 
 # Networking
-cetic vpc list
-cetic vpc create --name prod --region RNN --cidr 10.10.0.0/16
+cetic vpc list                                              # colonne CIDR (— si non assigné)
+cetic vpc create --name prod --region RNN --cidr 10.10.0.0/16   # --cidr optionnel (RFC1918, /16-/24), auto-alloué si omis
 cetic ip list
 cetic ip allocate --region RNN --label passerelle-prod --description "IP fixe de prod"
 cetic ip allocate --region RNN --quantity 3 --label ip-fixe-api   # 3 IPs d'un coup
