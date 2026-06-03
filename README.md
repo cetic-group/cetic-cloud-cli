@@ -49,7 +49,7 @@ pip install git+https://github.com/cetic-group/cetic-cloud-cli.git
 
 ## Configuration
 
-The CLI reads configuration from environment variables (priority over config file `~/.config/cetic/config.toml`) :
+The CLI reads configuration from environment variables (priority over the config file `~/.ccp/config`) :
 
 | Variable | Description | Default |
 |---|---|---|
@@ -57,6 +57,8 @@ The CLI reads configuration from environment variables (priority over config fil
 | `CCP_REGION` | Active region | `RNN` |
 | `CCP_OUTPUT` | Output format | `table` *(table / json / yaml)* |
 | `CCP_LANG` | Language | `fr` *(fr / en)* |
+
+> Upgrading from a previous version? Your old config (`~/.config/cetic/config.toml`) is migrated automatically to `~/.ccp/config` on first run.
 
 Generate an API key in the CETIC Cloud console under **Settings → API Keys**, or use `cetic auth login` for interactive authentication.
 

@@ -19,7 +19,7 @@ SETTABLE_KEYS = {
 @app.command()
 def view() -> None:
     """Affiche toute la configuration courante."""
-    table = Table(title="Configuration lake")
+    table = Table(title="Configuration CETIC Cloud")
     table.add_column("Clé", style="cyan")
     table.add_column("Valeur", style="white")
     table.add_column("Source", style="dim")
@@ -27,7 +27,7 @@ def view() -> None:
     import os
 
     for key, val in config.view_all().items():
-        source = "env" if os.environ.get(f"CL_{key.upper()}") else "fichier"
+        source = "env" if os.environ.get(f"CCP_{key.upper()}") else "fichier"
         table.add_row(key, val or "[dim]—[/dim]", source)
 
     rprint(table)
