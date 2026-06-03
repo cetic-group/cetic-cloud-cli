@@ -27,13 +27,14 @@ def list_vpcs() -> None:
         raise typer.Exit(1)
     rows = [
         {"id": v["id"], "name": v["name"], "region": v["region"],
+         "cidr": v.get("cidr") or "—",
          "status": v.get("status", "—"),
          "vnets": len(v.get("vnets", []))}
         for v in items
     ]
     render_list(rows, title=f"VPCs ({len(rows)})",
                 columns=[("id", "ID"), ("name", "Nom"), ("region", "Région"),
-                         ("status", "Statut"), ("vnets", "VNets")])
+                         ("cidr", "CIDR"), ("status", "Statut"), ("vnets", "VNets")])
 
 
 @app.command()
@@ -51,10 +52,16 @@ def get(vpc_id: str = typer.Argument(...)) -> None:
 def create(
     name: str = typer.Option(..., "--name", "-n"),
     region: str = typer.Option(..., "--region", "-r"),
+    cidr: str | None = typer.Option(
+        None, "--cidr",
+        help="Bloc d'adressage privé du VPC (RFC1918, /16-/24). Auto-alloué si omis."),
 ) -> None:
     """Crée un VPC."""
+    json: dict = {"name": name, "region": region}
+    if cidr:
+        json["cidr"] = cidr
     try:
-        v = client.post("/v1/vpcs", json={"name": name, "region": region})
+        v = client.post("/v1/vpcs", json=json)
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
