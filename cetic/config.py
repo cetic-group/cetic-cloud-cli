@@ -1,9 +1,11 @@
 """Gestion de la configuration CLI CETIC Cloud Platform.
 
-Stockage : fichier TOML dans le répertoire de config utilisateur.
-  Linux   : ~/.config/cetic/config.toml
-  macOS   : ~/Library/Application Support/cetic/config.toml
-  Windows : %APPDATA%/cetic/config.toml
+Stockage : fichier TOML dans ``~/.ccp/config`` (même chemin sur tous les OS).
+
+Migration auto : au premier accès, si ``~/.ccp/config`` n'existe pas mais que
+l'ancien fichier ``~/.config/cetic/config.toml`` (ou équivalent platformdirs)
+existe, son contenu est copié vers le nouveau chemin. L'ancien fichier est
+laissé en place (plus jamais lu).
 
 Variables d'environnement (prioritaires sur le fichier) :
   CCP_API_KEY    — clé API CETIC Cloud
@@ -33,14 +35,35 @@ VALID_LANGS = ("fr", "en")
 
 
 def config_dir() -> Path:
-    return Path(platformdirs.user_config_dir(_APP_NAME))
+    return Path.home() / ".ccp"
 
 
 def config_file() -> Path:
-    return config_dir() / "config.toml"
+    return config_dir() / "config"
+
+
+def _legacy_config_file() -> Path:
+    """Ancien emplacement (platformdirs) — lu une seule fois pour migration."""
+    return Path(platformdirs.user_config_dir(_APP_NAME)) / "config.toml"
+
+
+def _migrate_legacy_if_needed() -> None:
+    """Copie l'ancien fichier vers ~/.ccp/config au premier accès (best-effort)."""
+    new = config_file()
+    if new.exists():
+        return
+    old = _legacy_config_file()
+    if not old.exists():
+        return
+    try:
+        config_dir().mkdir(parents=True, exist_ok=True)
+        new.write_text(old.read_text(encoding="utf-8"), encoding="utf-8")
+    except Exception:
+        pass  # best-effort — un échec de migration ne bloque pas la CLI
 
 
 def _load_file() -> dict[str, Any]:
+    _migrate_legacy_if_needed()
     path = config_file()
     if not path.exists():
         return {}
