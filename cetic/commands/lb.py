@@ -4,11 +4,18 @@ import typer
 from rich import print as rprint
 
 from cetic import client
+from cetic.commands._catalog import render_compute_plans
 from cetic.commands._render import render_list, render_one
 
 app = typer.Typer(help="Load Balancers CETIC Cloud")
 backend_app = typer.Typer(help="Backends d'un listener LB")
 app.add_typer(backend_app, name="backend")
+
+
+@app.command()
+def plans() -> None:
+    """Liste les plans Load Balancer disponibles (lb-small/medium/large)."""
+    render_compute_plans(kind="lb", title="Plans Load Balancer")
 
 _LB_PLANS = ("small", "medium", "large")
 _LB_PROTOCOLS = ("tcp", "http", "https")

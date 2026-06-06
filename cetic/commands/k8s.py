@@ -206,11 +206,11 @@ def create(
     vpc_id: str = typer.Option(..., "--vpc"),
     vnet_id: str = typer.Option(..., "--vnet"),
     k8s_version: str = typer.Option("v1.31.0", "--version"),
-    os_template_key: str = typer.Option(..., "--template", help="Clé de template QEMU (ex: clks-capi-debian-13)"),
+    os_template_key: str = typer.Option(..., "--template", help="Clé de template OS (ex: clks-capi-debian-13)"),
     tier: str = typer.Option(
         "dev",
         "--tier",
-        help="Tier: dev=1 LXC proxy, prod=2 LXC HA actif/passif",
+        help="Tier: dev=frontal unique, prod=frontal redondant (bascule auto)",
         case_sensitive=False,
     ),
     # Pool initial
