@@ -144,6 +144,34 @@ def test_vm_scale_set_plans_filters_kind_vm(runner, mock_api):
     assert captured["params"].get("kind") == "vm"
 
 
+def test_lb_plans_filters_kind_lb(runner, mock_api):
+    captured: dict[str, Any] = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["params"] = dict(request.url.params)
+        return httpx.Response(200, json=[_compute_plan("lb-small", kind="lb")])
+
+    mock_api.get("/v1/compute/plans").mock(side_effect=_capture)
+    result = runner.invoke(app, ["lb", "plans"])
+    assert result.exit_code == 0, result.stdout
+    assert captured["params"].get("kind") == "lb"
+    assert "lb-small" in result.stdout
+
+
+def test_appgw_plans_filters_kind_appgw(runner, mock_api):
+    captured: dict[str, Any] = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["params"] = dict(request.url.params)
+        return httpx.Response(200, json=[_compute_plan("appgw-medium", kind="appgw")])
+
+    mock_api.get("/v1/compute/plans").mock(side_effect=_capture)
+    result = runner.invoke(app, ["appgw", "plans"])
+    assert result.exit_code == 0, result.stdout
+    assert captured["params"].get("kind") == "appgw"
+    assert "appgw-medium" in result.stdout
+
+
 def test_container_plans_json_exposes_price(runner, mock_api, monkeypatch):
     monkeypatch.setenv("CCP_OUTPUT", "json")
     mock_api.get("/v1/compute/plans").mock(

@@ -92,7 +92,7 @@ def plans() -> None:
 
 @container_app.command()
 def templates() -> None:
-    """Liste les templates container (LXC) disponibles."""
+    """Liste les templates container (CT) disponibles."""
     render_lxc_templates()
 
 

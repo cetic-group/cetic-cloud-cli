@@ -60,8 +60,14 @@ tests/
 
 ## Versions
 
-**Latest : `v0.22.0`** (2026-06-06)
+**Latest : `v0.23.0`** (2026-06-06)
 
+- `v0.23.0` — feat : `cetic lb plans` (kind=lb) + `cetic appgw plans` (kind=appgw)
+  — complète le catalogue compute v0.22.0 (LB + AppGw manquaient). Anti-leak :
+  help `container` « Containers (LXC) » → « (CT) », templates « LXC »/« QEMU » →
+  « système (CT) »/« système (VM) », help `k8s --tier` reformulé (plus de « LXC
+  proxy / HA actif/passif » → « frontal unique / frontal redondant (bascule
+  auto) »). Endpoint inchangé : `GET /v1/compute/plans?kind=lb|appgw`.
 - `v0.22.0` — feat : commandes de catalogue compute (plans + templates + templates
   custom) calquées sur `cetic db <engine> plans`. Helper partagé
   `commands/_catalog.py` (compute_plans/templates LXC/QEMU/custom). `cetic container

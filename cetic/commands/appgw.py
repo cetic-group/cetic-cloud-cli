@@ -25,6 +25,7 @@ from rich import print as rprint
 
 from cetic import client
 from cetic._resolve import resolve_id
+from cetic.commands._catalog import render_compute_plans
 from cetic.commands._render import render_list, render_one
 
 APPGW_PATH = "/v1/app-gateways"
@@ -57,6 +58,12 @@ app.add_typer(listener_app, name="listener")
 app.add_typer(tg_app, name="tg")
 tg_app.add_typer(tg_member_app, name="member")
 app.add_typer(route_app, name="route")
+
+
+@app.command()
+def plans() -> None:
+    """Liste les plans Application Gateway (appgw-small/medium/large)."""
+    render_compute_plans(kind="appgw", title="Plans Application Gateway")
 
 
 # ---------------------------------------------------------------------------

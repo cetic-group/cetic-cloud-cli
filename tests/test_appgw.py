@@ -1678,11 +1678,11 @@ def test_appgw_app_command_count():
         return {c.name or c.callback.__name__.replace("_", "-") for c in commands}
 
     top_level = _names(appgw.app.registered_commands)
-    # list, get, create, delete, attach-ip, detach-ip, health, acme-providers
-    assert len(top_level) == 8, top_level
+    # list, get, create, delete, attach-ip, detach-ip, health, acme-providers, plans
+    assert len(top_level) == 9, top_level
     for expected in (
         "list", "get", "create", "delete",
-        "attach-ip", "detach-ip", "health", "acme-providers",
+        "attach-ip", "detach-ip", "health", "acme-providers", "plans",
     ):
         assert expected in top_level, f"{expected} manquant dans {top_level}"
 
@@ -1711,7 +1711,7 @@ def test_appgw_app_command_count():
         + len(tg_member_cmds)
         + len(route_cmds)
     )
-    assert total == 24
+    assert total == 25  # +1 : `plans` (v0.23.0)
 
 
 def test_format_api_error_messages():

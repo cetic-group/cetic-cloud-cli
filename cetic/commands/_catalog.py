@@ -86,7 +86,7 @@ def render_lxc_templates(include_infra: bool = False) -> None:
     ]
     render_list(
         rows,
-        title=f"Templates container (LXC) ({len(rows)})",
+        title=f"Templates container (CT) ({len(rows)})",
         columns=[("key", "Clé"), ("display_name", "Nom"), ("défaut", "Défaut")],
     )
 

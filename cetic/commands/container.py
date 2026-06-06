@@ -11,7 +11,7 @@ from cetic.commands._catalog import (
 )
 from cetic.commands._render import render_list, render_one
 
-app = typer.Typer(help="Containers (LXC) CETIC Cloud")
+app = typer.Typer(help="Containers (CT) CETIC Cloud")
 
 
 @app.command(name="list")
@@ -162,7 +162,7 @@ def templates(
         help="Inclure les templates d'infrastructure interne (réservés CETIC).",
     ),
 ) -> None:
-    """Liste les templates container (LXC) disponibles."""
+    """Liste les templates container (CT) disponibles."""
     render_lxc_templates(include_infra)
 
 
