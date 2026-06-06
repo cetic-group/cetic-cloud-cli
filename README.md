@@ -236,10 +236,25 @@ cetic vm create --name web-01 --region RNN --plan small
 cetic container list
 cetic container create --name api --plan small --template ubuntu-24.04
 
+# Catalogue compute (depuis v0.22.0) — plans, templates système, templates custom
+cetic container plans                 # plans nano..xlarge (vCPU/RAM/disque/€)
+cetic container templates             # templates LXC système (Debian/Ubuntu/…)
+cetic container custom-templates      # snapshots LXC réutilisables de l'org
+cetic vm plans
+cetic vm templates                    # templates QEMU système
+cetic vm custom-templates             # snapshots VM réutilisables de l'org
+cetic scale-set plans                 # idem pour les container scale sets
+cetic scale-set templates
+cetic vm-scale-set plans
+cetic vm-scale-set templates
+
 # Kubernetes
 cetic k8s list
 cetic k8s create --name prod --region RNN --pool-plan medium --pool-min 1 --pool-max 5
 cetic k8s kubeconfig <cluster-id> > ~/.kube/config
+cetic k8s plans                       # plans node pool (restriction CCKS appliquée)
+cetic k8s versions                    # versions Kubernetes disponibles par région
+cetic k8s templates                   # images OS CAPI (clé --template à la création)
 
 # Storage
 cetic volume list
