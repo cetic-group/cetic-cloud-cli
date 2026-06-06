@@ -4,6 +4,11 @@ import typer
 from rich import print as rprint
 
 from cetic import client
+from cetic.commands._catalog import (
+    render_compute_plans,
+    render_custom_templates,
+    render_lxc_templates,
+)
 from cetic.commands._render import render_list, render_one
 
 app = typer.Typer(help="Containers (LXC) CETIC Cloud")
@@ -139,6 +144,32 @@ def reboot(container_id: str = typer.Argument(...)) -> None:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
     rprint("[green]✓[/green] Redémarrage demandé.")
+
+
+# ── Catalogue (plans & templates) ─────────────────────────────────────────
+
+
+@app.command()
+def plans() -> None:
+    """Liste les plans compute disponibles (partagés VM/container)."""
+    render_compute_plans(kind="container", title="Plans container")
+
+
+@app.command()
+def templates(
+    include_infra: bool = typer.Option(
+        False, "--include-infra",
+        help="Inclure les templates d'infrastructure interne (réservés CETIC).",
+    ),
+) -> None:
+    """Liste les templates container (LXC) disponibles."""
+    render_lxc_templates(include_infra)
+
+
+@app.command(name="custom-templates")
+def custom_templates() -> None:
+    """Liste les templates custom container de l'organisation (snapshots réutilisables)."""
+    render_custom_templates(template_type="container")
 
 
 # ── Snapshots ─────────────────────────────────────────────────────────────

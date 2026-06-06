@@ -4,6 +4,7 @@ import typer
 from rich import print as rprint
 
 from cetic import client
+from cetic.commands._catalog import render_compute_plans
 from cetic.commands._render import render_list, render_one
 
 
@@ -127,6 +128,75 @@ def kubeconfig(
         print(kc["kubeconfig"])
     else:
         print(kc)
+
+
+@app.command()
+def plans() -> None:
+    """Liste les plans utilisables pour les node pools K8s (CCKS).
+
+    Restriction CCKS : seuls les plans assez grands pour kubelet + CNI sont
+    proposés (les variantes nano/micro sont exclues côté backend).
+    """
+    render_compute_plans(kind="k8s_node", title="Plans node pool K8s")
+
+
+@app.command()
+def versions(
+    region: str | None = typer.Option(None, "--region", "-r", help="Filtrer par région"),
+) -> None:
+    """Liste les versions Kubernetes disponibles (images CAPI buildées)."""
+    try:
+        data = client.get("/v1/k8s/templates", params={"region": region} if region else None)
+    except client.APIError as e:
+        rprint(f"[red]Erreur : {e.detail}[/red]")
+        raise typer.Exit(1)
+    # Une version peut exister sur plusieurs OS/régions ; on dédoublonne par
+    # (version, région) et on agrège les OS proposés.
+    seen: dict[tuple[str, str], dict] = {}
+    for t in data:
+        ver = t.get("k8s_version", "")
+        reg = t.get("region", "—")
+        key = (ver, reg)
+        row = seen.setdefault(key, {"version": ver, "region": reg, "_os": set()})
+        if t.get("os_label"):
+            row["_os"].add(t["os_label"])
+    rows = [
+        {"version": r["version"], "region": r["region"], "os": ", ".join(sorted(r["_os"])) or "—"}
+        for r in seen.values()
+    ]
+    rows.sort(key=lambda r: (r["region"], r["version"]))
+    render_list(rows, title=f"Versions Kubernetes ({len(rows)})",
+                columns=[("version", "Version"), ("region", "Région"), ("os", "OS")])
+
+
+@app.command()
+def templates(
+    region: str | None = typer.Option(None, "--region", "-r", help="Filtrer par région"),
+) -> None:
+    """Liste les templates OS Kubernetes disponibles (images CAPI buildées).
+
+    La clé (`--template` à la création) est l'`os_key` (ex `kube-v1-34-6`).
+    """
+    try:
+        data = client.get("/v1/k8s/templates", params={"region": region} if region else None)
+    except client.APIError as e:
+        rprint(f"[red]Erreur : {e.detail}[/red]")
+        raise typer.Exit(1)
+    rows = [
+        {
+            "os_key": t.get("os_key", ""),
+            "display_name": t.get("display_name", ""),
+            "k8s_version": t.get("k8s_version", "—"),
+            "os": t.get("os_label", "—"),
+            "region": t.get("region", "—"),
+            "built_at": (t.get("built_at") or "")[:10],
+        }
+        for t in data
+    ]
+    render_list(rows, title=f"Templates Kubernetes ({len(rows)})",
+                columns=[("os_key", "Clé"), ("display_name", "Nom"),
+                         ("k8s_version", "Version"), ("os", "OS"),
+                         ("region", "Région"), ("built_at", "Buildé le")])
 
 
 @app.command()

@@ -60,8 +60,18 @@ tests/
 
 ## Versions
 
-**Latest : `v0.20.0`** (2026-06-03)
+**Latest : `v0.22.0`** (2026-06-06)
 
+- `v0.22.0` — feat : commandes de catalogue compute (plans + templates + templates
+  custom) calquées sur `cetic db <engine> plans`. Helper partagé
+  `commands/_catalog.py` (compute_plans/templates LXC/QEMU/custom). `cetic container
+  plans|templates|custom-templates`, `cetic vm plans|templates|custom-templates`,
+  `cetic scale-set plans|templates`, `cetic vm-scale-set plans|templates`, `cetic
+  k8s plans|versions|templates`. Endpoints backend : `GET /v1/compute/plans`
+  (`?kind=container|vm|k8s_node`), `/v1/templates`, `/v1/qemu-templates`,
+  `/v1/custom-templates` (filtré client-side par `template_type`), `/v1/k8s/templates`.
+  Plans compute partagés VM/container → factorisés mais exposés par sous-app.
+- `v0.21.0` — feat : `vpc create --cidr` + colonne CIDR (cascade VPC CIDR block CCP v2.12.0).
 - `v0.20.0` — feat : fichier de config déplacé vers `~/.ccp/config` (TOML, migration
   auto depuis `~/.config/cetic/config.toml` au 1er run) ; header `X-CCP-Client: cli` +
   `User-Agent: cetic-cli/<version>` sur toutes les requêtes (alimente l'audit trail

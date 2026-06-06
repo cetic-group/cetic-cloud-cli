@@ -4,6 +4,11 @@ import typer
 from rich import print as rprint
 
 from cetic import client
+from cetic.commands._catalog import (
+    render_compute_plans,
+    render_lxc_templates,
+    render_qemu_templates,
+)
 from cetic.commands._render import render_list, render_one
 
 container_app = typer.Typer(help="Container Scale Sets CETIC Cloud")
@@ -79,6 +84,18 @@ def delete(
     rprint("[green]✓[/green] Scale set supprimé.")
 
 
+@container_app.command()
+def plans() -> None:
+    """Liste les plans compute disponibles (partagés VM/container)."""
+    render_compute_plans(kind="container", title="Plans container scale set")
+
+
+@container_app.command()
+def templates() -> None:
+    """Liste les templates container (LXC) disponibles."""
+    render_lxc_templates()
+
+
 @vm_app.command(name="list")
 def list_vmss(region: str | None = typer.Option(None, "--region", "-r")) -> None:
     """Liste les VM scale sets."""
@@ -120,3 +137,15 @@ def delete(
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
     rprint("[green]✓[/green] VM scale set supprimé.")
+
+
+@vm_app.command()
+def plans() -> None:
+    """Liste les plans compute disponibles (partagés VM/container)."""
+    render_compute_plans(kind="vm", title="Plans VM scale set")
+
+
+@vm_app.command()
+def templates() -> None:
+    """Liste les templates VM (QEMU) disponibles."""
+    render_qemu_templates()

@@ -4,6 +4,11 @@ import typer
 from rich import print as rprint
 
 from cetic import client
+from cetic.commands._catalog import (
+    render_compute_plans,
+    render_custom_templates,
+    render_qemu_templates,
+)
 from cetic.commands._render import render_list, render_one
 
 app = typer.Typer(help="Machines virtuelles (QEMU) CETIC Cloud")
@@ -126,6 +131,27 @@ def reboot(vm_id: str = typer.Argument(...)) -> None:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
     rprint("[green]✓[/green] Redémarrage demandé.")
+
+
+# ── Catalogue (plans & templates) ─────────────────────────────────────────
+
+
+@app.command()
+def plans() -> None:
+    """Liste les plans compute disponibles (partagés VM/container)."""
+    render_compute_plans(kind="vm", title="Plans VM")
+
+
+@app.command()
+def templates() -> None:
+    """Liste les templates VM (QEMU) disponibles."""
+    render_qemu_templates()
+
+
+@app.command(name="custom-templates")
+def custom_templates() -> None:
+    """Liste les templates custom VM de l'organisation (snapshots réutilisables)."""
+    render_custom_templates(template_type="vm")
 
 
 # ── Snapshots ─────────────────────────────────────────────────────────────
