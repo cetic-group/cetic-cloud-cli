@@ -1161,7 +1161,7 @@ def test_tg_update_invalid_algorithm_fails(runner, mock_api):
         [
             "appgw", "tg", "update", GW_ID,
             "--tg-id", TG_ID,
-            "--algorithm", "random",
+            "--algorithm", "bogus",
         ],
     )
     assert result.exit_code == 1

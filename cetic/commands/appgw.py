@@ -384,6 +384,8 @@ def listener_add(
         --acme-challenge http01
 
       # Certificat Let's Encrypt via DNS-01 (provider + credentials requis)
+      # Providers supportés : cf. `cetic appgw acme-providers` (ex: cloudflare,
+      # ionos avec les champs prefix + secret).
       cetic appgw listener add web-edge --hostname api.example.com \\
         --acme-challenge dns01 \\
         --acme-dns-provider cloudflare --acme-dns-credential api_token=xxx
@@ -560,7 +562,7 @@ def tg_create(
     name: str = typer.Option(..., "--name", help="Nom du target group (slug)"),
     algorithm: str = typer.Option(
         "roundrobin", "--algorithm",
-        help="Algorithme de répartition : roundrobin / leastconn / source",
+        help="Algorithme de répartition : roundrobin / leastconn / source / random",
     ),
 ) -> None:
     """Crée un target group (pool de backends + health check).
@@ -631,7 +633,7 @@ def tg_delete(
     rprint("[green]✓[/green] Target group supprimé.")
 
 
-_TG_ALGORITHMS = {"roundrobin", "leastconn", "source"}
+_TG_ALGORITHMS = {"roundrobin", "leastconn", "source", "random"}
 _TG_HC_PROTOCOLS = {"http", "https", "tcp"}
 _TG_HC_METHODS = {"GET", "HEAD", "POST"}
 
@@ -645,7 +647,7 @@ def tg_update(
     ),
     algorithm: str | None = typer.Option(
         None, "--algorithm",
-        help="Algorithme de répartition : roundrobin / leastconn / source",
+        help="Algorithme de répartition : roundrobin / leastconn / source / random",
     ),
     hc_protocol: str | None = typer.Option(
         None, "--hc-protocol",
