@@ -19,7 +19,7 @@ def plans() -> None:
 
 _LB_PLANS = ("small", "medium", "large")
 _LB_PROTOCOLS = ("tcp", "http", "https")
-_LB_ALGORITHMS = ("roundrobin", "leastconn", "source")
+_LB_ALGORITHMS = ("roundrobin", "leastconn", "source", "random")
 _ACME_CHALLENGES = ("http01", "dns01")
 
 
@@ -154,7 +154,7 @@ def create(
     listener_port: int | None = typer.Option(None, "--listener-port", min=1, max=65535,
         help="Port d'écoute du listener."),
     algorithm: str = typer.Option("roundrobin", "--algorithm",
-        help="Algorithme : roundrobin, leastconn ou source."),
+        help="Algorithme : roundrobin, leastconn, source ou random."),
     backend: list[str] = typer.Option(None, "--backend",  # noqa: B008
         help="Backend, répétable. Format : container:UUID:PORT[:WEIGHT] ou vm:UUID:PORT[:WEIGHT]"),
     # — Certificat Let's Encrypt (listener https uniquement) —
@@ -163,7 +163,8 @@ def create(
     acme_challenge: str | None = typer.Option(None, "--acme-challenge",
         help="Challenge ACME : http01 ou dns01."),
     acme_dns_provider: str | None = typer.Option(None, "--acme-dns-provider",
-        help="Provider DNS pour dns01 (cf. cetic lb acme-providers)."),
+        help="Provider DNS pour dns01 (cf. cetic lb acme-providers ; ex: cloudflare, "
+             "ionos (champs prefix + secret))."),
     acme_dns_credential: list[str] = typer.Option(None, "--acme-dns-credential",  # noqa: B008
         help="Credential DNS, répétable. Format : KEY=VALUE (ex: api_token=xxx)."),
 ) -> None:
