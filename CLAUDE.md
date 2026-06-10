@@ -60,8 +60,18 @@ tests/
 
 ## Versions
 
-**Latest : `v0.23.0`** (2026-06-06)
+**Latest : `v0.25.0`** (2026-06-09)
 
+- `v0.25.0` — feat : surface CLI du Bastion SSH (issue cetic-cloud-platform#307).
+  Sous-app `cetic bastion` (`list`/`get`/`create --name/--region/--vpc`/`delete`/
+  `ca --kind user|host`/`revoke --serial/--key-id/--reason`/`krl`) + commande de
+  premier niveau `cetic ssh <TARGET> [--login/--bastion/--ttl]` (auto-flow :
+  paire ed25519 éphémère via `ssh-keygen` → `POST /v1/ssh/sign` → cert temporaire
+  → `ssh` à travers le bastion `host=<TARGET>`, tmpdir nettoyé). Endpoints backend :
+  `GET/POST /v1/bastions`, `GET/DELETE /v1/bastions/{id}`, `GET /v1/ssh/ca/{kind}/public`,
+  `POST /v1/ssh/revoke`, `GET /v1/ssh/krl`, `POST /v1/ssh/sign`. Anti-leak : sorties
+  parlent de « bastion » / « accès SSH sécurisé », jamais de LXC/Proxmox.
+- `v0.24.0` — feat : `cetic lb/appgw` algorithme random + provider DNS IONOS (PR #20).
 - `v0.23.0` — feat : `cetic lb plans` (kind=lb) + `cetic appgw plans` (kind=appgw)
   — complète le catalogue compute v0.22.0 (LB + AppGw manquaient). Anti-leak :
   help `container` « Containers (LXC) » → « (CT) », templates « LXC »/« QEMU » →

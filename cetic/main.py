@@ -32,6 +32,7 @@ from cetic.commands import (
     api_key,
     appgw,
     auth,
+    bastion,
     billing,
     bucket,
     config_cmd,
@@ -50,6 +51,7 @@ from cetic.commands import (
     scale_set,
     secret,
     service_account,
+    ssh,
     support,
     tag,
     template,
@@ -93,6 +95,11 @@ app.add_typer(org.app, name="org")
 app.add_typer(quota.app, name="quota")
 app.add_typer(registry.app, name="registry")
 app.add_typer(tag.app, name="tag")
+app.add_typer(bastion.app, name="bastion")
+
+# Commande de premier niveau (PAS sous une sous-app) : ouvre une session SSH
+# sécurisée vers une cible privée via le bastion.
+app.command(name="ssh")(ssh.ssh)
 
 
 def version_callback(value: bool) -> None:
