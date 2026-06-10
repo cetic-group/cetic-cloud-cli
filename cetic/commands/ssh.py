@@ -162,6 +162,10 @@ def ssh(  # noqa: PLR0913
         #    commande `host=<TARGET>` que le bastion résout côté serveur.
         cmd = [
             ssh_bin,
+            # -t : force l'allocation d'un pseudo-terminal pour obtenir un shell
+            # interactif à travers le bastion (sans ça, la session n'a pas de PTY
+            # et la cible ouvre un shell non-interactif qui se ferme aussitôt).
+            "-t",
             "-i", str(key_path),
             "-o", f"CertificateFile={cert_path}",
             "-o", "IdentitiesOnly=yes",
