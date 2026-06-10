@@ -106,6 +106,10 @@ def create(
     name: str = typer.Option(..., "--name", "-n", help="Nom du bastion"),
     region: str = typer.Option(..., "--region", "-r", help="Région (ex : RNN, PAR, ABJ)"),
     vpc: str = typer.Option(..., "--vpc", help="ID du VPC où déployer le bastion"),
+    plan: str = typer.Option(
+        "small", "--plan",
+        help="Plan de dimensionnement : small | medium | large (cf. `cetic bastion plans`).",
+    ),
 ) -> None:
     """Crée un bastion SSH dans un VPC.
 
@@ -113,7 +117,7 @@ def create(
     ressources privées du VPC. Une fois `running`, ouvrez une session avec
     `cetic ssh <CIBLE> --bastion <hôte>`.
     """
-    body: dict[str, Any] = {"name": name, "region": region, "vpc_id": vpc}
+    body: dict[str, Any] = {"name": name, "region": region, "vpc_id": vpc, "plan": plan}
     try:
         bastion = client.post(BASTION_PATH, json=body)
     except client.APIError as e:
@@ -128,6 +132,13 @@ def create(
             f"  Hôte : [cyan]{endpoint}[/cyan]:"
             f"{bastion.get('endpoint_port', 22)}"
         )
+
+
+@app.command()
+def plans() -> None:
+    """Liste les plans de dimensionnement du Bastion SSH (small/medium/large)."""
+    from cetic.commands._catalog import render_compute_plans
+    render_compute_plans(kind="bastion", title="Plans Bastion SSH")
 
 
 @app.command()

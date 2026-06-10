@@ -100,7 +100,9 @@ def test_create_sends_correct_body(runner, mock_api):
         ["bastion", "create", "--name", "edge", "--region", "RNN", "--vpc", VPC_ID],
     )
     assert result.exit_code == 0, result.stdout
-    assert captured["body"] == {"name": "edge", "region": "RNN", "vpc_id": VPC_ID}
+    assert captured["body"] == {
+        "name": "edge", "region": "RNN", "vpc_id": VPC_ID, "plan": "small",
+    }
     assert "Bastion créé" in result.stdout
 
 
