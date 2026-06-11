@@ -60,8 +60,26 @@ tests/
 
 ## Versions
 
-**Latest : `v0.25.0`** (2026-06-09)
+**Latest : `v0.27.0`** (2026-06-10)
 
+- `v0.27.0` — feat : surface CLI du VPN « accès privé » (issue cetic-cloud-platform#306).
+  Sous-app `cetic vpn` : `gateway create/list/get/delete` (`--name/--region/--vpc`
+  répétable 1-5/`--plan`/`--public-ip`/`--dns`/`--pool-cidr`/`--tags`), `peer add
+  GATEWAY NAME [--managed] [--no-store] [--one-time]` (écrit `<NAME>.conf` en 0600),
+  `peer list/rm`, `config GATEWAY PEER_ID` (re-download Model B uniquement, surface
+  409/410), `rotate GATEWAY PEER_ID [--managed]`, `policy get/set` (set lit un
+  fichier JSON `--file` ou stdin). **Deux modèles de clé** : souverain (défaut) =
+  paire générée localement via `cryptography` X25519 (clamping standard), seule la
+  pubkey envoyée, placeholder `__INJECT_LOCAL_PRIVATE_KEY__` substitué localement
+  dans le `.conf` ; géré (`--managed`) = la plateforme renvoie le `.conf` complet.
+  Nouvelle dépendance `cryptography>=42`. Endpoints backend : `GET/POST
+  /v1/vpn/gateways`, `GET/DELETE /v1/vpn/gateways/{id}`, `POST/GET
+  /v1/vpn/gateways/{id}/peers`, `GET /v1/vpn/gateways/{id}/peers/{pid}/config`,
+  `POST .../rotate`, `DELETE .../peers/{pid}`, `GET/PUT /v1/vpn/gateways/{id}/policy`.
+  Anti-leak : sorties/help parlent de « VPN » / « accès privé », jamais de
+  WireGuard/LXC/FRR/nftables (le `.conf` reste un fichier WireGuard, c'est l'artefact
+  attendu par le client `wg`).
+- `v0.26.0` — feat : surface CLI du Bastion SSH (issue cetic-cloud-platform#307).
 - `v0.25.0` — feat : surface CLI du Bastion SSH (issue cetic-cloud-platform#307).
   Sous-app `cetic bastion` (`list`/`get`/`create --name/--region/--vpc`/`delete`/
   `ca --kind user|host`/`revoke --serial/--key-id/--reason`/`krl`) + commande de

@@ -58,6 +58,7 @@ from cetic.commands import (
     vm,
     volume,
     vpc,
+    vpn,
 )
 
 app = typer.Typer(
@@ -98,6 +99,7 @@ app.add_typer(quota.app, name="quota")
 app.add_typer(registry.app, name="registry")
 app.add_typer(tag.app, name="tag")
 app.add_typer(bastion.app, name="bastion")
+app.add_typer(vpn.app, name="vpn")
 
 # Commande de premier niveau (PAS sous une sous-app) : ouvre une session SSH
 # sécurisée vers une cible privée via le bastion.
