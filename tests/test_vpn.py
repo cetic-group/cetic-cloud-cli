@@ -74,7 +74,11 @@ def _config_managed() -> str:
     )
 
 
-def _peer(model: str = "A", config: str | None = None) -> dict[str, Any]:
+def _peer(
+    model: str = "A",
+    config: str | None = None,
+    peer_type: str = "client",
+) -> dict[str, Any]:
     return {
         "id": PEER_ID,
         "gateway_id": GW_ID,
@@ -82,6 +86,7 @@ def _peer(model: str = "A", config: str | None = None) -> dict[str, Any]:
         "ip": "10.80.0.5",
         "public_key": "PEERPUBKEYBASE64==",
         "model": model,
+        "peer_type": peer_type,
         "one_time": False,
         "store_private_key": model == "B",
         "revealed": False,
@@ -233,12 +238,110 @@ def test_peer_add_sovereign_generates_local_key(runner, mock_api, tmp_path, monk
     # Mode 0600.
     assert (conf.stat().st_mode & 0o777) == 0o600
 
+    # Message d'utilisation côté client : importer dans l'app WireGuard.
+    assert "WireGuard" in result.stdout
+    assert "wireguard.com/install" in result.stdout
+    # Body sans peer_type/site_cidrs pour un peer client.
+    assert "peer_type" not in captured["body"]
+    assert "site_cidrs" not in captured["body"]
+
 
 def test_peer_add_sovereign_rejects_managed_subflags(runner, mock_api):
     result = runner.invoke(app, ["vpn", "peer", "add", GW_ID, "alice", "--no-store"])
     assert result.exit_code == 1
     assert "--managed" in result.stdout
     assert not any(call.request.method == "POST" for call in mock_api.calls)
+
+
+# ---------------------------------------------------------------------------
+# peer add — site-à-site (--site)
+# ---------------------------------------------------------------------------
+
+
+def test_peer_add_site_sends_peer_type_and_cidrs(runner, mock_api, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    captured: dict[str, Any] = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            201,
+            json=_peer(
+                model="A", config=_config_with_placeholder(), peer_type="site"
+            ),
+        )
+
+    mock_api.post(f"/v1/vpn/gateways/{GW_ID}/peers").mock(side_effect=_capture)
+    result = runner.invoke(
+        app,
+        [
+            "vpn", "peer", "add", GW_ID, "datacenter-paris",
+            "--site", "192.168.10.0/24,192.168.20.0/24",
+        ],
+    )
+    assert result.exit_code == 0, result.stdout
+
+    # peer_type=site + site_cidrs aplaties depuis la liste séparée par virgule.
+    assert captured["body"]["peer_type"] == "site"
+    assert captured["body"]["site_cidrs"] == ["192.168.10.0/24", "192.168.20.0/24"]
+    # Model A par défaut (pas de --managed) → seule la clé publique envoyée.
+    assert "public_key" in captured["body"]
+    assert "store_private_key" not in captured["body"]
+
+    conf = Path(tmp_path / "datacenter-paris.conf")
+    assert conf.is_file()
+
+    # Message d'utilisation côté site : routeur/pare-feu distant + IP forwarding.
+    assert "Site-à-site" in result.stdout
+    assert "routeur" in result.stdout
+    assert "routage IP" in result.stdout
+
+
+def test_peer_add_site_repeated_flag(runner, mock_api, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    captured: dict[str, Any] = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            201,
+            json=_peer(model="A", config=_config_with_placeholder(), peer_type="site"),
+        )
+
+    mock_api.post(f"/v1/vpn/gateways/{GW_ID}/peers").mock(side_effect=_capture)
+    result = runner.invoke(
+        app,
+        [
+            "vpn", "peer", "add", GW_ID, "site-b",
+            "--site", "10.10.0.0/16", "--site", "10.20.0.0/16",
+        ],
+    )
+    assert result.exit_code == 0, result.stdout
+    assert captured["body"]["site_cidrs"] == ["10.10.0.0/16", "10.20.0.0/16"]
+
+
+def test_peer_add_site_managed(runner, mock_api, tmp_path, monkeypatch):
+    """--site + --managed : la plateforme génère la clé, peer_type reste site."""
+    monkeypatch.chdir(tmp_path)
+    captured: dict[str, Any] = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            201, json=_peer(model="B", config=_config_managed(), peer_type="site")
+        )
+
+    mock_api.post(f"/v1/vpn/gateways/{GW_ID}/peers").mock(side_effect=_capture)
+    result = runner.invoke(
+        app,
+        ["vpn", "peer", "add", GW_ID, "site-c", "--site", "172.16.0.0/24", "--managed"],
+    )
+    assert result.exit_code == 0, result.stdout
+    assert captured["body"]["peer_type"] == "site"
+    assert captured["body"]["site_cidrs"] == ["172.16.0.0/24"]
+    # Mode géré : pas de clé publique envoyée.
+    assert "public_key" not in captured["body"]
+    assert captured["body"]["store_private_key"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -327,6 +430,21 @@ def test_config_download_managed(runner, mock_api, tmp_path, monkeypatch):
     conf = Path(tmp_path / "bob.conf")
     assert conf.is_file()
     assert (conf.stat().st_mode & 0o777) == 0o600
+    # Sans peer_type → message client par défaut.
+    assert "WireGuard" in result.stdout
+
+
+def test_config_download_site_hint(runner, mock_api, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    mock_api.get(f"/v1/vpn/gateways/{GW_ID}/peers/{PEER_ID}/config").mock(
+        return_value=httpx.Response(
+            200, json={"config": _config_managed(), "peer_type": "site"}
+        )
+    )
+    result = runner.invoke(app, ["vpn", "config", GW_ID, PEER_ID, "--name", "site-a"])
+    assert result.exit_code == 0, result.stdout
+    assert "Site-à-site" in result.stdout
+    assert "routeur" in result.stdout
 
 
 def test_config_download_409_sovereign(runner, mock_api):

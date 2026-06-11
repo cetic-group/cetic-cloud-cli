@@ -14,6 +14,10 @@ Deux modèles de clé pour les peers :
   configuration complète (one-click). Pratique pour démarrer vite ; la clé
   privée est alors connue de la plateforme (sauf `--no-store`).
 
+Un peer peut aussi être un site-à-site (`peer add --site CIDR[,CIDR...]`) : la
+config produite est destinée au routeur/pare-feu distant d'un site, qui relie un
+réseau entier au VPN (au lieu d'un poste isolé).
+
 Sous-commandes :
     cetic vpn gateway create/list/get/delete
     cetic vpn peer add/list/rm
@@ -115,6 +119,46 @@ def _write_conf(name: str, config: str) -> Path:
         # Garantit 0600 même si le fichier préexistait avec d'autres droits.
         os.chmod(str(path), 0o600)
     return path
+
+
+def _parse_site_cidrs(values: list[str]) -> list[str]:
+    """Aplatit une liste d'options --site (répétables ou séparées par virgule)."""
+    cidrs: list[str] = []
+    for value in values:
+        for part in value.split(","):
+            part = part.strip()
+            if part:
+                cidrs.append(part)
+    return cidrs
+
+
+def _print_usage_hint(path: Path, peer_type: str) -> None:
+    """Explique à l'utilisateur quoi faire du fichier .conf selon le type de peer.
+
+    * client : à importer dans l'application WireGuard officielle (poste/mobile).
+    * site   : à déployer sur le routeur/pare-feu distant (site-à-site).
+
+    NB : « WireGuard » est nommé ici à dessein — c'est le format de l'artefact
+    et le nom de l'application cliente à utiliser.
+    """
+    if peer_type == "site":
+        rprint(
+            f"  [bold]Site-à-site :[/bold] déployez [cyan]{path}[/cyan] sur votre "
+            "routeur/pare-feu distant compatible WireGuard (l'extrémité du site)."
+        )
+        rprint(
+            "  Sur cet équipement, activez le routage IP (IP forwarding) et "
+            "routez votre LAN / VNet à travers le tunnel."
+        )
+    else:
+        rprint(
+            f"  Importez [cyan]{path}[/cyan] dans l'application [bold]WireGuard[/bold] "
+            "(Windows / macOS / Linux / iOS / Android) pour vous connecter à votre VPN privé."
+        )
+        rprint(
+            "  Téléchargez l'application : "
+            "[link=https://www.wireguard.com/install/]https://www.wireguard.com/install/[/link]"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -249,15 +293,31 @@ def peer_add(
         "--one-time",
         help="(mode --managed) Configuration téléchargeable une seule fois.",
     ),
+    site: list[str] = typer.Option(
+        None,
+        "--site",
+        help="Peer site-à-site : un ou plusieurs réseaux distants (CIDR) à "
+        "rendre accessibles via ce peer. Répétable ou séparé par des virgules "
+        "(ex : 192.168.10.0/24,192.168.20.0/24). La config produite est "
+        "destinée au routeur/pare-feu distant, pas à un poste.",
+    ),
 ) -> None:
     """Ajoute un peer à une passerelle VPN et écrit <NAME>.conf (mode 0600).
 
     En mode souverain (défaut), la clé privée est générée localement et injectée
     dans le fichier ; la plateforme ne la connaît jamais. En mode `--managed`,
     la plateforme génère la paire et renvoie la configuration complète.
+
+    Avec `--site`, le peer est de type site-à-site : la config produite est
+    destinée à un routeur/pare-feu distant qui relie un réseau entier au VPN.
     """
     body: dict[str, Any] = {"name": name}
     local_private_key: str | None = None
+
+    site_cidrs = _parse_site_cidrs(site) if site else []
+    if site_cidrs:
+        body["peer_type"] = "site"
+        body["site_cidrs"] = site_cidrs
 
     if managed:
         # Model B : la plateforme génère la paire. Pas de public_key envoyée.
@@ -301,6 +361,8 @@ def peer_add(
             "  [yellow]Téléchargement unique : conservez ce fichier, il ne pourra "
             "plus être re-téléchargé.[/yellow]"
         )
+    peer_type = peer.get("peer_type") or ("site" if site_cidrs else "client")
+    _print_usage_hint(path, peer_type)
 
 
 @peer_app.command(name="list")
@@ -374,6 +436,7 @@ def config_download(
     out_name = name or peer_id
     path = _write_conf(out_name, config)
     rprint(f"[green]✓[/green] Configuration écrite : [cyan]{path}[/cyan] (mode 0600)")
+    _print_usage_hint(path, resp.get("peer_type") or "client")
 
 
 # ---------------------------------------------------------------------------
@@ -426,6 +489,7 @@ def rotate(
         f"[green]✓[/green] Clé renouvelée. Configuration écrite : "
         f"[cyan]{path}[/cyan] (mode 0600)"
     )
+    _print_usage_hint(path, resp.get("peer_type") or "client")
 
 
 # ---------------------------------------------------------------------------

@@ -60,8 +60,23 @@ tests/
 
 ## Versions
 
-**Latest : `v0.27.0`** (2026-06-10)
+**Latest : `v0.28.0`** (2026-06-11)
 
+- `v0.28.0` — feat : VPN site-à-site + message d'utilisation client WireGuard
+  (issue cetic-cloud-platform#306). `cetic vpn peer add GATEWAY NAME --site
+  CIDR[,CIDR...]` (répétable ou séparé par virgule) → envoie `peer_type="site"` +
+  `site_cidrs=[...]` dans le POST `/v1/vpn/gateways/{id}/peers`. La logique
+  Model A/B reste inchangée (`--managed` = la plateforme génère ; sinon keygen
+  local). Sans `--site` → `peer_type="client"` (comportement inchangé). **Message
+  d'utilisation** affiché après écriture du `.conf` par `peer add`, `config` et
+  `rotate`, selon le champ `peer_type` de la réponse : pour un peer **client**,
+  importer le fichier dans l'application **WireGuard** officielle
+  (https://www.wireguard.com/install/) pour se connecter au VPN privé ; pour un
+  peer **site**, déployer le fichier sur le routeur/pare-feu distant compatible
+  WireGuard, activer l'IP forwarding et router le LAN/VNet à travers le tunnel.
+  C'est le seul endroit où WireGuard est nommé côté client (format de l'artefact
+  + nom de l'app — intentionnel). Help/sorties générales restent « VPN » / « accès
+  privé » (anti-leak inchangé).
 - `v0.27.0` — feat : surface CLI du VPN « accès privé » (issue cetic-cloud-platform#306).
   Sous-app `cetic vpn` : `gateway create/list/get/delete` (`--name/--region/--vpc`
   répétable 1-5/`--plan`/`--public-ip`/`--dns`/`--pool-cidr`/`--tags`), `peer add
