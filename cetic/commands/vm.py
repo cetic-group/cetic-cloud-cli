@@ -1,5 +1,7 @@
 """cetic vm — gestion des machines virtuelles CETIC Cloud."""
 
+from pathlib import Path
+
 import typer
 from rich import print as rprint
 
@@ -9,6 +11,7 @@ from cetic.commands._catalog import (
     render_custom_templates,
     render_qemu_templates,
 )
+from cetic.commands._compute import apply_compute_access_options
 from cetic.commands._render import render_list, render_one
 
 app = typer.Typer(help="Machines virtuelles (QEMU) CETIC Cloud")
@@ -55,6 +58,19 @@ def create(
     template: str = typer.Option("ubuntu-24.04", "--template", "-t"),
     vnet_id: str = typer.Option(..., "--vnet"),
     ssh_key_ids: list[str] = typer.Option(None, "--ssh-key"),
+    cloud_init: Path = typer.Option(
+        None, "--cloud-init",
+        exists=True, file_okay=True, dir_okay=False, readable=True,
+        help="Fichier cloud-init (cloud-config) appliqué au premier démarrage.",
+    ),
+    bastion_access: bool = typer.Option(
+        False, "--bastion-access",
+        help="Autoriser l'accès SSH via le Bastion du tenant (opt-in).",
+    ),
+    template_source: bool = typer.Option(
+        False, "--template-source",
+        help="Créer une instance de préparation de template (visible dans « Mes templates »).",
+    ),
     root_password: str = typer.Option(
         ..., "--root-password",
         prompt=True, hide_input=True, confirmation_prompt=True,
@@ -76,6 +92,10 @@ def create(
     }
     if ssh_key_ids:
         body["ssh_key_ids"] = ssh_key_ids
+    apply_compute_access_options(
+        body, cloud_init=cloud_init, bastion_access=bastion_access,
+        template_source=template_source,
+    )
     try:
         v = client.post("/v1/vm-instances", json=body)
     except client.APIError as e:

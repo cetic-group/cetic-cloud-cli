@@ -60,8 +60,22 @@ tests/
 
 ## Versions
 
-**Latest : `v0.28.0`** (2026-06-11)
+**Latest : `v0.29.0`** (2026-06-12)
 
+- `v0.29.0` — feat : options `--cloud-init`, `--bastion-access`, `--template-source`
+  à la création compute (issues cetic-cloud-platform#343, cetic-cloud-cli#19).
+  Sur `container create`, `vm create`, `vm-scale-set create`, `ct-scale-set create` :
+  `--cloud-init PATH` lit un **fichier** cloud-config et l'envoie en `user_data`
+  (Typer valide l'existence du fichier ; contenu validé côté backend), et
+  `--bastion-access` (flag) envoie `bastion_access=true` (« Autoriser l'accès via
+  le Bastion SSH », opt-in #307). `--template-source` (flag, **vm + container
+  seulement** — sans objet pour un scale-set) envoie `is_template_source=true` →
+  crée une **instance de préparation de template** (visible dans « Mes templates »,
+  cf. console). Helper partagé `commands/_compute.py`
+  (`read_cloud_init`/`apply_compute_access_options`) : les champs ne sont ajoutés
+  au body **que** s'ils sont fournis (absence → défauts backend, pas de
+  `user_data=""`). Aucun nouvel endpoint : le backend acceptait déjà ces trois
+  champs sur les schémas de création.
 - `v0.28.0` — feat : VPN site-à-site + message d'utilisation client WireGuard
   (issue cetic-cloud-platform#306). `cetic vpn peer add GATEWAY NAME --site
   CIDR[,CIDR...]` (répétable ou séparé par virgule) → envoie `peer_type="site"` +
