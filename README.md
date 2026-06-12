@@ -236,6 +236,14 @@ cetic vm create --name web-01 --region RNN --plan small
 cetic container list
 cetic container create --name api --plan small --template ubuntu-24.04
 
+# Cloud-init + accès Bastion (depuis v0.29.0) — sur vm/container/vm-scale-set/ct-scale-set
+cetic container create --name api --region RNN --vnet <VNET> \
+    --cloud-init ./cloud-config.yaml      # fichier cloud-config appliqué au 1er boot
+cetic vm create --name web --region RNN --vnet <VNET> \
+    --bastion-access                      # autoriser l'accès SSH via le Bastion (opt-in)
+cetic vm create --name tpl-prep --region RNN --vnet <VNET> \
+    --template-source                     # instance de préparation de template (vm/container)
+
 # Catalogue compute (depuis v0.22.0) — plans, templates système, templates custom
 cetic container plans                 # plans nano..xlarge (vCPU/RAM/disque/€)
 cetic container templates             # templates système (CT — Debian/Ubuntu/…)

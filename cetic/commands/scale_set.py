@@ -1,5 +1,7 @@
 """cetic scale-set / vm-scale-set — auto-scaling groups CETIC Cloud."""
 
+from pathlib import Path
+
 import typer
 from rich import print as rprint
 
@@ -9,6 +11,7 @@ from cetic.commands._catalog import (
     render_lxc_templates,
     render_qemu_templates,
 )
+from cetic.commands._compute import apply_compute_access_options
 from cetic.commands._render import render_list, render_one
 
 container_app = typer.Typer(help="Container Scale Sets CETIC Cloud")
@@ -45,6 +48,7 @@ def _create(  # noqa: PLR0913
     *, endpoint: str, kind: str, name: str, region: str, plan: str, template: str,
     vnet: str | None, root_password: str, desired: int, min_: int, max_: int,
     ssh_key: list[str] | None, tag: list[str] | None,
+    cloud_init: Path | None = None, bastion_access: bool = False,
 ) -> None:
     if len(root_password) < 8:
         rprint("[red]Erreur : le mot de passe root doit faire au moins 8 caractères.[/red]")
@@ -60,6 +64,9 @@ def _create(  # noqa: PLR0913
         body["ssh_key_ids"] = ssh_key
     if tag:
         body["tags"] = tag
+    apply_compute_access_options(
+        body, cloud_init=cloud_init, bastion_access=bastion_access,
+    )
     try:
         s = client.post(endpoint, json=body)
     except client.APIError as e:
@@ -89,6 +96,15 @@ def create(  # noqa: PLR0913
     max_: int = typer.Option(10, "--max", help="Replicas maximum (autoscaling)."),
     ssh_key: list[str] = typer.Option(None, "--ssh-key", help="UUID(s) des clés SSH (répéter)."),
     tag: list[str] = typer.Option(None, "--tag", help="Tag(s) (répéter)."),
+    cloud_init: Path = typer.Option(
+        None, "--cloud-init",
+        exists=True, file_okay=True, dir_okay=False, readable=True,
+        help="Fichier cloud-init (cloud-config) appliqué au premier démarrage.",
+    ),
+    bastion_access: bool = typer.Option(
+        False, "--bastion-access",
+        help="Autoriser l'accès SSH via le Bastion du tenant (opt-in).",
+    ),
     root_password: str = typer.Option(
         ..., "--root-password", prompt=True, hide_input=True, confirmation_prompt=True,
         help="Mot de passe root (8 chars min). Demandé interactivement si non fourni.",
@@ -98,7 +114,8 @@ def create(  # noqa: PLR0913
     _create(endpoint="/v1/container-scale-sets", kind="Container scale set",
             name=name, region=region, plan=plan, template=template, vnet=vnet,
             root_password=root_password, desired=desired, min_=min_, max_=max_,
-            ssh_key=ssh_key, tag=tag)
+            ssh_key=ssh_key, tag=tag,
+            cloud_init=cloud_init, bastion_access=bastion_access)
 
 
 @container_app.command()
@@ -168,6 +185,15 @@ def create(  # noqa: PLR0913
     max_: int = typer.Option(10, "--max", help="Replicas maximum (autoscaling)."),
     ssh_key: list[str] = typer.Option(None, "--ssh-key", help="UUID(s) des clés SSH (répéter)."),
     tag: list[str] = typer.Option(None, "--tag", help="Tag(s) (répéter)."),
+    cloud_init: Path = typer.Option(
+        None, "--cloud-init",
+        exists=True, file_okay=True, dir_okay=False, readable=True,
+        help="Fichier cloud-init (cloud-config) appliqué au premier démarrage.",
+    ),
+    bastion_access: bool = typer.Option(
+        False, "--bastion-access",
+        help="Autoriser l'accès SSH via le Bastion du tenant (opt-in).",
+    ),
     root_password: str = typer.Option(
         ..., "--root-password", prompt=True, hide_input=True, confirmation_prompt=True,
         help="Mot de passe root (8 chars min). Demandé interactivement si non fourni.",
@@ -177,7 +203,8 @@ def create(  # noqa: PLR0913
     _create(endpoint="/v1/vm-scale-sets", kind="VM scale set",
             name=name, region=region, plan=plan, template=template, vnet=vnet,
             root_password=root_password, desired=desired, min_=min_, max_=max_,
-            ssh_key=ssh_key, tag=tag)
+            ssh_key=ssh_key, tag=tag,
+            cloud_init=cloud_init, bastion_access=bastion_access)
 
 
 @vm_app.command()
