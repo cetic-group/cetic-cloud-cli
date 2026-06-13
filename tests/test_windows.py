@@ -276,7 +276,7 @@ def test_reboot(runner, mock_api):
 
 
 def test_plans(runner, mock_api):
-    mock_api.get("/v1/compute/plans", params={"kind": "windows"}).mock(
+    mock_api.get("/v1/compute/plans", params={"kind": "compute"}).mock(
         return_value=httpx.Response(
             200,
             json=[

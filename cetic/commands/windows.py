@@ -151,7 +151,7 @@ def reboot(instance_id: str = typer.Argument(...)) -> None:
 @app.command()
 def plans() -> None:
     """Liste les plans compute disponibles (partagés VM/container/Windows)."""
-    render_compute_plans(kind="windows", title="Plans Windows")
+    render_compute_plans(kind="compute", title="Plans Windows")
 
 
 @app.command()
