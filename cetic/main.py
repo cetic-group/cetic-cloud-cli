@@ -59,6 +59,7 @@ from cetic.commands import (
     volume,
     vpc,
     vpn,
+    windows,
 )
 
 app = typer.Typer(
@@ -74,6 +75,7 @@ app.add_typer(region.app, name="region")
 app.add_typer(key.app, name="key")
 app.add_typer(container.app, name="container")
 app.add_typer(vm.app, name="vm")
+app.add_typer(windows.app, name="windows")
 app.add_typer(vpc.app, name="vpc")
 app.add_typer(volume.app, name="volume")
 app.add_typer(bucket.app, name="bucket")
