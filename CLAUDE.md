@@ -60,8 +60,25 @@ tests/
 
 ## Versions
 
-**Latest : `v0.29.0`** (2026-06-12)
+**Latest : `v0.30.0`** (2026-06-13)
 
+- `v0.30.0` — feat : gestion des VPC couverts + IP publique pour le VPN et le
+  Bastion (gaps d'audit d'alignement — endpoints backend déjà présents).
+  **VPN** : `cetic vpn gateway vpc list|add|rm GATEWAY [VPC_ID]` (hot-plug,
+  `GET/POST /v1/vpn/gateways/{id}/vpcs` body `{vpc_id}` + `DELETE
+  /v1/vpn/gateways/{id}/vpcs/{vpc_id}`) ; `cetic vpn gateway attach-ip GATEWAY`
+  + `detach-ip GATEWAY` (`POST /v1/vpn/gateways/{id}/{attach,detach}-ip` — **le
+  endpoint attach-ip VPN ne lit aucun body** : il alloue auto une IP disponible
+  de la région, donc pas de `--public-ip` côté VPN). **Bastion** : `cetic
+  bastion vpc list|add|rm BASTION [VPC_ID]` (`GET/POST /v1/bastions/{id}/vpcs`
+  + `DELETE .../vpcs/{vpc_id}`) ; `cetic bastion attach-ip BASTION
+  [--public-ip IP_ID]` + `detach-ip BASTION` (`POST
+  /v1/bastions/{id}/{attach,detach}-ip` — attach-ip accepte un `public_ip_id`
+  **optionnel** : fourni → réutilise cette IP du tenant ; omis → alloue auto).
+  `--yes/-y` sur `vpc rm` + `detach-ip` (confirmations destructives). Anti-leak :
+  sorties/help parlent de « passerelle VPN », « bastion », « VPC couverts »,
+  « IP publique ». Tests : 6 nouveaux (vpn) + 7 (bastion). Aucun nouvel endpoint
+  backend. Calqué sur `cetic ip attach` + `cetic vpc vnet add/rm`.
 - `v0.29.0` — feat : options `--cloud-init`, `--bastion-access`, `--template-source`
   à la création compute (issues cetic-cloud-platform#343, cetic-cloud-cli#19).
   Sur `container create`, `vm create`, `vm-scale-set create`, `ct-scale-set create` :

@@ -11,6 +11,9 @@ Sous-commandes :
     cetic bastion get ID
     cetic bastion create --name N --region R --vpc VPC_ID
     cetic bastion delete ID [--yes]
+    cetic bastion vpc list/add/rm BASTION [VPC_ID]
+    cetic bastion attach-ip BASTION [--public-ip IP_ID]
+    cetic bastion detach-ip BASTION [--yes]
     cetic bastion ca [--kind user|host]
     cetic bastion revoke [--serial N] [--key-id K] [--reason R]
     cetic bastion krl
@@ -35,6 +38,8 @@ VALID_CA_KINDS = ("user", "host")
 
 
 app = typer.Typer(help="Bastion SSH CETIC Cloud (accès SSH sécurisé)")
+vpc_app = typer.Typer(help="VPC couverts par un bastion")
+app.add_typer(vpc_app, name="vpc")
 
 
 # ---------------------------------------------------------------------------
@@ -156,6 +161,116 @@ def delete(
     except client.APIError as e:
         raise _bail(e) from e
     rprint("[green]✓[/green] Bastion supprimé.")
+
+
+# ---------------------------------------------------------------------------
+# Commandes — VPC couverts (hot-plug)
+# ---------------------------------------------------------------------------
+
+
+@vpc_app.command(name="list")
+def vpc_list(
+    bastion_id: str = typer.Argument(..., metavar="BASTION", help="ID du bastion."),
+) -> None:
+    """Liste les VPC couverts par un bastion."""
+    try:
+        items = client.get(f"{BASTION_PATH}/{bastion_id}/vpcs")
+    except client.APIError as e:
+        raise _bail(e) from e
+    render_list(
+        items,
+        title=f"VPC couverts ({len(items)})",
+        columns=[
+            ("id", "ID"),
+            ("name", "Nom"),
+            ("vnet_name", "Réseau"),
+            ("vnet_cidr", "CIDR"),
+        ],
+    )
+
+
+@vpc_app.command(name="add")
+def vpc_add(
+    bastion_id: str = typer.Argument(..., metavar="BASTION", help="ID du bastion."),
+    vpc_id: str = typer.Argument(..., metavar="VPC_ID", help="ID du VPC à couvrir."),
+) -> None:
+    """Ajoute (hot-plug) un VPC à la couverture d'un bastion."""
+    try:
+        vpc = client.post(f"{BASTION_PATH}/{bastion_id}/vpcs", json={"vpc_id": vpc_id})
+    except client.APIError as e:
+        raise _bail(e) from e
+    rprint(
+        f"[green]✓[/green] VPC ajouté à la couverture : "
+        f"[bold]{vpc.get('name', vpc_id)}[/bold] ([dim]{vpc.get('id', vpc_id)}[/dim])"
+    )
+
+
+@vpc_app.command(name="rm")
+def vpc_rm(
+    bastion_id: str = typer.Argument(..., metavar="BASTION", help="ID du bastion."),
+    vpc_id: str = typer.Argument(..., metavar="VPC_ID", help="ID du VPC à retirer."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip la confirmation."),
+) -> None:
+    """Retire un VPC de la couverture d'un bastion."""
+    if not yes and not typer.confirm(
+        f"Retirer le VPC {vpc_id} de la couverture du bastion {bastion_id} ?"
+    ):
+        raise typer.Abort()
+    try:
+        client.delete(f"{BASTION_PATH}/{bastion_id}/vpcs/{vpc_id}")
+    except client.APIError as e:
+        raise _bail(e) from e
+    rprint("[green]✓[/green] VPC retiré de la couverture.")
+
+
+# ---------------------------------------------------------------------------
+# Commandes — IP publique (attach / detach)
+# ---------------------------------------------------------------------------
+
+
+@app.command(name="attach-ip")
+def attach_ip(
+    bastion_id: str = typer.Argument(..., metavar="BASTION", help="ID du bastion."),
+    public_ip: str | None = typer.Option(
+        None, "--public-ip",
+        help="ID d'une IP publique existante à attacher (sinon une IP "
+             "disponible de la région est allouée automatiquement).",
+    ),
+) -> None:
+    """Attache une IP publique à un bastion.
+
+    Sans `--public-ip`, une IP publique disponible de la région du bastion est
+    allouée automatiquement. L'hôte du bastion bascule sur cette IP.
+    """
+    body: dict[str, Any] = {}
+    if public_ip is not None:
+        body["public_ip_id"] = public_ip
+    try:
+        bastion = client.post(f"{BASTION_PATH}/{bastion_id}/attach-ip", json=body)
+    except client.APIError as e:
+        raise _bail(e) from e
+    addr = bastion.get("public_ip_address") or bastion.get("endpoint_host") or "?"
+    rprint(f"[green]✓[/green] IP publique attachée : [cyan]{addr}[/cyan]")
+
+
+@app.command(name="detach-ip")
+def detach_ip(
+    bastion_id: str = typer.Argument(..., metavar="BASTION", help="ID du bastion."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip la confirmation."),
+) -> None:
+    """Détache l'IP publique d'un bastion.
+
+    L'hôte rebascule sur l'adresse privée ; l'IP est rendue au pool.
+    """
+    if not yes and not typer.confirm(
+        f"Détacher l'IP publique du bastion {bastion_id} ?"
+    ):
+        raise typer.Abort()
+    try:
+        client.post(f"{BASTION_PATH}/{bastion_id}/detach-ip")
+    except client.APIError as e:
+        raise _bail(e) from e
+    rprint("[green]✓[/green] IP publique détachée.")
 
 
 # ---------------------------------------------------------------------------

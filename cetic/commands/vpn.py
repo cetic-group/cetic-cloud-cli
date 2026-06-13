@@ -20,6 +20,8 @@ réseau entier au VPN (au lieu d'un poste isolé).
 
 Sous-commandes :
     cetic vpn gateway create/list/get/delete
+    cetic vpn gateway vpc list/add/rm GATEWAY [VPC_ID]
+    cetic vpn gateway attach-ip/detach-ip GATEWAY
     cetic vpn peer add/list/rm
     cetic vpn config GATEWAY PEER_ID
     cetic vpn rotate GATEWAY PEER_ID
@@ -47,10 +49,12 @@ LOCAL_KEY_PLACEHOLDER = "__INJECT_LOCAL_PRIVATE_KEY__"
 
 app = typer.Typer(help="VPN CETIC Cloud (accès privé chiffré)")
 gateway_app = typer.Typer(help="Passerelles VPN (gateways)")
+gateway_vpc_app = typer.Typer(help="VPC couverts par une passerelle VPN")
 peer_app = typer.Typer(help="Peers VPN (un par poste/utilisateur)")
 policy_app = typer.Typer(help="Politique d'accès de la passerelle VPN")
 
 app.add_typer(gateway_app, name="gateway")
+gateway_app.add_typer(gateway_vpc_app, name="vpc")
 app.add_typer(peer_app, name="peer")
 app.add_typer(policy_app, name="policy")
 
@@ -266,6 +270,108 @@ def gateway_delete(
     except client.APIError as e:
         raise _bail(e) from e
     rprint("[green]✓[/green] Passerelle VPN supprimée.")
+
+
+# ---------------------------------------------------------------------------
+# VPC couverts (hot-plug)
+# ---------------------------------------------------------------------------
+
+
+@gateway_vpc_app.command(name="list")
+def gateway_vpc_list(
+    gateway_id: str = typer.Argument(..., metavar="GATEWAY", help="ID de la passerelle VPN."),
+) -> None:
+    """Liste les VPC couverts par une passerelle VPN."""
+    try:
+        items = client.get(f"{VPN_PATH}/{gateway_id}/vpcs")
+    except client.APIError as e:
+        raise _bail(e) from e
+    render_list(
+        items,
+        title=f"VPC couverts ({len(items)})",
+        columns=[
+            ("id", "ID"),
+            ("name", "Nom"),
+            ("vnet_name", "Réseau"),
+            ("vnet_cidr", "CIDR"),
+        ],
+    )
+
+
+@gateway_vpc_app.command(name="add")
+def gateway_vpc_add(
+    gateway_id: str = typer.Argument(..., metavar="GATEWAY", help="ID de la passerelle VPN."),
+    vpc_id: str = typer.Argument(..., metavar="VPC_ID", help="ID du VPC à couvrir."),
+) -> None:
+    """Ajoute (hot-plug) un VPC à la couverture d'une passerelle VPN."""
+    try:
+        vpc = client.post(f"{VPN_PATH}/{gateway_id}/vpcs", json={"vpc_id": vpc_id})
+    except client.APIError as e:
+        raise _bail(e) from e
+    rprint(
+        f"[green]✓[/green] VPC ajouté à la couverture : "
+        f"[bold]{vpc.get('name', vpc_id)}[/bold] ([dim]{vpc.get('id', vpc_id)}[/dim])"
+    )
+
+
+@gateway_vpc_app.command(name="rm")
+def gateway_vpc_rm(
+    gateway_id: str = typer.Argument(..., metavar="GATEWAY", help="ID de la passerelle VPN."),
+    vpc_id: str = typer.Argument(..., metavar="VPC_ID", help="ID du VPC à retirer."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip la confirmation."),
+) -> None:
+    """Retire un VPC de la couverture d'une passerelle VPN."""
+    if not yes and not typer.confirm(
+        f"Retirer le VPC {vpc_id} de la couverture de la passerelle {gateway_id} ?"
+    ):
+        raise typer.Abort()
+    try:
+        client.delete(f"{VPN_PATH}/{gateway_id}/vpcs/{vpc_id}")
+    except client.APIError as e:
+        raise _bail(e) from e
+    rprint("[green]✓[/green] VPC retiré de la couverture.")
+
+
+# ---------------------------------------------------------------------------
+# IP publique (attach / detach)
+# ---------------------------------------------------------------------------
+
+
+@gateway_app.command(name="attach-ip")
+def gateway_attach_ip(
+    gateway_id: str = typer.Argument(..., metavar="GATEWAY", help="ID de la passerelle VPN."),
+) -> None:
+    """Attache une IP publique à une passerelle VPN.
+
+    Une IP publique disponible de la région de la passerelle est allouée
+    automatiquement, puis le point d'accès du VPN bascule dessus.
+    """
+    try:
+        gw = client.post(f"{VPN_PATH}/{gateway_id}/attach-ip")
+    except client.APIError as e:
+        raise _bail(e) from e
+    addr = gw.get("public_ip_address") or gw.get("endpoint_host") or "?"
+    rprint(f"[green]✓[/green] IP publique attachée : [cyan]{addr}[/cyan]")
+
+
+@gateway_app.command(name="detach-ip")
+def gateway_detach_ip(
+    gateway_id: str = typer.Argument(..., metavar="GATEWAY", help="ID de la passerelle VPN."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip la confirmation."),
+) -> None:
+    """Détache l'IP publique d'une passerelle VPN.
+
+    Le point d'accès rebascule sur l'adresse privée ; l'IP est rendue au pool.
+    """
+    if not yes and not typer.confirm(
+        f"Détacher l'IP publique de la passerelle {gateway_id} ?"
+    ):
+        raise typer.Abort()
+    try:
+        client.post(f"{VPN_PATH}/{gateway_id}/detach-ip")
+    except client.APIError as e:
+        raise _bail(e) from e
+    rprint("[green]✓[/green] IP publique détachée.")
 
 
 # ---------------------------------------------------------------------------

@@ -581,3 +581,72 @@ def test_help_no_infra_jargon(runner):
     assert result.exit_code == 0
     for term in ("WireGuard", "LXC", "FRR", "nftables", "Proxmox"):
         assert term not in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# gateway vpc list / add / rm (hot-plug)
+# ---------------------------------------------------------------------------
+
+
+def test_gateway_vpc_list(runner, mock_api):
+    mock_api.get(f"/v1/vpn/gateways/{GW_ID}/vpcs").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {"id": VPC_ID, "name": "prod", "vnet_name": "egress",
+                 "vnet_cidr": "10.0.0.0/24", "vnet_snat": True},
+            ],
+        )
+    )
+    result = runner.invoke(app, ["vpn", "gateway", "vpc", "list", GW_ID])
+    assert result.exit_code == 0, result.stdout
+    assert "prod" in result.stdout
+    assert "10.0.0.0/24" in result.stdout
+
+
+def test_gateway_vpc_add_sends_body(runner, mock_api):
+    captured: dict[str, Any] = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(201, json={"id": VPC_ID, "name": "prod"})
+
+    mock_api.post(f"/v1/vpn/gateways/{GW_ID}/vpcs").mock(side_effect=_capture)
+    result = runner.invoke(app, ["vpn", "gateway", "vpc", "add", GW_ID, VPC_ID])
+    assert result.exit_code == 0, result.stdout
+    assert captured["body"] == {"vpc_id": VPC_ID}
+    assert "ajouté" in result.stdout
+
+
+def test_gateway_vpc_rm(runner, mock_api):
+    mock_api.delete(f"/v1/vpn/gateways/{GW_ID}/vpcs/{VPC_ID}").mock(
+        return_value=httpx.Response(204)
+    )
+    result = runner.invoke(app, ["vpn", "gateway", "vpc", "rm", GW_ID, VPC_ID, "--yes"])
+    assert result.exit_code == 0, result.stdout
+    assert "retiré" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# gateway attach-ip / detach-ip
+# ---------------------------------------------------------------------------
+
+
+def test_gateway_attach_ip(runner, mock_api):
+    gw = _gw()
+    gw["public_ip_address"] = "163.172.1.2"
+    mock_api.post(f"/v1/vpn/gateways/{GW_ID}/attach-ip").mock(
+        return_value=httpx.Response(200, json=gw)
+    )
+    result = runner.invoke(app, ["vpn", "gateway", "attach-ip", GW_ID])
+    assert result.exit_code == 0, result.stdout
+    assert "163.172.1.2" in result.stdout
+
+
+def test_gateway_detach_ip(runner, mock_api):
+    mock_api.post(f"/v1/vpn/gateways/{GW_ID}/detach-ip").mock(
+        return_value=httpx.Response(200, json=_gw())
+    )
+    result = runner.invoke(app, ["vpn", "gateway", "detach-ip", GW_ID, "--yes"])
+    assert result.exit_code == 0, result.stdout
+    assert "détachée" in result.stdout
