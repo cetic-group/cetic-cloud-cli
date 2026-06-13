@@ -46,71 +46,17 @@ jobs:
           path: dist/cetic-${{ matrix.os.name }}*
           if-no-files-found: error
 
-  # macOS Intel (x86_64): cross-built on the ARM runner, since GitHub's native
-  # Intel runners (macos-13) are deprecated and have unreliable queue times.
-  # Uses a universal2 python.org interpreter + `arch -x86_64` so pip fetches
-  # x86_64 wheels (e.g. pydantic_core) and PyInstaller can freeze an x86_64 binary.
-  build-darwin-amd64:
-    name: Build darwin-amd64
-    runs-on: macos-latest
-    # Cross-build x86_64 sur runner Apple Silicon : best-effort. Si le freeze
-    # x86_64 casse (wheel natif arm64 non réconciliable), on ne bloque PAS la
-    # release (les 5 autres binaires + darwin-arm64 sortent quand même).
-    continue-on-error: true
-    env:
-      PY_VERSION: 3.12.10
-      PYI_TARGET_ARCH: x86_64
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install universal2 Python ${{ env.PY_VERSION }}
-        run: |
-          curl -fL "https://www.python.org/ftp/python/${PY_VERSION}/python-${PY_VERSION}-macos11.pkg" -o python.pkg
-          sudo installer -pkg python.pkg -target /
-          echo "PY=/Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12" >> "$GITHUB_ENV"
-
-      - name: Install deps (x86_64)
-        run: |
-          arch -x86_64 "$PY" -m pip install --upgrade pip
-          arch -x86_64 "$PY" -m pip install -e ".[dev]"
-          # cryptography embarque un binding Rust (_rust.abi3.so) arch-spécifique.
-          # Sous `arch -x86_64` sur un runner Apple Silicon, pip résout le wheel
-          # arm64 → PyInstaller refuse de le mettre dans un binaire x86_64
-          # (IncompatibleBinaryArchError). cryptography ne ships plus de wheel
-          # universal2 (depuis ~v42) → on télécharge explicitement le wheel
-          # **x86_64** (abi3) et on le force par-dessus l'arm64.
-          SITE="$(arch -x86_64 "$PY" -c 'import site; print(site.getsitepackages()[0])')"
-          for pkg in cryptography; do
-            VER="$(arch -x86_64 "$PY" -c "import ${pkg}; print(${pkg}.__version__)")"
-            arch -x86_64 "$PY" -m pip install --force-reinstall --no-deps --no-cache-dir \
-              --only-binary=:all: --target "$SITE" \
-              --implementation cp --abi abi3 \
-              --platform macosx_10_9_x86_64 --platform macosx_10_12_x86_64 \
-              --platform macosx_10_13_x86_64 --platform macosx_11_0_x86_64 \
-              "${pkg}==${VER}"
-          done
-
-      - name: Build PyInstaller binary (x86_64)
-        run: arch -x86_64 "$PY" -m PyInstaller --clean --noconfirm cetic.spec
-
-      - name: Verify architecture
-        run: |
-          file dist/cetic
-          file dist/cetic | grep -q x86_64
-
-      - name: Rename binary
-        run: mv "dist/cetic" "dist/cetic-darwin-amd64"
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: cetic-darwin-amd64
-          path: dist/cetic-darwin-amd64
-          if-no-files-found: error
+  # macOS Intel (darwin-amd64) : PAS de binaire pré-compilé. La dépendance
+  # `cryptography` (≥ 49) ne publie plus de wheel macOS x86_64 (Intel Mac EOL
+  # upstream) et GitHub a retiré les runners Intel macOS → le cross-build n'est
+  # pas réalisable de façon fiable. Les (rares) utilisateurs Intel Mac installent
+  # via `pip install git+https://github.com/cetic-group/cetic-cloud-cli` (compile
+  # cryptography from-source). Binaires pré-compilés : darwin-arm64 (Apple
+  # Silicon) + linux amd64/arm64 + windows amd64.
 
   release:
     name: Publish Release
-    needs: [build, build-darwin-amd64]
+    needs: [build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
