@@ -74,15 +74,19 @@ jobs:
           arch -x86_64 "$PY" -m pip install --upgrade pip
           arch -x86_64 "$PY" -m pip install -e ".[dev]"
           # cryptography embarque un binding Rust (_rust.abi3.so) arch-spécifique.
-          # Sous `arch -x86_64` sur un runner Apple Silicon, pip peut résoudre le
-          # wheel arm64 → PyInstaller refuse de le mettre dans un binaire x86_64
-          # (IncompatibleBinaryArchError). On force le wheel **universal2** (qui
-          # contient la tranche x86_64) pour les deps natives sensibles.
+          # Sous `arch -x86_64` sur un runner Apple Silicon, pip résout le wheel
+          # arm64 → PyInstaller refuse de le mettre dans un binaire x86_64
+          # (IncompatibleBinaryArchError). cryptography ne ships plus de wheel
+          # universal2 (depuis ~v42) → on télécharge explicitement le wheel
+          # **x86_64** (abi3) et on le force par-dessus l'arm64.
           SITE="$(arch -x86_64 "$PY" -c 'import site; print(site.getsitepackages()[0])')"
           for pkg in cryptography; do
             VER="$(arch -x86_64 "$PY" -c "import ${pkg}; print(${pkg}.__version__)")"
             arch -x86_64 "$PY" -m pip install --force-reinstall --no-deps --no-cache-dir \
-              --platform macosx_10_12_universal2 --only-binary=:all: --target "$SITE" \
+              --only-binary=:all: --target "$SITE" \
+              --implementation cp --abi abi3 \
+              --platform macosx_10_9_x86_64 --platform macosx_10_12_x86_64 \
+              --platform macosx_10_13_x86_64 --platform macosx_11_0_x86_64 \
               "${pkg}==${VER}"
           done
 
