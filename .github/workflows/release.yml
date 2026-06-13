@@ -53,6 +53,10 @@ jobs:
   build-darwin-amd64:
     name: Build darwin-amd64
     runs-on: macos-latest
+    # Cross-build x86_64 sur runner Apple Silicon : best-effort. Si le freeze
+    # x86_64 casse (wheel natif arm64 non réconciliable), on ne bloque PAS la
+    # release (les 5 autres binaires + darwin-arm64 sortent quand même).
+    continue-on-error: true
     env:
       PY_VERSION: 3.12.10
       PYI_TARGET_ARCH: x86_64
@@ -69,6 +73,18 @@ jobs:
         run: |
           arch -x86_64 "$PY" -m pip install --upgrade pip
           arch -x86_64 "$PY" -m pip install -e ".[dev]"
+          # cryptography embarque un binding Rust (_rust.abi3.so) arch-spécifique.
+          # Sous `arch -x86_64` sur un runner Apple Silicon, pip peut résoudre le
+          # wheel arm64 → PyInstaller refuse de le mettre dans un binaire x86_64
+          # (IncompatibleBinaryArchError). On force le wheel **universal2** (qui
+          # contient la tranche x86_64) pour les deps natives sensibles.
+          SITE="$(arch -x86_64 "$PY" -c 'import site; print(site.getsitepackages()[0])')"
+          for pkg in cryptography; do
+            VER="$(arch -x86_64 "$PY" -c "import ${pkg}; print(${pkg}.__version__)")"
+            arch -x86_64 "$PY" -m pip install --force-reinstall --no-deps --no-cache-dir \
+              --platform macosx_10_12_universal2 --only-binary=:all: --target "$SITE" \
+              "${pkg}==${VER}"
+          done
 
       - name: Build PyInstaller binary (x86_64)
         run: arch -x86_64 "$PY" -m PyInstaller --clean --noconfirm cetic.spec
