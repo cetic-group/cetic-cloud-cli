@@ -127,6 +127,96 @@ def test_delete_aborted_without_yes(runner, mock_api):
 
 
 # ---------------------------------------------------------------------------
+# vpc list / add / rm (hot-plug)
+# ---------------------------------------------------------------------------
+
+
+def test_vpc_list(runner, mock_api):
+    mock_api.get(f"/v1/bastions/{BASTION_ID}/vpcs").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {"id": VPC_ID, "name": "prod", "vnet_name": "egress",
+                 "vnet_cidr": "10.0.0.0/24", "vnet_snat": True},
+            ],
+        )
+    )
+    result = runner.invoke(app, ["bastion", "vpc", "list", BASTION_ID])
+    assert result.exit_code == 0, result.stdout
+    assert "prod" in result.stdout
+    assert "10.0.0.0/24" in result.stdout
+
+
+def test_vpc_add_sends_body(runner, mock_api):
+    captured: dict[str, Any] = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(201, json={"id": VPC_ID, "name": "prod"})
+
+    mock_api.post(f"/v1/bastions/{BASTION_ID}/vpcs").mock(side_effect=_capture)
+    result = runner.invoke(app, ["bastion", "vpc", "add", BASTION_ID, VPC_ID])
+    assert result.exit_code == 0, result.stdout
+    assert captured["body"] == {"vpc_id": VPC_ID}
+    assert "ajouté" in result.stdout
+
+
+def test_vpc_rm(runner, mock_api):
+    mock_api.delete(f"/v1/bastions/{BASTION_ID}/vpcs/{VPC_ID}").mock(
+        return_value=httpx.Response(204)
+    )
+    result = runner.invoke(app, ["bastion", "vpc", "rm", BASTION_ID, VPC_ID, "--yes"])
+    assert result.exit_code == 0, result.stdout
+    assert "retiré" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# attach-ip / detach-ip
+# ---------------------------------------------------------------------------
+
+
+def test_attach_ip_auto(runner, mock_api):
+    captured: dict[str, Any] = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        b = _bastion()
+        b["public_ip_address"] = "163.172.1.9"
+        return httpx.Response(200, json=b)
+
+    mock_api.post(f"/v1/bastions/{BASTION_ID}/attach-ip").mock(side_effect=_capture)
+    result = runner.invoke(app, ["bastion", "attach-ip", BASTION_ID])
+    assert result.exit_code == 0, result.stdout
+    assert captured["body"] == {}
+    assert "163.172.1.9" in result.stdout
+
+
+def test_attach_ip_explicit(runner, mock_api):
+    captured: dict[str, Any] = {}
+    ip_id = "fedcba98-7654-3210-fedc-ba9876543210"
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json=_bastion())
+
+    mock_api.post(f"/v1/bastions/{BASTION_ID}/attach-ip").mock(side_effect=_capture)
+    result = runner.invoke(
+        app, ["bastion", "attach-ip", BASTION_ID, "--public-ip", ip_id]
+    )
+    assert result.exit_code == 0, result.stdout
+    assert captured["body"] == {"public_ip_id": ip_id}
+
+
+def test_detach_ip(runner, mock_api):
+    mock_api.post(f"/v1/bastions/{BASTION_ID}/detach-ip").mock(
+        return_value=httpx.Response(200, json=_bastion())
+    )
+    result = runner.invoke(app, ["bastion", "detach-ip", BASTION_ID, "--yes"])
+    assert result.exit_code == 0, result.stdout
+    assert "détachée" in result.stdout
+
+
+# ---------------------------------------------------------------------------
 # ca
 # ---------------------------------------------------------------------------
 
