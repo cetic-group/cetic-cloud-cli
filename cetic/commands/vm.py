@@ -11,7 +11,10 @@ from cetic.commands._catalog import (
     render_custom_templates,
     render_qemu_templates,
 )
-from cetic.commands._compute import apply_compute_access_options
+from cetic.commands._compute import (
+    apply_compute_access_options,
+    validate_windows_password,
+)
 from cetic.commands._render import render_list, render_one
 
 app = typer.Typer(help="Machines virtuelles (QEMU) CETIC Cloud")
@@ -30,13 +33,14 @@ def list_vms(
     rows = [
         {
             "id": v["id"], "name": v["name"], "region": v["region"],
+            "os": "Windows" if v.get("os_family") == "windows" else "Linux",
             "plan": v["plan"], "status": v["status"], "ip": v.get("ip_address") or "—",
         }
         for v in items
     ]
     render_list(rows, title=f"VMs ({len(rows)})",
                 columns=[("id", "ID"), ("name", "Nom"), ("region", "Région"),
-                         ("plan", "Plan"), ("status", "Statut"), ("ip", "IP")])
+                         ("os", "OS"), ("plan", "Plan"), ("status", "Statut"), ("ip", "IP")])
 
 
 @app.command()
@@ -71,21 +75,35 @@ def create(
         False, "--template-source",
         help="Créer une instance de préparation de template (visible dans « Mes templates »).",
     ),
+    windows_license_consent: bool = typer.Option(
+        False, "--windows-license-consent",
+        help="Obligatoire pour un template Windows (win-*) : reconnaître que CETIC Cloud "
+             "ne fournit pas les licences Windows (vous détenez une licence valide par VM). "
+             "Une VM Windows exige un plan medium+ et un mot de passe administrateur fort.",
+    ),
     root_password: str = typer.Option(
         ..., "--root-password",
         prompt=True, hide_input=True, confirmation_prompt=True,
-        help="Mot de passe root (8 chars min). Demandé interactivement si non fourni.",
+        help="Mot de passe root (Linux) ou administrateur (Windows). 8 chars min "
+             "(Windows : 12 chars min + 3 catégories). Demandé interactivement si non fourni.",
     ),
 ) -> None:
-    """Crée une VM.
+    """Crée une VM (Linux ou Windows).
 
     Le mot de passe root est obligatoire (politique CCP v1.4.0+, 8 chars min).
     Si non fourni via `--root-password`, Typer le demande interactivement
     (avec masquage + confirmation).
+
+    Pour une VM Windows (template `win-*` ou template custom Windows), passer
+    `--windows-license-consent` : l'accès se fait en RDP (compte administrateur),
+    le plan doit être `medium`+ et le mot de passe doit faire ≥ 12 caractères
+    couvrant ≥ 3 catégories (minuscule, majuscule, chiffre, symbole).
     """
     if len(root_password) < 8:
         rprint("[red]Erreur : le mot de passe root doit faire au moins 8 caractères.[/red]")
         raise typer.Exit(1)
+    if windows_license_consent:
+        validate_windows_password(root_password)
     body = {
         "name": name, "region": region, "plan": plan, "template": template,
         "vnet_id": vnet_id, "root_password": root_password,
@@ -95,6 +113,7 @@ def create(
     apply_compute_access_options(
         body, cloud_init=cloud_init, bastion_access=bastion_access,
         template_source=template_source,
+        windows_license_consent=windows_license_consent,
     )
     try:
         v = client.post("/v1/vm-instances", json=body)

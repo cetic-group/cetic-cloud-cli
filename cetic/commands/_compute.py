@@ -5,7 +5,34 @@ Centralise l'option `--cloud-init` (lecture d'un fichier cloud-config envoyé en
 """
 from __future__ import annotations
 
+import re
+
 from pathlib import Path
+
+import typer
+from rich import print as rprint
+
+
+def validate_windows_password(password: str) -> None:
+    """Valide la complexité du mot de passe administrateur Windows.
+
+    Politique alignée sur le backend (`apps/api/app/api/v1/vm_instances.py`) :
+    ≥ 12 caractères ET ≥ 3 catégories parmi minuscule / majuscule / chiffre /
+    symbole. Échoue tôt côté CLI pour un message clair (le backend renvoie sinon
+    un 422). Appelé uniquement quand le template est Windows
+    (``--windows-license-consent``).
+    """
+    categories = sum(
+        bool(re.search(pattern, password))
+        for pattern in (r"[a-z]", r"[A-Z]", r"[0-9]", r"[^a-zA-Z0-9]")
+    )
+    if len(password) < 12 or categories < 3:
+        rprint(
+            "[red]Erreur : mot de passe Windows trop faible. "
+            "Il doit faire au moins 12 caractères et couvrir au moins 3 catégories "
+            "parmi minuscule, majuscule, chiffre, symbole.[/red]"
+        )
+        raise typer.Exit(1)
 
 
 def read_cloud_init(path: Path | None) -> str | None:
@@ -25,14 +52,17 @@ def apply_compute_access_options(
     cloud_init: Path | None,
     bastion_access: bool,
     template_source: bool | None = None,
+    windows_license_consent: bool = False,
 ) -> None:
-    """Ajoute `user_data`/`bastion_access`/`is_template_source` au body si demandés.
+    """Ajoute `user_data`/`bastion_access`/`is_template_source`/`windows_license_consent` au body si demandés.
 
     - ``user_data`` n'est ajouté que si un fichier cloud-init est fourni (sinon le
       backend applique ses défauts cloud-init CETIC).
     - ``bastion_access`` n'est ajouté que s'il vaut True (défaut backend = False).
     - ``is_template_source`` n'est ajouté que s'il vaut True. ``None`` =
       l'option n'existe pas pour cette ressource (scale-sets).
+    - ``windows_license_consent`` n'est ajouté que s'il vaut True (obligatoire pour
+      un template Windows ; défaut backend = False).
     """
     user_data = read_cloud_init(cloud_init)
     if user_data is not None:
@@ -41,3 +71,5 @@ def apply_compute_access_options(
         body["bastion_access"] = True
     if template_source:
         body["is_template_source"] = True
+    if windows_license_consent:
+        body["windows_license_consent"] = True

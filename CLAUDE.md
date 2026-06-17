@@ -60,8 +60,22 @@ tests/
 
 ## Versions
 
-**Latest : `v0.30.0`** (2026-06-13)
+**Latest : `v0.31.0`**
 
+- `v0.31.0` — feat : **Windows sur `cetic vm create` / `cetic vm-scale-set create`**
+  (issue cetic-cloud-platform#446, alignement v2.28.x). Flag
+  **`--windows-license-consent`** sur `vm create` et `vm-scale-set create` (envoie
+  `windows_license_consent=true` ; obligatoire pour un template Windows `win-*` ou
+  un template custom Windows, sinon 422 backend) + **validation locale de la
+  complexité du mot de passe** quand le flag est posé (≥ 12 caractères, ≥ 3
+  catégories — helper partagé `_compute.validate_windows_password`, aligné sur la
+  politique backend). Colonne **OS** (Linux/Windows depuis `os_family`) ajoutée à
+  `cetic vm list`, `cetic vm-scale-set list`, `cetic template list` et
+  `cetic {vm,container} custom-templates`. Les VM Windows passent par `cetic vm`
+  (VM QEMU native) : il n'y a **pas** de groupe `cetic windows` séparé (une
+  ancienne tentative ciblant `/v1/windows-instances` — endpoint retiré de l'API en
+  v2.27.0, abandon dockur — n'a jamais été mergée). Tests : 6 nouveaux (flag +
+  rejet mot de passe faible).
 - `v0.30.0` — feat : gestion des VPC couverts + IP publique pour le VPN et le
   Bastion (gaps d'audit d'alignement — endpoints backend déjà présents).
   **VPN** : `cetic vpn gateway vpc list|add|rm GATEWAY [VPC_ID]` (hot-plug,

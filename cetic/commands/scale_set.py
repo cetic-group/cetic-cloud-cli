@@ -11,14 +11,17 @@ from cetic.commands._catalog import (
     render_lxc_templates,
     render_qemu_templates,
 )
-from cetic.commands._compute import apply_compute_access_options
+from cetic.commands._compute import (
+    apply_compute_access_options,
+    validate_windows_password,
+)
 from cetic.commands._render import render_list, render_one
 
 container_app = typer.Typer(help="Container Scale Sets CETIC Cloud")
 vm_app = typer.Typer(help="VM Scale Sets CETIC Cloud")
 
 
-def _list(endpoint: str, kind: str) -> None:
+def _list(endpoint: str, kind: str, show_os: bool = False) -> None:
     try:
         items = client.get(endpoint)
     except client.APIError as e:
@@ -26,13 +29,16 @@ def _list(endpoint: str, kind: str) -> None:
         raise typer.Exit(1)
     rows = [
         {"id": s["id"], "name": s["name"], "region": s["region"],
+         "os": "Windows" if s.get("os_family") == "windows" else "Linux",
          "plan": s["plan"], "replicas": s.get("desired_replicas") or s.get("replicas", 0),
          "status": s["status"]}
         for s in items
     ]
-    render_list(rows, title=f"{kind} ({len(rows)})",
-                columns=[("id", "ID"), ("name", "Nom"), ("region", "Région"),
-                         ("plan", "Plan"), ("replicas", "Replicas"), ("status", "Statut")])
+    columns = [("id", "ID"), ("name", "Nom"), ("region", "Région")]
+    if show_os:
+        columns.append(("os", "OS"))
+    columns += [("plan", "Plan"), ("replicas", "Replicas"), ("status", "Statut")]
+    render_list(rows, title=f"{kind} ({len(rows)})", columns=columns)
 
 
 def _scale(endpoint: str, replicas: int) -> None:
@@ -49,10 +55,13 @@ def _create(  # noqa: PLR0913
     vnet: str | None, root_password: str, desired: int, min_: int, max_: int,
     ssh_key: list[str] | None, tag: list[str] | None,
     cloud_init: Path | None = None, bastion_access: bool = False,
+    windows_license_consent: bool = False,
 ) -> None:
     if len(root_password) < 8:
         rprint("[red]Erreur : le mot de passe root doit faire au moins 8 caractères.[/red]")
         raise typer.Exit(1)
+    if windows_license_consent:
+        validate_windows_password(root_password)
     body: dict = {
         "name": name, "region": region, "plan": plan, "template": template,
         "root_password": root_password,
@@ -66,6 +75,7 @@ def _create(  # noqa: PLR0913
         body["tags"] = tag
     apply_compute_access_options(
         body, cloud_init=cloud_init, bastion_access=bastion_access,
+        windows_license_consent=windows_license_consent,
     )
     try:
         s = client.post(endpoint, json=body)
@@ -170,7 +180,7 @@ def templates() -> None:
 def list_vmss(region: str | None = typer.Option(None, "--region", "-r")) -> None:
     """Liste les VM scale sets."""
     suffix = f"?region={region}" if region else ""
-    _list(f"/v1/vm-scale-sets{suffix}", "VM Scale Sets")
+    _list(f"/v1/vm-scale-sets{suffix}", "VM Scale Sets", show_os=True)
 
 
 @vm_app.command()
@@ -194,17 +204,30 @@ def create(  # noqa: PLR0913
         False, "--bastion-access",
         help="Autoriser l'accès SSH via le Bastion du tenant (opt-in).",
     ),
+    windows_license_consent: bool = typer.Option(
+        False, "--windows-license-consent",
+        help="Obligatoire pour un template Windows (win-*) : reconnaître que CETIC Cloud "
+             "ne fournit pas les licences Windows. Plan medium+ et mot de passe "
+             "administrateur fort requis.",
+    ),
     root_password: str = typer.Option(
         ..., "--root-password", prompt=True, hide_input=True, confirmation_prompt=True,
-        help="Mot de passe root (8 chars min). Demandé interactivement si non fourni.",
+        help="Mot de passe root (Linux) ou administrateur (Windows). 8 chars min "
+             "(Windows : 12 chars min + 3 catégories). Demandé interactivement si non fourni.",
     ),
 ) -> None:
-    """Crée un VM scale set (auto-scaling group de machines virtuelles)."""
+    """Crée un VM scale set (auto-scaling group de machines virtuelles, Linux ou Windows).
+
+    Pour un scale set Windows (template `win-*` ou template custom Windows),
+    passer `--windows-license-consent` : accès RDP, plan `medium`+ et mot de passe
+    administrateur ≥ 12 caractères / ≥ 3 catégories.
+    """
     _create(endpoint="/v1/vm-scale-sets", kind="VM scale set",
             name=name, region=region, plan=plan, template=template, vnet=vnet,
             root_password=root_password, desired=desired, min_=min_, max_=max_,
             ssh_key=ssh_key, tag=tag,
-            cloud_init=cloud_init, bastion_access=bastion_access)
+            cloud_init=cloud_init, bastion_access=bastion_access,
+            windows_license_consent=windows_license_consent)
 
 
 @vm_app.command()

@@ -25,6 +25,7 @@ _LIST_COLUMNS = [
     ("id", "ID"),
     ("name", "Nom"),
     ("template_type", "Type"),
+    ("os_family", "OS"),
     ("region", "Région"),
     ("status", "Statut"),
     ("disk_gb", "Disque GB"),

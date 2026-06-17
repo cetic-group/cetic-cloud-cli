@@ -128,6 +128,7 @@ def render_custom_templates(template_type: str | None = None) -> None:
             "id": t["id"],
             "name": t.get("name", ""),
             "template_type": t.get("template_type", "—"),
+            "os": "Windows" if t.get("os_family") == "windows" else "Linux",
             "region": t.get("region", "—"),
             "status": t.get("status", "—"),
             "disk_gb": t.get("disk_gb") if t.get("disk_gb") is not None else "—",
@@ -141,7 +142,7 @@ def render_custom_templates(template_type: str | None = None) -> None:
         rows,
         title=f"Templates custom{suffix} ({len(rows)})",
         columns=[
-            ("id", "ID"), ("name", "Nom"), ("template_type", "Type"),
+            ("id", "ID"), ("name", "Nom"), ("template_type", "Type"), ("os", "OS"),
             ("region", "Région"), ("status", "Statut"), ("disk_gb", "Disque (Go)"),
             ("source", "Source"), ("created_at", "Créé le"),
         ],
