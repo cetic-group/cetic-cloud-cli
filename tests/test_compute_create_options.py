@@ -125,3 +125,56 @@ def test_template_source_not_available_on_scale_sets(runner, mock_api, prefix):
     )
     # Option inconnue → Typer renvoie une erreur d'usage (exit code 2).
     assert result.exit_code != 0
+
+
+# --windows-license-consent : VM + VM scale set (templates Windows).
+
+WIN_PW = "Str0ng-P@ssw0rd!"  # ≥ 12 chars, 4 catégories
+
+WINDOWS_CASES = [
+    (["vm", "create"], "/v1/vm-instances"),
+    (["vm-scale-set", "create"], "/v1/vm-scale-sets"),
+]
+
+
+def _win_args(prefix: list[str], password: str = WIN_PW) -> list[str]:
+    return [
+        *prefix,
+        "--name", "win",
+        "--region", "PAR",
+        "--plan", "medium",
+        "--template", "win-2022",
+        "--vnet", "vnet-123",
+        "--root-password", password,
+    ]
+
+
+@pytest.mark.parametrize("prefix,endpoint", WINDOWS_CASES)
+def test_windows_license_consent_flag_sets_field(runner, mock_api, prefix, endpoint):
+    captured = _capture_post(mock_api, endpoint)
+    result = runner.invoke(
+        app, [*_win_args(prefix), "--windows-license-consent"]
+    )
+    assert result.exit_code == 0, result.stdout
+    assert captured["body"]["windows_license_consent"] is True
+
+
+@pytest.mark.parametrize("prefix,endpoint", WINDOWS_CASES)
+def test_windows_license_consent_absent_by_default(runner, mock_api, prefix, endpoint):
+    captured = _capture_post(mock_api, endpoint)
+    result = runner.invoke(app, _win_args(prefix))
+    assert result.exit_code == 0, result.stdout
+    assert "windows_license_consent" not in captured["body"]
+
+
+@pytest.mark.parametrize("prefix,endpoint", WINDOWS_CASES)
+def test_windows_weak_password_rejected_locally(runner, mock_api, prefix, endpoint):
+    # Mot de passe ≥ 8 (passe la garde Linux) mais faible pour Windows
+    # (< 12 chars / < 3 catégories) → rejet local AVANT tout appel réseau.
+    captured = _capture_post(mock_api, endpoint)
+    result = runner.invoke(
+        app, [*_win_args(prefix, password="weakpass1"), "--windows-license-consent"]
+    )
+    assert result.exit_code != 0
+    assert "body" not in captured
+    assert not any(call.request.method == "POST" for call in mock_api.calls)

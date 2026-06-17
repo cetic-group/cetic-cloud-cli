@@ -244,6 +244,14 @@ cetic vm create --name web --region RNN --vnet <VNET> \
 cetic vm create --name tpl-prep --region RNN --vnet <VNET> \
     --template-source                     # instance de préparation de template (vm/container)
 
+# VM Windows (depuis v0.31.0) — template win-*, accès RDP, plan medium+
+cetic vm create --name win-app --region RNN --vnet <VNET> \
+    --plan medium --template win-2022 \
+    --windows-license-consent             # CETIC Cloud ne fournit pas les licences Windows
+                                          # mot de passe administrateur fort requis (≥ 12 car., ≥ 3 catégories)
+cetic vm-scale-set create --name win-pool --region RNN --vnet <VNET> \
+    --plan medium --template win-2022 --desired 2 --windows-license-consent
+
 # Catalogue compute (depuis v0.22.0) — plans, templates système, templates custom
 cetic container plans                 # plans nano..xlarge (vCPU/RAM/disque/€)
 cetic container templates             # templates système (CT — Debian/Ubuntu/…)
