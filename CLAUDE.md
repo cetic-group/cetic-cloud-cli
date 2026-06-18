@@ -60,8 +60,38 @@ tests/
 
 ## Versions
 
-**Latest : `v0.31.0`**
+**Latest : `v0.33.0`**
 
+- `v0.33.0` — feat : **version Kubernetes par node pool** (control plane vs
+  workers). `cluster.k8s_version` est désormais la version du **control plane** ;
+  chaque node pool a une `k8s_version` optionnelle (`null` = hérite du control
+  plane, doit être ≤ control plane sinon 422 backend). Nouveau flag
+  **`--pool-version`** sur `cetic k8s create` → envoyé en
+  `initial_pool.k8s_version` (omis = hérite). Nouveau flag **`--version`** sur
+  `cetic k8s pool create` (→ `k8s_version` au POST) et `cetic k8s pool update`
+  (→ `k8s_version` au PATCH, pin/upgrade du pool). `--version` de `cetic k8s
+  create` documenté comme étant la version du **control plane**. Validation
+  locale du format `vX.Y.Z` / `X.Y.Z` (helper module-level `_validate_k8s_version`,
+  testable) avec erreur claire avant tout appel réseau. Colonne **Version**
+  ajoutée à `cetic k8s pool list` : affiche la version pinée, ou
+  `(héritée: <version CP>)` si `null` (la version du control plane est récupérée
+  best-effort via un GET cluster ; fallback `(héritée)`). Helper d'affichage
+  `_fmt_pool_version`. Aucun nouvel endpoint (les schémas
+  create-cluster/create-pool/patch-pool acceptaient déjà `k8s_version`). Tests :
+  10 nouveaux. Comportement `--os` inchangé.
+- `v0.32.0` — feat : **multi-OS sur les clusters K8s** (issue
+  cetic-cloud-platform#460). Flag **`--os flatcar|ubuntu|rocky9`** (défaut
+  `flatcar`) sur `cetic k8s create` → envoie `os_image` dans le POST
+  `/v1/k8s/clusters`. `--template` devient **optionnel** : si omis, le template
+  est résolu automatiquement contre `GET /v1/k8s/templates?region=…` en matchant
+  le triplet (`os`, `k8s_version`, `region`) et son `os_key` est envoyé en
+  `os_template_key` (helper module-level `_resolve_os_template_key`, testable) ;
+  erreur claire si aucun template ne matche (le backend re-valide → 422 sinon).
+  Validation locale de `--os` contre les 3 slugs. Colonne **OS** (Flatcar /
+  Ubuntu / Rocky Linux 9, depuis `os_image`) ajoutée à `cetic k8s list` et champ
+  `os` à `cetic k8s get` (slug brut `os_image` conservé pour JSON/YAML). Colonne
+  **OS (slug)** ajoutée à `cetic k8s templates` (champ `os` de la réponse).
+  Helper d'affichage `_fmt_os`. Aucun nouvel endpoint.
 - `v0.31.0` — feat : **Windows sur `cetic vm create` / `cetic vm-scale-set create`**
   (issue cetic-cloud-platform#446, alignement v2.28.x). Flag
   **`--windows-license-consent`** sur `vm create` et `vm-scale-set create` (envoie

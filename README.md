@@ -269,10 +269,15 @@ cetic appgw plans                     # plans Application Gateway (appgw-small/m
 # Kubernetes
 cetic k8s list
 cetic k8s create --name prod --region RNN --pool-plan medium --pool-min 1 --pool-max 5
+cetic k8s create --name prod --region RNN --os ubuntu   # OS des nœuds : flatcar (défaut)|ubuntu|rocky9
+cetic k8s create --name prod --region RNN --version v1.32.0 --pool-version v1.31.0  # --version=control plane, --pool-version=workers du pool initial (≤ CP, omis=hérite)
 cetic k8s kubeconfig <cluster-id> > ~/.kube/config
 cetic k8s plans                       # plans node pool (restriction CCKS appliquée)
 cetic k8s versions                    # versions Kubernetes disponibles par région
-cetic k8s templates                   # images OS CAPI (clé --template à la création)
+cetic k8s templates                   # images OS CAPI (clé --template + slug --os à la création)
+cetic k8s pool list <cluster-id>      # colonne Version : version du pool (workers) ou (héritée: <CP>)
+cetic k8s pool create <cluster-id> --name gpu --version v1.31.0   # --version=workers (≤ CP, omis=hérite)
+cetic k8s pool update <cluster-id> <pool-id> --version v1.31.2    # pin/upgrade la version du pool
 
 # Storage
 cetic volume list
