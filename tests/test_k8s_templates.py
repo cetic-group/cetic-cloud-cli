@@ -53,6 +53,25 @@ def test_templates_sorted_major_desc(runner, mock_api, _json_out):
     assert versions == ["v1.35.1", "v1.34.8", "v1.34.6", "v1.33.2"]
 
 
+def test_templates_show_both_pve_tags(runner, mock_api, _json_out):
+    # Chaque template expose les DEUX tags PVE : version (os_key) + OS (os_tag).
+    payload = [_tmpl("kube-v1-34-8", "Ubuntu 1.34.8", "v1.34.8", os_slug="ubuntu")]
+    mock_api.get("/v1/k8s/templates").mock(return_value=httpx.Response(200, json=payload))
+    result = runner.invoke(app, ["k8s", "templates"])
+    rows = json.loads(result.stdout)
+    assert rows[0]["os_key"] == "kube-v1-34-8"
+    assert rows[0]["os_tag"] == "ccks-os-ubuntu"
+
+
+def test_templates_os_tag_dash_when_no_os(runner, mock_api, _json_out):
+    payload = [{"os_key": "kube-v1-30-0", "display_name": "legacy", "k8s_version": "v1.30.0",
+                "region": "RNN", "built_at": "2026-01-01T00:00:00Z"}]  # pas de champ `os`
+    mock_api.get("/v1/k8s/templates").mock(return_value=httpx.Response(200, json=payload))
+    result = runner.invoke(app, ["k8s", "templates"])
+    rows = json.loads(result.stdout)
+    assert rows[0]["os_tag"] == "—"
+
+
 def test_templates_same_version_sorted_by_name_asc(runner, mock_api, _json_out):
     # Deux templates en MÊME version → départage par nom croissant (a→z).
     payload = [
