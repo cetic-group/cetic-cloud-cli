@@ -53,6 +53,24 @@ def test_templates_sorted_major_desc(runner, mock_api, _json_out):
     assert versions == ["v1.35.1", "v1.34.8", "v1.34.6", "v1.33.2"]
 
 
+def test_templates_same_version_sorted_by_name_asc(runner, mock_api, _json_out):
+    # Deux templates en MÊME version → départage par nom croissant (a→z).
+    payload = [
+        _tmpl("kube-v1-34-8-ubuntu", "Ubuntu 24.04 k8s 1.34.8", "v1.34.8"),
+        _tmpl("kube-v1-34-8-rocky", "Rocky 9 k8s 1.34.8", "v1.34.8", os_slug="rocky9"),
+        _tmpl("kube-v1-35-1", "Ubuntu 24.04 k8s 1.35.1", "v1.35.1"),
+    ]
+    mock_api.get("/v1/k8s/templates").mock(return_value=httpx.Response(200, json=payload))
+    result = runner.invoke(app, ["k8s", "templates"])
+    rows = json.loads(result.stdout)
+    # v1.35.1 d'abord (majeure en haut), puis les deux v1.34.8 par nom : Rocky < Ubuntu.
+    assert [r["display_name"] for r in rows] == [
+        "Ubuntu 24.04 k8s 1.35.1",
+        "Rocky 9 k8s 1.34.8",
+        "Ubuntu 24.04 k8s 1.34.8",
+    ]
+
+
 def test_templates_filter_name(runner, mock_api, _json_out):
     mock_api.get("/v1/k8s/templates").mock(return_value=httpx.Response(200, json=_PAYLOAD))
     result = runner.invoke(app, ["k8s", "templates", "--name", "rocky"])

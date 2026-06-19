@@ -265,13 +265,16 @@ def templates(
         ver = k8s_version.lstrip("vV")
         data = [t for t in data if (t.get("k8s_version") or "").lstrip("vV").startswith(ver)]
 
-    # Tri par version k8s décroissante (majeure en haut), puis par clé pour
-    # un ordre stable entre templates de même version.
-    data = sorted(
-        data,
-        key=lambda t: (_version_sort_key(t.get("k8s_version")), t.get("os_key") or ""),
-        reverse=True,
-    )
+    # Tri par défaut : version Kubernetes **décroissante** (majeure en haut),
+    # puis par **nom croissant** (a→z) à version égale. Double passe stable :
+    # on trie d'abord par nom (clé secondaire), puis par version (clé primaire) —
+    # le tri stable préserve l'ordre des noms au sein d'une même version.
+    def _name(t: dict) -> str:
+        return (t.get("display_name") or t.get("os_key") or "").lower()
+
+    data = sorted(data, key=_name)
+    data = sorted(data, key=lambda t: _version_sort_key(t.get("k8s_version")),
+                  reverse=True)
 
     rows = [
         {
