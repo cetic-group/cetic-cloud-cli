@@ -60,8 +60,12 @@ tests/
 
 ## Versions
 
-**Latest : `v0.34.0`**
+**Latest : `v0.34.1`**
 
+- `v0.34.1` — fix : tri par défaut de `cetic k8s templates`. Clé primaire =
+  **version Kubernetes décroissante** (majeure en haut, inchangé), clé
+  secondaire = **nom croissant** (a→z) à version égale (avant : `os_key`
+  décroissant, qui paraissait non trié). Double passe stable (nom puis version).
 - `v0.34.0` — feat : fixes/ajouts `cetic ssh` + `scp` + `auth login --sso` +
   filtres `k8s templates` (issue cetic-cloud-platform#488). **(1) `cetic ssh`
   sélection du bastion par VPC** : `_resolve_bastion_host` prenait le **premier**
