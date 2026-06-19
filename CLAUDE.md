@@ -60,8 +60,12 @@ tests/
 
 ## Versions
 
-**Latest : `v0.34.2`**
+**Latest : `v0.34.3`**
 
+- `v0.34.3` — fix : tri par défaut de `cetic k8s templates` = **nom (OS)
+  croissant PRIMAIRE** puis **version décroissante** au sein de chaque OS
+  (regroupe par famille OS, majeure en haut dans chaque groupe). v0.34.1 avait
+  la version en clé primaire ; le nom (`os_label`) est désormais la clé primaire.
 - `v0.34.2` — feat : `cetic k8s templates` affiche les **deux tags PVE** que
   CAPMOX matche en ET (#460) : colonne **`Clé (version)`** (`kube-v<ver>`,
   =`os_key`) + nouvelle colonne **`Clé (OS)`** (`ccks-os-<slug>`, dérivée de
