@@ -60,8 +60,14 @@ tests/
 
 ## Versions
 
-**Latest : `v0.34.1`**
+**Latest : `v0.34.2`**
 
+- `v0.34.2` — feat : `cetic k8s templates` affiche les **deux tags PVE** que
+  CAPMOX matche en ET (#460) : colonne **`Clé (version)`** (`kube-v<ver>`,
+  =`os_key`) + nouvelle colonne **`Clé (OS)`** (`ccks-os-<slug>`, dérivée de
+  `os`). Depuis le multi-OS, `kube-v<ver>` n'est plus unique → un template est
+  identifié par le couple (version, OS). La colonne « OS (slug) » redondante est
+  retirée (l'info est dans `Clé (OS)`). `—` si le template n'a pas d'OS (legacy).
 - `v0.34.1` — fix : tri par défaut de `cetic k8s templates`. Clé primaire =
   **version Kubernetes décroissante** (majeure en haut, inchangé), clé
   secondaire = **nom croissant** (a→z) à version égale (avant : `os_key`

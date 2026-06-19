@@ -278,10 +278,13 @@ def templates(
 
     rows = [
         {
-            "os_key": t.get("os_key", ""),
+            # Les deux tags PVE que CAPMOX matche en ET (#460) : un template est
+            # identifié par le COUPLE (version, OS) — `kube-v<ver>` n'est plus
+            # unique depuis le multi-OS.
+            "os_key": t.get("os_key", ""),                       # kube-v<ver>
+            "os_tag": f"ccks-os-{t['os']}" if t.get("os") else "—",  # ccks-os-<slug>
             "display_name": t.get("display_name", ""),
             "k8s_version": t.get("k8s_version", "—"),
-            "os_slug": t.get("os") or "—",
             "os": t.get("os_label", "—"),
             "region": t.get("region", "—"),
             "built_at": (t.get("built_at") or "")[:10],
@@ -289,10 +292,10 @@ def templates(
         for t in data
     ]
     render_list(rows, title=f"Templates Kubernetes ({len(rows)})",
-                columns=[("os_key", "Clé"), ("display_name", "Nom"),
-                         ("k8s_version", "Version"),
-                         ("os_slug", "OS (slug)"), ("os", "OS"),
-                         ("region", "Région"), ("built_at", "Buildé le")])
+                columns=[("os_key", "Clé (version)"), ("os_tag", "Clé (OS)"),
+                         ("display_name", "Nom"), ("k8s_version", "Version"),
+                         ("os", "OS"), ("region", "Région"),
+                         ("built_at", "Buildé le")])
 
 
 def _resolve_os_template_key(
