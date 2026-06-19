@@ -101,9 +101,10 @@ app.add_typer(tag.app, name="tag")
 app.add_typer(bastion.app, name="bastion")
 app.add_typer(vpn.app, name="vpn")
 
-# Commande de premier niveau (PAS sous une sous-app) : ouvre une session SSH
-# sécurisée vers une cible privée via le bastion.
+# Commandes de premier niveau (PAS sous une sous-app) : accès et transfert
+# sécurisés vers une cible privée via le bastion.
 app.command(name="ssh")(ssh.ssh)
+app.command(name="scp")(ssh.scp)
 
 
 def version_callback(value: bool) -> None:

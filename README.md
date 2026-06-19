@@ -228,6 +228,7 @@ Cf. [docs/iam](https://docs.cloud.cetic-group.com/services/iam) pour le détail 
 ```bash
 # Authentication
 cetic auth login                  # interactive (email + password)
+cetic auth login --sso github     # SSO via le navigateur (github | google) — depuis v0.34.0
 cetic auth whoami                 # show current identity
 
 # Compute
@@ -274,10 +275,20 @@ cetic k8s create --name prod --region RNN --version v1.32.0 --pool-version v1.31
 cetic k8s kubeconfig <cluster-id> > ~/.kube/config
 cetic k8s plans                       # plans node pool (restriction CCKS appliquée)
 cetic k8s versions                    # versions Kubernetes disponibles par région
-cetic k8s templates                   # images OS CAPI (clé --template + slug --os à la création)
+cetic k8s templates                   # images OS CAPI (triées par version k8s décroissante)
+cetic k8s templates --name rocky --k8s-version 1.34   # filtres nom + version — depuis v0.34.0
 cetic k8s pool list <cluster-id>      # colonne Version : version du pool (workers) ou (héritée: <CP>)
 cetic k8s pool create <cluster-id> --name gpu --version v1.31.0   # --version=workers (≤ CP, omis=hérite)
 cetic k8s pool update <cluster-id> <pool-id> --version v1.31.2    # pin/upgrade la version du pool
+
+# Accès privé via le Bastion (cible = IP privée / nom / id de ressource)
+cetic ssh 10.0.1.42                          # shell SSH (cert éphémère, bastion auto-sélectionné par VPC)
+cetic ssh 10.0.1.42 --login ubuntu --bastion bastion.par.cloud.cetic-group.com
+cetic scp ./app.tar 10.0.1.42:/srv/          # upload — depuis v0.34.0
+cetic scp 10.0.1.42:/var/log/app ./logs -r   # download récursif
+# Le bastion est choisi automatiquement parmi ceux qui desservent le VPC de la
+# cible ; précisez --bastion si plusieurs conviennent. (scp requiert un bastion
+# dont l'image embarque le daemon ≥ celui qui résout CCP_TARGET.)
 
 # Storage
 cetic volume list
