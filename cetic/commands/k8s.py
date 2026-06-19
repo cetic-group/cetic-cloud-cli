@@ -216,19 +216,63 @@ def versions(
                 columns=[("version", "Version"), ("region", "Région"), ("os", "OS")])
 
 
+def _version_sort_key(version: str | None) -> tuple[int, ...]:
+    """Clé de tri numérique pour une version `vX.Y.Z` / `X.Y.Z`.
+
+    Retourne un tuple d'entiers (major, minor, patch, …) pour trier les versions
+    par ordre **décroissant** (majeure en haut). Les segments non numériques ou
+    absents valent 0 → toujours comparables."""
+    raw = (version or "").lstrip("vV")
+    parts: list[int] = []
+    for seg in raw.split("."):
+        num = "".join(ch for ch in seg if ch.isdigit())
+        parts.append(int(num) if num else 0)
+    return tuple(parts) if parts else (0,)
+
+
 @app.command()
 def templates(
     region: str | None = typer.Option(None, "--region", "-r", help="Filtrer par région"),
+    name: str | None = typer.Option(
+        None, "--name", "-n",
+        help="Filtrer par nom (sous-chaîne, insensible à la casse, sur la clé "
+             "ou le nom affiché).",
+    ),
+    k8s_version: str | None = typer.Option(
+        None, "--k8s-version", "-k",
+        help="Filtrer par version Kubernetes (préfixe, ex `1.34` ou `v1.34.6`).",
+    ),
 ) -> None:
     """Liste les templates OS Kubernetes disponibles (images CAPI buildées).
 
     La clé (`--template` à la création) est l'`os_key` (ex `kube-v1-34-6`).
+    Résultats triés par version Kubernetes décroissante (majeure en haut).
     """
     try:
         data = client.get("/v1/k8s/templates", params={"region": region} if region else None)
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
+
+    if name:
+        needle = name.lower()
+        data = [
+            t for t in data
+            if needle in (t.get("os_key") or "").lower()
+            or needle in (t.get("display_name") or "").lower()
+        ]
+    if k8s_version:
+        ver = k8s_version.lstrip("vV")
+        data = [t for t in data if (t.get("k8s_version") or "").lstrip("vV").startswith(ver)]
+
+    # Tri par version k8s décroissante (majeure en haut), puis par clé pour
+    # un ordre stable entre templates de même version.
+    data = sorted(
+        data,
+        key=lambda t: (_version_sort_key(t.get("k8s_version")), t.get("os_key") or ""),
+        reverse=True,
+    )
+
     rows = [
         {
             "os_key": t.get("os_key", ""),

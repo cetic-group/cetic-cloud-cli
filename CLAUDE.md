@@ -60,8 +60,29 @@ tests/
 
 ## Versions
 
-**Latest : `v0.33.0`**
+**Latest : `v0.34.0`**
 
+- `v0.34.0` — feat : fixes/ajouts `cetic ssh` + `scp` + `auth login --sso` +
+  filtres `k8s templates` (issue cetic-cloud-platform#488). **(1) `cetic ssh`
+  sélection du bastion par VPC** : `_resolve_bastion_host` prenait le **premier**
+  bastion venu → échec « connexion à la cible impossible » quand la cible était
+  dans un autre VPC que ce bastion (cause racine confirmée live). Désormais : si
+  plusieurs bastions, on résout l'IP de la cible → VNet/VPC (via `GET /v1/vpcs`
+  + `/v1/vpcs/{id}/vnets`) et on choisit le bastion qui **dessert ce VPC**
+  (`vpc_ids`) ; erreur claire (demande `--bastion`) si on ne peut trancher.
+  Login défaut inchangé (`root` — fonctionne sur VM Linux via
+  `PermitRootLogin prohibit-password`). **(2) `cetic scp`** (nouveau, top-level) :
+  transfert récursif via le bastion, format `TARGET:chemin` (upload/download),
+  `-r` auto si la source locale est un répertoire ; réutilise le flux cert
+  éphémère + passe la cible au bastion via `-o SetEnv=CCP_TARGET=<target>` (le
+  sous-système sftp/scp ne porte pas d'argument `host=`). ⚠️ **requiert un
+  rebuild du golden bastion** (le daemon `ccp-bastiond` lit désormais
+  `CCP_TARGET` dans `resolveTarget`). **(3) `cetic auth login --sso github|google`** :
+  flux loopback façon `gh` (serveur local éphémère + navigateur →
+  `GET /v1/auth/oauth/{provider}/authorize?cli_redirect=http://127.0.0.1:<port>/...`
+  → tokens). Requiert le support backend `cli_redirect` loopback (livré côté
+  api). **(4) `cetic k8s templates --name/--k8s-version`** + tri par version k8s
+  décroissante (majeure en haut). Tests : +20.
 - `v0.33.0` — feat : **version Kubernetes par node pool** (control plane vs
   workers). `cluster.k8s_version` est désormais la version du **control plane** ;
   chaque node pool a une `k8s_version` optionnelle (`null` = hérite du control
