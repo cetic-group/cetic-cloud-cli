@@ -107,5 +107,5 @@ def switch(org_id: str = typer.Argument(...)) -> None:
     # Persiste le nouveau token côté config locale
     if "access_token" in res:
         from cetic import config
-        config.set("api_key", res["access_token"])
+        config.set_value("api_key", res["access_token"])
     rprint(f"[green]✓[/green] Org active mise à jour.")

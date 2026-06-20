@@ -66,6 +66,8 @@ app = typer.Typer(
     help="CETIC Cloud Platform CLI — Deep infrastructure. Endless possibilities.",
     no_args_is_help=True,
     rich_markup_mode="rich",
+    # `-h` en plus de `--help` partout (Click propage help_option_names aux sous-commandes).
+    context_settings={"help_option_names": ["-h", "--help"]},
 )
 
 app.add_typer(auth.app, name="auth")
