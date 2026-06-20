@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cetic-cloud-cli"
-version = "0.34.4"
+version = "0.34.5"
 requires-python = ">=3.12"
 description = "CLI CETIC Cloud Platform — commande cetic"
 dependencies = [

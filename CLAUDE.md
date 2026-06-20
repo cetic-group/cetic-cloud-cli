@@ -60,8 +60,19 @@ tests/
 
 ## Versions
 
-**Latest : `v0.34.4`**
+**Latest : `v0.34.5`**
 
+- `v0.34.5` — fix : `cetic org switch` ne **switchait pas réellement**
+  (affichait « ✓ Org active mise à jour » mais restait sur l'org par défaut).
+  Cause = désalignement de contrat : le backend `SwitchOrgRequest` attend
+  **`target_org_id`** (`apps/api/app/api/v1/auth.py`), la CLI envoyait `org_id`
+  → Pydantic ignore le champ inconnu → `target_org_id=None` → le backend renvoie
+  un token scopé sur l'**org par défaut** (`if req.target_org_id is None: return
+  default_org`). Vérifié live (token post-switch portait l'`active_org_id` de
+  l'org par défaut, pas celle demandée). Fix = envoyer `{"target_org_id": …}` +
+  **garde-fou** : si `res.active_org_id` ≠ org demandée, on affiche un ⚠ au lieu
+  du ✓ trompeur. (Le fix v0.34.4 `config.set` → `set_value` était nécessaire
+  mais ne suffisait pas — il persistait le token de la mauvaise org.)
 - `v0.34.4` — fix : `cetic org switch` plantait avec
   `AttributeError: module 'cetic.config' has no attribute 'set'`. La commande
   appelait `config.set("api_key", …)` alors que la fonction de persistance
