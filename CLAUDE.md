@@ -60,8 +60,18 @@ tests/
 
 ## Versions
 
-**Latest : `v0.34.3`**
+**Latest : `v0.34.4`**
 
+- `v0.34.4` — fix : `cetic org switch` plantait avec
+  `AttributeError: module 'cetic.config' has no attribute 'set'`. La commande
+  appelait `config.set("api_key", …)` alors que la fonction de persistance
+  s'appelle `config.set_value(...)` (cf. `cetic/config.py`). Le `switch`
+  n'enregistrait donc jamais le nouveau JWT (`active_org_id`) côté config locale.
+  Corrigé en `config.set_value(...)`. + **`-h` alias de `--help`** partout
+  (`context_settings={"help_option_names": ["-h", "--help"]}` sur le Typer
+  racine ; Click propage aux sous-commandes). `-v`/`--version` déjà présent
+  (callback racine). Nouveau `tests/test_org.py` (régression `switch` +
+  alias `-h`/`-v`) — la commande `switch` n'avait aucun test.
 - `v0.34.3` — fix : tri par défaut de `cetic k8s templates` = **nom (OS)
   croissant PRIMAIRE** puis **version décroissante** au sein de chaque OS
   (regroupe par famille OS, majeure en haut dans chaque groupe). v0.34.1 avait
