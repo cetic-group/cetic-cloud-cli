@@ -100,7 +100,9 @@ def update(
 def switch(org_id: str = typer.Argument(...)) -> None:
     """Active une org (renouvelle le JWT avec le nouveau active_org_id)."""
     try:
-        res = client.post("/v1/auth/switch-org", json={"org_id": org_id})
+        # Le backend attend `target_org_id` (cf. SwitchOrgRequest) ; un champ
+        # inconnu est ignoré par Pydantic → retour silencieux sur l'org par défaut.
+        res = client.post("/v1/auth/switch-org", json={"target_org_id": org_id})
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
@@ -108,4 +110,12 @@ def switch(org_id: str = typer.Argument(...)) -> None:
     if "access_token" in res:
         from cetic import config
         config.set_value("api_key", res["access_token"])
-    rprint(f"[green]✓[/green] Org active mise à jour.")
+    # Garde-fou : si le backend n'a pas activé l'org demandée, ne pas mentir.
+    active = res.get("active_org_id")
+    if active and active != org_id:
+        rprint(
+            f"[yellow]⚠[/yellow] Org active = [bold]{active}[/bold] "
+            f"(≠ demandée {org_id})."
+        )
+        return
+    rprint("[green]✓[/green] Org active mise à jour.")

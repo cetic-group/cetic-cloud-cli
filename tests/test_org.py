@@ -25,16 +25,36 @@ def test_org_switch_persists_token(runner, mock_api, monkeypatch) -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured["body"] = json.loads(request.content)
-        return httpx.Response(200, json={"access_token": "new-jwt-token"})
+        return httpx.Response(
+            200, json={"access_token": "new-jwt-token", "active_org_id": "org-123"}
+        )
 
     mock_api.post("/v1/auth/switch-org").mock(side_effect=handler)
 
     result = runner.invoke(app, ["org", "switch", "org-123"])
 
     assert result.exit_code == 0, result.output
-    assert captured["body"] == {"org_id": "org-123"}
+    # Le backend attend target_org_id, pas org_id (sinon retour silencieux sur
+    # l'org par défaut — bug live 2026-06-20).
+    assert captured["body"] == {"target_org_id": "org-123"}
     assert captured.get("api_key") == "new-jwt-token"
     assert "Org active mise à jour" in result.output
+
+
+def test_org_switch_warns_when_backend_returns_other_org(runner, mock_api, monkeypatch) -> None:
+    """Si le backend renvoie une autre org que celle demandée, on n'affiche pas ✓."""
+    monkeypatch.setattr("cetic.config.set_value", lambda k, v: None)
+    mock_api.post("/v1/auth/switch-org").mock(
+        return_value=httpx.Response(
+            200, json={"access_token": "tok", "active_org_id": "default-org"}
+        )
+    )
+
+    result = runner.invoke(app, ["org", "switch", "org-123"])
+
+    assert result.exit_code == 0, result.output
+    assert "Org active mise à jour" not in result.output
+    assert "default-org" in result.output
 
 
 def test_org_switch_no_token_in_response(runner, mock_api, monkeypatch) -> None:
