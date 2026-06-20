@@ -177,11 +177,12 @@ def test_list_legacy_payload_without_tier(runner, mock_api):
 
 
 # ---------------------------------------------------------------------------
-# get — exposition tier + proxy_secondary_*
+# get — expose tier mais MASQUE les champs proxy_* (anti-leak : le proxy est
+# un service interne, le client n'a aucune visibilité dessus)
 # ---------------------------------------------------------------------------
 
 
-def test_get_exposes_tier_and_proxy_secondary_fields(runner, mock_api, monkeypatch):
+def test_get_exposes_tier_and_hides_proxy_fields(runner, mock_api, monkeypatch):
     monkeypatch.setenv("CCP_OUTPUT", "json")
     mock_api.get(f"/v1/k8s/clusters/{CLUSTER_ID}").mock(
         return_value=httpx.Response(200, json=_cluster(tier="prod")),
@@ -190,9 +191,10 @@ def test_get_exposes_tier_and_proxy_secondary_fields(runner, mock_api, monkeypat
     assert result.exit_code == 0, result.stdout
     data = json.loads(result.stdout)
     assert data["tier"] == "prod"
-    assert data["proxy_secondary_vmid"] == 1234
-    assert data["proxy_secondary_node"] == "pve-02"
-    assert data["proxy_vip_vnet"] == "10.42.0.10"
+    # Aucun champ proxy_* ne doit fuiter (table comme JSON).
+    assert not any(k.startswith("proxy_") for k in data), data
+    assert "proxy_secondary_vmid" not in data
+    assert "proxy_vip_vnet" not in data
 
 
 # ---------------------------------------------------------------------------
@@ -444,6 +446,26 @@ def test_pool_create_invalid_taint_effect_rejected(runner, mock_api):
 # ---------------------------------------------------------------------------
 # pool update — --label + --taint + --labels-clear / --taints-clear
 # ---------------------------------------------------------------------------
+
+
+def test_pool_scale_uses_patch_with_replicas(runner, mock_api):
+    """`pool scale` PATCH le node pool avec replicas (pas de route /scale → 404)."""
+    captured: dict[str, Any] = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json=_pool())
+
+    # La route /scale n'existe pas côté backend : si la CLI la visait, respx
+    # lèverait (route non mockée). On ne mocke QUE le PATCH du node pool.
+    mock_api.patch(f"/v1/k8s/clusters/{CLUSTER_ID}/node-pools/{POOL_ID}").mock(
+        side_effect=_capture
+    )
+    result = runner.invoke(app, [
+        "k8s", "pool", "scale", CLUSTER_ID, POOL_ID, "--replicas", "3",
+    ])
+    assert result.exit_code == 0, result.stdout
+    assert captured["body"] == {"replicas": 3}
 
 
 def test_pool_update_labels_sent(runner, mock_api):

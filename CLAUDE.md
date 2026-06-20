@@ -60,8 +60,18 @@ tests/
 
 ## Versions
 
-**Latest : `v0.34.5`**
+**Latest : `v0.34.6`**
 
+- `v0.34.6` — 2 fixes `cetic k8s` : **(1) `pool scale` renvoyait `Not Found`**
+  — il POSTait sur `/v1/k8s/clusters/{id}/node-pools/{pid}/scale`, route qui
+  **n'existe pas** côté backend (le scaling passe par le **PATCH** du node pool
+  avec `replicas`, cf. `k8s_clusters.py` : seuls GET/POST/PATCH/DELETE sur
+  `/node-pools[/{pid}]`). Aligné sur `pool update`. **(2) anti-leak `k8s get`**
+  — les champs `proxy_secondary_vmid` / `proxy_secondary_node` / `proxy_vip_vnet`
+  (frontal HA interne) étaient exposés au client ; `get` retire désormais **tous
+  les champs `proxy_*`** de la sortie (table ET JSON/YAML) — le proxy est un
+  service interne, le client n'en a aucune visibilité. Tests : `pool scale`
+  (PATCH+replicas) + `get` masque proxy_* (test inversé).
 - `v0.34.5` — fix : `cetic org switch` ne **switchait pas réellement**
   (affichait « ✓ Org active mise à jour » mais restait sur l'org par défaut).
   Cause = désalignement de contrat : le backend `SwitchOrgRequest` attend

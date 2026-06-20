@@ -138,6 +138,11 @@ def get(cluster_id: str = typer.Argument(...)) -> None:
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
+    # Anti-leak : le proxy (frontal HA interne) est un détail d'implémentation,
+    # le client n'a aucune visibilité dessus. On retire tous les champs `proxy_*`
+    # de la sortie (table comme JSON/YAML).
+    if isinstance(c, dict):
+        c = {k: v for k, v in c.items() if not k.startswith("proxy_")}
     # Libellé OS lisible à côté du slug brut `os_image` (laissé intact pour les
     # scripts JSON/YAML).
     if "os_image" in c:
@@ -690,8 +695,10 @@ def scale(
 ) -> None:
     """Change le nombre de replicas d'un pool."""
     try:
-        client.post(f"/v1/k8s/clusters/{cluster_id}/node-pools/{pool_id}/scale",
-                    json={"replicas": replicas})
+        # Le backend n'expose pas de route /scale ; le scaling passe par le
+        # PATCH du node pool avec `replicas` (cf. pool update).
+        client.patch(f"/v1/k8s/clusters/{cluster_id}/node-pools/{pool_id}",
+                     json={"replicas": replicas})
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
