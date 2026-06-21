@@ -60,8 +60,23 @@ tests/
 
 ## Versions
 
-**Latest : `v0.34.6`**
+**Latest : `v0.34.7`**
 
+- `v0.34.7` — fix : **refresh automatique du JWT expiré** (le bug que le
+  docstring du client promettait depuis toujours sans l'implémenter). Le JWT
+  d'accès posé par `cetic auth login` / `--sso` est court (~15 min) ; le client
+  l'envoyait en Bearer mais ne le rafraîchissait jamais → toute commande passé
+  ce délai échouait en **401 « Token invalide ou expiré »** (vécu sur
+  `cetic ssh` après un clone long → « signature du certificat refusée — Token
+  invalide ou expiré » ; workaround = re-login). Fix dans `client.py` :
+  centralisation des 5 verbes HTTP dans `_request()` qui, sur 401, tente **un**
+  refresh via `_try_refresh()` (`POST /v1/auth/refresh` avec le `refresh_token`
+  stocké → persiste le nouveau `access_token` + rotation éventuelle du refresh)
+  puis rejoue la requête. Best-effort (un refresh raté laisse le 401 d'origine
+  s'afficher) ; pas de boucle (httpx direct dans `_try_refresh`, un seul retry) ;
+  sans `refresh_token` (clé d'API) → comportement inchangé. Tests :
+  `test_client_refresh.py` (3 : refresh+rejeu, pas de boucle sans refresh_token,
+  échec refresh → 401 d'origine).
 - `v0.34.6` — 2 fixes `cetic k8s` : **(1) `pool scale` renvoyait `Not Found`**
   — il POSTait sur `/v1/k8s/clusters/{id}/node-pools/{pid}/scale`, route qui
   **n'existe pas** côté backend (le scaling passe par le **PATCH** du node pool
