@@ -59,6 +59,7 @@ from cetic.commands import (
     volume,
     vpc,
     vpc_peering,
+    vnet_peering,
     vpn,
 )
 
@@ -79,6 +80,7 @@ app.add_typer(container.app, name="container")
 app.add_typer(vm.app, name="vm")
 app.add_typer(vpc.app, name="vpc")
 app.add_typer(vpc_peering.app, name="vpc-peering")
+app.add_typer(vnet_peering.app, name="vnet-peering")
 app.add_typer(volume.app, name="volume")
 app.add_typer(bucket.app, name="bucket")
 app.add_typer(lb.app, name="lb")

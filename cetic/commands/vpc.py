@@ -10,9 +10,7 @@ app = typer.Typer(help="VPCs CETIC Cloud")
 vnet_app = typer.Typer(help="VNets — sous-ressource d'un VPC")
 ip_resv_app = typer.Typer(help="Réservations d'IP privées dans un VNet")
 fw_app = typer.Typer(help="Règles de firewall d'un VNet")
-peering_app = typer.Typer(help="Peerings inter-VPC")
 app.add_typer(vnet_app, name="vnet")
-app.add_typer(peering_app, name="peering")
 vnet_app.add_typer(ip_resv_app, name="ip-reservation")
 vnet_app.add_typer(fw_app, name="firewall")
 
@@ -304,58 +302,3 @@ def delete(
     rprint("[green]✓[/green] Règle supprimée.")
 
 
-# ── Peerings inter-VPC ────────────────────────────────────────────────────
-
-
-@peering_app.command(name="list")
-def list_peerings(vpc_id: str = typer.Argument(..., help="UUID du VPC")) -> None:
-    """Liste les peerings d'un VPC."""
-    try:
-        items = client.get(f"/v1/vpcs/{vpc_id}/peerings")
-    except client.APIError as e:
-        rprint(f"[red]Erreur : {e.detail}[/red]")
-        raise typer.Exit(1)
-    rows = [
-        {
-            "id": p["id"],
-            "requester": p.get("requester_vpc_id", ""),
-            "accepter": p.get("accepter_vpc_id", ""),
-            "status": p.get("status", "—"),
-            "created_at": p.get("created_at", "")[:10],
-        }
-        for p in items
-    ]
-    render_list(rows, title=f"Peerings du VPC {vpc_id[:8]} ({len(rows)})",
-                columns=[("id", "ID"), ("requester", "Requester VPC"), ("accepter", "Accepter VPC"),
-                         ("status", "Statut"), ("created_at", "Créé le")])
-
-
-@peering_app.command()
-def create(
-    vpc_id: str = typer.Argument(..., help="UUID du VPC requester"),
-    accepter_vpc_id: str = typer.Option(..., "--accepter", "-a", help="UUID du VPC accepter"),
-) -> None:
-    """Crée un peering entre deux VPCs (intra-tenant : auto-accepté)."""
-    try:
-        p = client.post(f"/v1/vpcs/{vpc_id}/peerings", json={"accepter_vpc_id": accepter_vpc_id})
-    except client.APIError as e:
-        rprint(f"[red]Erreur : {e.detail}[/red]")
-        raise typer.Exit(1)
-    rprint(f"[green]✓[/green] Peering créé : [bold]{p['id']}[/bold] (statut : {p.get('status', '—')})")
-
-
-@peering_app.command()
-def delete(
-    vpc_id: str = typer.Argument(...),
-    peering_id: str = typer.Argument(...),
-    yes: bool = typer.Option(False, "--yes", "-y"),
-) -> None:
-    """Supprime un peering VPC."""
-    if not yes and not typer.confirm(f"Supprimer le peering {peering_id} ?"):
-        raise typer.Abort()
-    try:
-        client.delete(f"/v1/vpcs/{vpc_id}/peerings/{peering_id}")
-    except client.APIError as e:
-        rprint(f"[red]Erreur : {e.detail}[/red]")
-        raise typer.Exit(1)
-    rprint("[green]✓[/green] Peering supprimé.")

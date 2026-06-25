@@ -299,6 +299,7 @@ cetic bucket create --name backups --region RNN
 cetic vpc list                                              # colonne CIDR (— si non assigné)
 cetic vpc create --name prod --region RNN --cidr 10.10.0.0/16   # --cidr optionnel (RFC1918, /16-/24), auto-alloué si omis
 cetic vpc-peering list
+cetic vnet-peering create --name web-to-db --vnet-a <id> --vnet-b <id>   # relie 2 VNets de VPC différents
 cetic vpc-peering create --name prod-to-staging --vpc-a <vpc-a-uuid> --vpc-b <vpc-b-uuid>
 cetic vpc-peering get <peering-uuid>
 cetic vpc-peering delete <peering-uuid>
