@@ -17,7 +17,7 @@ from cetic.commands._compute import (
 )
 from cetic.commands._render import render_list, render_one
 
-app = typer.Typer(help="Machines virtuelles (QEMU) CETIC Cloud")
+app = typer.Typer(help="Machines virtuelles CETIC Cloud")
 
 
 @app.command(name="list")
@@ -183,7 +183,7 @@ def plans() -> None:
 
 @app.command()
 def templates() -> None:
-    """Liste les templates VM (QEMU) disponibles."""
+    """Liste les templates de machines virtuelles disponibles."""
     render_qemu_templates()
 
 

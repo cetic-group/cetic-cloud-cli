@@ -72,7 +72,7 @@ def render_compute_plans(
 
 
 def render_lxc_templates(include_infra: bool = False) -> None:
-    """Liste les templates LXC actifs (`GET /v1/templates`)."""
+    """Liste les templates de conteneurs actifs (`GET /v1/templates`)."""
     params = {"include_infra": "true"} if include_infra else None
     try:
         data = client.get("/v1/templates", params=params)
@@ -92,7 +92,7 @@ def render_lxc_templates(include_infra: bool = False) -> None:
 
 
 def render_qemu_templates() -> None:
-    """Liste les templates VM actifs (`GET /v1/qemu-templates`)."""
+    """Liste les templates de machines virtuelles actifs (`GET /v1/qemu-templates`)."""
     try:
         data = client.get("/v1/qemu-templates")
     except client.APIError as e:
@@ -105,7 +105,7 @@ def render_qemu_templates() -> None:
     ]
     render_list(
         rows,
-        title=f"Templates VM (QEMU) ({len(rows)})",
+        title=f"Templates de machines virtuelles ({len(rows)})",
         columns=[("key", "Clé"), ("display_name", "Nom"), ("défaut", "Défaut")],
     )
 

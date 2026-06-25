@@ -293,7 +293,7 @@ def create(
 
 @app.command()
 def health(lb_id: str = typer.Argument(...)) -> None:
-    """État UP/DOWN des backends d'un LB (poll HAProxy stats)."""
+    """État UP/DOWN des backends d'un LB (état temps réel)."""
     try:
         h = client.get(f"/v1/load-balancers/{lb_id}/health")
     except client.APIError as e:
@@ -323,7 +323,7 @@ def attach_ip(
     lb_id: str = typer.Argument(...),
     ip_id: str = typer.Argument(..., help="UUID de l'IP publique à attacher"),
 ) -> None:
-    """Attache une IP publique à un LB (Keepalived flottante)."""
+    """Attache une IP publique à un LB (adresse flottante)."""
     try:
         client.post(f"/v1/load-balancers/{lb_id}/attach-ip", json={"public_ip_id": ip_id})
     except client.APIError as e:

@@ -6,7 +6,7 @@ from rich import print as rprint
 from cetic import client
 from cetic.commands._render import render_list, render_one
 
-app = typer.Typer(help="Block volumes Ceph RBD CETIC Cloud")
+app = typer.Typer(help="Volumes de stockage bloc CETIC Cloud")
 
 
 @app.command(name="list")

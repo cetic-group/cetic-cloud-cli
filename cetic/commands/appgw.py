@@ -9,7 +9,7 @@ Service distinct du Load Balancer L4 (`cetic lb`) :
 - AppGW L7 : routage HTTP avec règles host/path et policies
 
 Architecture interne (transparente côté tenant) :
-- Une gateway expose 1 IP publique flottante (Keepalived) partagée par plusieurs
+- Une gateway expose 1 IP publique flottante (haute disponibilité) partagée par plusieurs
   hostnames via SNI.
 - Hostnames sous-domaine auto (`<slug>-<id8>.app.cloud.cetic-group.com`) ou
   custom domain (CNAME vers CETIC + validation DNS-01).

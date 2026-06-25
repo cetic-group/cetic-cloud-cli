@@ -1,4 +1,4 @@
-"""cetic bucket — object storage S3 (Ceph RGW) CETIC Cloud."""
+"""cetic bucket — stockage objet S3 CETIC Cloud."""
 
 import typer
 from rich import print as rprint
@@ -77,9 +77,9 @@ def delete(
     rprint("[green]✓[/green] Bucket supprimé.")
 
 
-# ── Clés S3 scopées (subusers RGW) ────────────────────────────────────────
+# ── Clés S3 scopées par bucket ─────────────────────────────────────────────
 
-key_app = typer.Typer(help="Clés S3 scopées (subusers RGW)")
+key_app = typer.Typer(help="Clés S3 scopées par bucket")
 app.add_typer(key_app, name="key")
 
 

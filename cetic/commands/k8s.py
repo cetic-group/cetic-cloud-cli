@@ -196,7 +196,7 @@ def plans() -> None:
 def versions(
     region: str | None = typer.Option(None, "--region", "-r", help="Filtrer par région"),
 ) -> None:
-    """Liste les versions Kubernetes disponibles (images CAPI buildées)."""
+    """Liste les versions Kubernetes disponibles."""
     try:
         data = client.get("/v1/k8s/templates", params={"region": region} if region else None)
     except client.APIError as e:
@@ -248,7 +248,7 @@ def templates(
         help="Filtrer par version Kubernetes (préfixe, ex `1.34` ou `v1.34.6`).",
     ),
 ) -> None:
-    """Liste les templates OS Kubernetes disponibles (images CAPI buildées).
+    """Liste les templates OS Kubernetes disponibles.
 
     La clé (`--template` à la création) est l'`os_key` (ex `kube-v1-34-6`).
     Résultats triés par version Kubernetes décroissante (majeure en haut).
@@ -350,7 +350,7 @@ def create(
         None,
         "--template",
         help=(
-            "Clé de template OS (ex: clks-capi-debian-13). Optionnel : si omis, "
+            "Clé de template OS (ex: kube-v1-34-8). Optionnel : si omis, "
             "résolu automatiquement depuis --version + --os."
         ),
     ),
@@ -468,7 +468,7 @@ def upgrade(
     k8s_version: str = typer.Option(..., "--version", "-v", help="Ex: v1.32.0"),
     yes: bool = typer.Option(False, "--yes", "-y"),
 ) -> None:
-    """Upgrade la version Kubernetes du cluster (rolling, via CAPI/CAPMOX)."""
+    """Met à niveau la version Kubernetes du cluster (progressif, sans interruption)."""
     if not yes and not typer.confirm(f"Upgrader le cluster {cluster_id} vers {k8s_version} ?"):
         raise typer.Abort()
     try:

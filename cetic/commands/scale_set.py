@@ -274,5 +274,5 @@ def plans() -> None:
 
 @vm_app.command()
 def templates() -> None:
-    """Liste les templates VM (QEMU) disponibles."""
+    """Liste les templates de machines virtuelles disponibles."""
     render_qemu_templates()
