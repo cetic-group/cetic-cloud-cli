@@ -308,3 +308,29 @@ def delete(
     rprint("[green]✓[/green] Règle supprimée.")
 
 
+
+
+@vnet_app.command(name="update")
+def update_vnet(
+    vpc_id: str = typer.Argument(..., help="UUID du VPC"),
+    vnet_id: str = typer.Argument(..., help="UUID du VNet"),
+    name: str | None = typer.Option(None, "--name", "-n", help="Nouveau nom"),
+    snat: bool | None = typer.Option(
+        None, "--snat/--no-snat",
+        help="Activer/désactiver l'accès internet sortant"),
+) -> None:
+    """Modifie le nom / l'accès internet d'un VNet."""
+    body: dict = {}
+    if name is not None:
+        body["name"] = name
+    if snat is not None:
+        body["snat"] = snat
+    if not body:
+        rprint("[yellow]Rien à modifier (--name et/ou --snat).[/yellow]")
+        raise typer.Exit(0)
+    try:
+        client.patch(f"/v1/vpcs/{vpc_id}/vnets/{vnet_id}", json=body)
+    except client.APIError as e:
+        rprint(f"[red]Erreur : {e.detail}[/red]")
+        raise typer.Exit(1)
+    rprint("[green]✓[/green] VNet mis à jour.")

@@ -276,3 +276,66 @@ def plans() -> None:
 def templates() -> None:
     """Liste les templates de machines virtuelles disponibles."""
     render_qemu_templates()
+
+
+def _patch_set(endpoint: str, set_id: str, body: dict, kind: str) -> None:
+    if not body:
+        rprint("[yellow]Rien à modifier.[/yellow]")
+        raise typer.Exit(0)
+    try:
+        s = client.patch(f"{endpoint}/{set_id}", json=body)
+    except client.APIError as e:
+        rprint(f"[red]Erreur : {e.detail}[/red]")
+        raise typer.Exit(1)
+    rprint(f"[green]✓[/green] {kind} mis à jour : [bold]{s.get('name', set_id)}[/bold]")
+
+
+@container_app.command(name="update")
+def update_css(
+    set_id: str = typer.Argument(..., help="UUID du scale set"),
+    min_: int | None = typer.Option(None, "--min", help="Replicas minimum (autoscaling)"),
+    max_: int | None = typer.Option(None, "--max", help="Replicas maximum (autoscaling)"),
+    desired: int | None = typer.Option(None, "--desired", help="Replicas souhaités"),
+    auto_repair: bool | None = typer.Option(
+        None, "--auto-repair/--no-auto-repair", help="Réparation automatique"),
+) -> None:
+    """Modifie le scaling d'un container scale set."""
+    body: dict = {}
+    if min_ is not None:
+        body["min_instances"] = min_
+    if max_ is not None:
+        body["max_instances"] = max_
+    if desired is not None:
+        body["desired_instances"] = desired
+    if auto_repair is not None:
+        body["auto_repair"] = auto_repair
+    _patch_set("/v1/container-scale-sets", set_id, body, "Container scale set")
+
+
+@vm_app.command(name="update")
+def update_vmss(
+    set_id: str = typer.Argument(..., help="UUID du scale set"),
+    name: str | None = typer.Option(None, "--name", "-n", help="Nouveau nom"),
+    min_: int | None = typer.Option(None, "--min", help="Replicas minimum (autoscaling)"),
+    max_: int | None = typer.Option(None, "--max", help="Replicas maximum (autoscaling)"),
+    desired: int | None = typer.Option(None, "--desired", help="Replicas souhaités"),
+    auto_repair: bool | None = typer.Option(
+        None, "--auto-repair/--no-auto-repair", help="Réparation automatique"),
+    tags: list[str] | None = typer.Option(
+        None, "--tag", help="Tag (répétable ; remplace l'ensemble des tags)"),
+) -> None:
+    """Modifie le nom / le scaling / les tags d'un VM scale set."""
+    body: dict = {}
+    if name is not None:
+        body["name"] = name
+    if min_ is not None:
+        body["min_instances"] = min_
+    if max_ is not None:
+        body["max_instances"] = max_
+    if desired is not None:
+        body["desired_instances"] = desired
+    if auto_repair is not None:
+        body["auto_repair"] = auto_repair
+    if tags is not None:
+        body["tags"] = tags
+    _patch_set("/v1/vm-scale-sets", set_id, body, "VM scale set")

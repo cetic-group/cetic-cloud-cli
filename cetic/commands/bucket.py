@@ -145,3 +145,21 @@ def revoke(
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
     rprint("[green]✓[/green] Clé révoquée.")
+
+
+@app.command()
+def update(
+    bucket_id: str = typer.Argument(..., help="UUID du bucket"),
+    public: bool | None = typer.Option(
+        None, "--public/--private", help="Rendre le bucket public ou privé"),
+) -> None:
+    """Modifie la visibilité (publique/privée) d'un bucket."""
+    if public is None:
+        rprint("[yellow]Précisez [bold]--public[/bold] ou [bold]--private[/bold].[/yellow]")
+        raise typer.Exit(0)
+    try:
+        client.patch(f"/v1/buckets/{bucket_id}", json={"is_public": public})
+    except client.APIError as e:
+        rprint(f"[red]Erreur : {e.detail}[/red]")
+        raise typer.Exit(1)
+    rprint(f"[green]✓[/green] Bucket désormais [bold]{'public' if public else 'privé'}[/bold].")

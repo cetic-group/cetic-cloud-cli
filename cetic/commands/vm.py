@@ -267,3 +267,27 @@ def restore(
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
     rprint("[green]✓[/green] Restauration en cours.")
+
+
+@app.command()
+def update(
+    vm_id: str = typer.Argument(..., help="UUID de la VM"),
+    name: str | None = typer.Option(None, "--name", "-n", help="Nouveau nom"),
+    tags: list[str] | None = typer.Option(
+        None, "--tag", help="Tag (répétable ; remplace l'ensemble des tags)"),
+) -> None:
+    """Modifie les paramètres à chaud d'une VM (nom, tags)."""
+    body: dict = {}
+    if name is not None:
+        body["name"] = name
+    if tags is not None:
+        body["tags"] = tags
+    if not body:
+        rprint("[yellow]Rien à modifier (utilisez --name et/ou --tag).[/yellow]")
+        raise typer.Exit(0)
+    try:
+        v = client.patch(f"/v1/vm-instances/{vm_id}", json=body)
+    except client.APIError as e:
+        rprint(f"[red]Erreur : {e.detail}[/red]")
+        raise typer.Exit(1)
+    rprint(f"[green]✓[/green] VM mise à jour : [bold]{v.get('name', vm_id)}[/bold]")
