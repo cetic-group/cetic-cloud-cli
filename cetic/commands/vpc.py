@@ -334,3 +334,27 @@ def update_vnet(
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
     rprint("[green]✓[/green] VNet mis à jour.")
+
+
+@app.command()
+def update(
+    vpc_id: str = typer.Argument(..., help="UUID du VPC"),
+    name: str | None = typer.Option(None, "--name", "-n", help="Nouveau nom"),
+    tags: list[str] | None = typer.Option(
+        None, "--tag", help="Tag (répétable ; remplace l'ensemble des tags)"),
+) -> None:
+    """Modifie les paramètres à chaud d'un VPC (nom, tags)."""
+    body: dict = {}
+    if name is not None:
+        body["name"] = name
+    if tags is not None:
+        body["tags"] = tags
+    if not body:
+        rprint("[yellow]Rien à modifier (--name et/ou --tag).[/yellow]")
+        raise typer.Exit(0)
+    try:
+        v = client.patch(f"/v1/vpcs/{vpc_id}", json=body)
+    except client.APIError as e:
+        rprint(f"[red]Erreur : {e.detail}[/red]")
+        raise typer.Exit(1)
+    rprint(f"[green]✓[/green] VPC mis à jour : [bold]{v.get('name', vpc_id)}[/bold]")

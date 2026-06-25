@@ -63,3 +63,19 @@ def test_vm_scale_set_update_body(runner, mock_api) -> None:
     r = runner.invoke(app, ["vm-scale-set", "update", RID, "--name", "fleet", "--auto-repair", "--tag", "x"])
     assert r.exit_code == 0, r.output
     assert cap == {"name": "fleet", "auto_repair": True, "tags": ["x"]}
+
+
+def test_container_update_body(runner, mock_api) -> None:
+    cap: dict[str, Any] = {}
+    mock_api.patch(f"/v1/containers/{RID}").mock(side_effect=_capture(cap))
+    r = runner.invoke(app, ["container", "update", RID, "--name", "api", "--tag", "prod"])
+    assert r.exit_code == 0, r.output
+    assert cap == {"name": "api", "tags": ["prod"]}
+
+
+def test_vpc_update_body(runner, mock_api) -> None:
+    cap: dict[str, Any] = {}
+    mock_api.patch(f"/v1/vpcs/{RID}").mock(side_effect=_capture(cap))
+    r = runner.invoke(app, ["vpc", "update", RID, "--name", "prod-vpc", "--tag", "a", "--tag", "b"])
+    assert r.exit_code == 0, r.output
+    assert cap == {"name": "prod-vpc", "tags": ["a", "b"]}

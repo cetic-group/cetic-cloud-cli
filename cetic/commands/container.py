@@ -266,3 +266,27 @@ def restore(
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
     rprint("[green]✓[/green] Restauration en cours.")
+
+
+@app.command()
+def update(
+    container_id: str = typer.Argument(..., help="UUID du container"),
+    name: str | None = typer.Option(None, "--name", "-n", help="Nouveau nom"),
+    tags: list[str] | None = typer.Option(
+        None, "--tag", help="Tag (répétable ; remplace l'ensemble des tags)"),
+) -> None:
+    """Modifie les paramètres à chaud d'un container (nom, tags)."""
+    body: dict = {}
+    if name is not None:
+        body["name"] = name
+    if tags is not None:
+        body["tags"] = tags
+    if not body:
+        rprint("[yellow]Rien à modifier (--name et/ou --tag).[/yellow]")
+        raise typer.Exit(0)
+    try:
+        c = client.patch(f"/v1/containers/{container_id}", json=body)
+    except client.APIError as e:
+        rprint(f"[red]Erreur : {e.detail}[/red]")
+        raise typer.Exit(1)
+    rprint(f"[green]✓[/green] Container mis à jour : [bold]{c.get('name', container_id)}[/bold]")
