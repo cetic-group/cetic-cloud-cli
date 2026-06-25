@@ -106,12 +106,18 @@ def list_vnets(vpc_id: str = typer.Argument(..., help="UUID du VPC parent")) -> 
 def create(
     vpc_id: str = typer.Argument(...),
     name: str = typer.Option(..., "--name", "-n"),
-    cidr: str = typer.Option(..., "--cidr", help="ex: 10.0.0.0/24"),
-    snat: bool = typer.Option(True, "--snat/--no-snat", help="Activer le SNAT outbound"),
+    cidr: str | None = typer.Option(
+        None, "--cidr", help="ex: 10.0.0.0/24 — auto-attribué si omis"),
+    snat: bool = typer.Option(
+        False, "--snat/--no-snat",
+        help="Activer l'accès internet sortant (désactivé par défaut)"),
 ) -> None:
-    """Crée un VNet dans un VPC."""
+    """Crée un VNet dans un VPC (réseau isolé par défaut ; CIDR auto-attribué si omis)."""
+    body: dict = {"name": name, "snat": snat}
+    if cidr:
+        body["cidr"] = cidr
     try:
-        v = client.post(f"/v1/vpcs/{vpc_id}/vnets", json={"name": name, "cidr": cidr, "snat": snat})
+        v = client.post(f"/v1/vpcs/{vpc_id}/vnets", json=body)
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
