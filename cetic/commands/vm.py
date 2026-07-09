@@ -34,13 +34,16 @@ def list_vms(
         {
             "id": v["id"], "name": v["name"], "region": v["region"],
             "os": "Windows" if v.get("os_family") == "windows" else "Linux",
-            "plan": v["plan"], "status": v["status"], "ip": v.get("ip_address") or "—",
+            "plan": v["plan"],
+            "disk_gb": v.get("disk_gb") if v.get("disk_gb") is not None else "—",
+            "status": v["status"], "ip": v.get("ip_address") or "—",
         }
         for v in items
     ]
     render_list(rows, title=f"VMs ({len(rows)})",
                 columns=[("id", "ID"), ("name", "Nom"), ("region", "Région"),
-                         ("os", "OS"), ("plan", "Plan"), ("status", "Statut"), ("ip", "IP")])
+                         ("os", "OS"), ("plan", "Plan"), ("disk_gb", "Disque (Go)"),
+                         ("status", "Statut"), ("ip", "IP")])
 
 
 @app.command()
@@ -61,6 +64,10 @@ def create(
     plan: str = typer.Option("small", "--plan", "-p"),
     template: str = typer.Option("ubuntu-24.04", "--template", "-t"),
     vnet_id: str = typer.Option(..., "--vnet"),
+    disk_gb: int | None = typer.Option(
+        None, "--disk-gb",
+        help="Taille du disque OS (Go) ; défaut = disque du plan, extensible ensuite.",
+    ),
     ssh_key_ids: list[str] = typer.Option(None, "--ssh-key"),
     cloud_init: Path = typer.Option(
         None, "--cloud-init",
@@ -110,6 +117,8 @@ def create(
     }
     if ssh_key_ids:
         body["ssh_key_ids"] = ssh_key_ids
+    if disk_gb is not None:
+        body["disk_gb"] = disk_gb
     apply_compute_access_options(
         body, cloud_init=cloud_init, bastion_access=bastion_access,
         template_source=template_source,
@@ -170,6 +179,23 @@ def reboot(vm_id: str = typer.Argument(...)) -> None:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
     rprint("[green]✓[/green] Redémarrage demandé.")
+
+
+@app.command(name="resize-disk")
+def resize_disk(
+    vm_id: str = typer.Argument(...),
+    disk_gb: int = typer.Option(..., "--disk-gb", help="Nouvelle taille du disque OS (Go) — agrandissement uniquement."),
+    yes: bool = typer.Option(False, "--yes", "-y"),
+) -> None:
+    """Redimensionne le disque OS d'une VM (agrandissement uniquement)."""
+    if not yes and not typer.confirm(f"Redimensionner le disque OS de {vm_id} à {disk_gb} Go ?"):
+        raise typer.Abort()
+    try:
+        v = client.post(f"/v1/vm-instances/{vm_id}/resize-disk", json={"disk_gb": disk_gb})
+    except client.APIError as e:
+        rprint(f"[red]Erreur : {e.detail}[/red]")
+        raise typer.Exit(1)
+    rprint(f"[green]✓[/green] Redimensionnement demandé. Nouveau statut : {v.get('status', '—')}")
 
 
 # ── Catalogue (plans & templates) ─────────────────────────────────────────

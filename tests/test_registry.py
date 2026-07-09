@@ -565,12 +565,12 @@ def test_no_legacy_brand_terminology():
 
 
 def test_registry_app_command_count():
-    """v0.7.0 : 11 top-level (8 originales + update + 2 stubs dépréciés) + 4 user + 3 acl + 1 tag delete = 19."""
+    """v0.41.0 : 12 top-level (8 originales + update + 2 stubs dépréciés + resize-disk) + 4 user + 3 acl + 1 tag delete = 20."""
     from cetic.commands import registry
 
     top_level = [c.name for c in registry.app.registered_commands]
-    # create, list, get, delete, login, gc, repos, tags, update, attach-ip, detach-ip
-    assert len(top_level) == 11
+    # create, list, get, delete, login, gc, repos, tags, update, attach-ip, detach-ip, resize-disk
+    assert len(top_level) == 12
     assert "update" in top_level or any(c.name is None and c.callback.__name__ == "update" for c in registry.app.registered_commands)
 
     user_cmds = [c.name for c in registry.user_app.registered_commands]
@@ -583,7 +583,7 @@ def test_registry_app_command_count():
     assert len(tag_cmds) == 1  # delete
 
     total = len(top_level) + len(user_cmds) + len(acl_cmds) + len(tag_cmds)
-    assert total == 19
+    assert total == 20
 
 
 def test_redact_helper():

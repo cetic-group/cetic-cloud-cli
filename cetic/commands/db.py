@@ -67,6 +67,19 @@ def _credentials_engine(engine: str, db_id: str) -> None:
     render_one(c, title="Credentials")
 
 
+def _resize_disk_engine(engine: str, db_id: str, storage_gb: int, yes: bool) -> None:
+    if not yes and not typer.confirm(
+        f"Redimensionner le stockage de l'instance {engine}/{db_id} à {storage_gb} Go ?"
+    ):
+        raise typer.Abort()
+    try:
+        d = client.post(f"/v1/db/{engine}/{db_id}/resize-disk", json={"storage_gb": storage_gb})
+    except client.APIError as e:
+        rprint(f"[red]Erreur : {e.detail}[/red]")
+        raise typer.Exit(1)
+    rprint(f"[green]✓[/green] Redimensionnement demandé. Nouveau statut : {d.get('status', '—')}")
+
+
 def _delete_engine(engine: str, db_id: str, yes: bool) -> None:
     if not yes and not typer.confirm(f"Supprimer l'instance {engine}/{db_id} ?"):
         raise typer.Abort()
@@ -162,6 +175,17 @@ def _bind_engine(typer_app: typer.Typer, engine: str) -> None:
             rprint(f"[red]Erreur : {e.detail}[/red]")
             raise typer.Exit(1)
         rprint("[green]✓[/green] Détachement IP en cours.")
+
+    @typer_app.command(name="resize-disk")
+    def _resize_disk(
+        db_id: str = typer.Argument(...),
+        storage_gb: int = typer.Option(
+            ..., "--storage-gb", help="Nouvelle taille du volume persistant (Go) — agrandissement uniquement."
+        ),
+        yes: bool = typer.Option(False, "--yes", "-y"),
+    ) -> None:
+        """Redimensionne le stockage d'une instance (agrandissement uniquement)."""
+        _resize_disk_engine(engine, db_id, storage_gb, yes)
 
     @typer_app.command(name="delete")
     def _delete(

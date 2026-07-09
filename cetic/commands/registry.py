@@ -142,6 +142,10 @@ def create(
         None, "--image-tag",
         help="Tag de l'image Distribution à déployer (default: laisser le serveur choisir)",
     ),
+    storage_gb: int | None = typer.Option(
+        None, "--storage-gb",
+        help="Taille du volume de stockage (Go) ; défaut serveur si omis, extensible ensuite.",
+    ),
     tags: list[str] = typer.Option([], "--tag", help="Tag KEY=VALUE (répéter)"),
 ) -> None:
     """Crée une nouvelle registry (Distribution + auth JWT cesanta).
@@ -168,6 +172,8 @@ def create(
     }
     if image_tag:
         body["image_tag"] = image_tag
+    if storage_gb is not None:
+        body["storage_gb"] = storage_gb
     if tags:
         body["tags"] = _parse_kv_tags(tags)
     try:
@@ -336,6 +342,27 @@ def get(
         raise _bail(e) from e
     payload = reg if reveal_secrets else _redact(reg)
     render_one(payload, title=f"Registry {reg.get('name', rid)}")
+
+
+@app.command(name="resize-disk")
+def resize_disk(
+    id_or_name: str = typer.Argument(..., metavar="ID|NAME"),
+    storage_gb: int = typer.Option(
+        ..., "--storage-gb", help="Nouvelle taille du volume de stockage (Go) — agrandissement uniquement."
+    ),
+    yes: bool = typer.Option(False, "--yes", "-y"),
+) -> None:
+    """Redimensionne le stockage d'une registry (agrandissement uniquement)."""
+    rid = _resolve_registry(id_or_name)
+    if not yes and not typer.confirm(
+        f"Redimensionner le stockage de la registry {id_or_name} à {storage_gb} Go ?"
+    ):
+        raise typer.Abort()
+    try:
+        reg = client.post(f"{REGISTRIES_PATH}/{rid}/resize-disk", json={"storage_gb": storage_gb})
+    except client.APIError as e:
+        raise _bail(e) from e
+    rprint(f"[green]✓[/green] Redimensionnement demandé. Nouveau statut : {reg.get('status', '—')}")
 
 
 @app.command()
