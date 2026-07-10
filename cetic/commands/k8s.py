@@ -364,6 +364,10 @@ def create(
     pool_name: str = typer.Option("default", "--pool-name"),
     pool_plan: str = typer.Option("small", "--pool-plan"),
     pool_replicas: int = typer.Option(1, "--pool-replicas"),
+    pool_disk_gb: int | None = typer.Option(
+        None, "--disk-gb",
+        help="Taille du disque OS (Go) du pool initial ; défaut = disque du plan, extensible ensuite.",
+    ),
     pool_min: int | None = typer.Option(None, "--pool-min", help="Active l'autoscaler"),
     pool_max: int | None = typer.Option(None, "--pool-max"),
     # Autoscaler timers
@@ -427,6 +431,8 @@ def create(
         pool_body["max_size"] = pool_max
     if pool_version is not None:
         pool_body["k8s_version"] = pool_version
+    if pool_disk_gb is not None:
+        pool_body["disk_gb"] = pool_disk_gb
 
     body: dict = {
         "name": name,
@@ -567,6 +573,10 @@ def create(
     name: str = typer.Option(..., "--name", "-n"),
     plan: str = typer.Option("small", "--plan", "-p"),
     replicas: int = typer.Option(1, "--replicas"),
+    disk_gb: int | None = typer.Option(
+        None, "--disk-gb",
+        help="Taille du disque OS (Go) ; défaut = disque du plan, extensible ensuite.",
+    ),
     k8s_version: str | None = typer.Option(
         None, "--version",
         help=(
@@ -594,6 +604,8 @@ def create(
     body: dict = {"name": name, "plan": plan, "replicas": replicas}
     if k8s_version is not None:
         body["k8s_version"] = k8s_version
+    if disk_gb is not None:
+        body["disk_gb"] = disk_gb
     if min_size is not None:
         body["min_size"] = min_size
     if max_size is not None:

@@ -245,6 +245,17 @@ cetic vm create --name web --region RNN --vnet <VNET> \
 cetic vm create --name tpl-prep --region RNN --vnet <VNET> \
     --template-source                     # instance de préparation de template (vm/container)
 
+# Disque OS dimensionnable / extensible (depuis v0.41.0) — sur vm/container/vm-scale-set/ct-scale-set/k8s
+cetic container create --name api --region RNN --vnet <VNET> \
+    --disk-gb 40                           # défaut = disque du plan si omis
+cetic container resize-disk <ID> --disk-gb 80    # agrandissement uniquement
+cetic vm resize-disk <ID> --disk-gb 100
+cetic k8s create --name prod --region RNN --disk-gb 60          # pool initial
+cetic k8s pool create <cluster-id> --name gpu --disk-gb 60
+cetic db pg resize-disk <ID> --storage-gb 50     # idem mysql/redis/mongo
+cetic registry create --name reg --region RNN --storage-gb 100
+cetic registry resize-disk <ID> --storage-gb 200
+
 # VM Windows (depuis v0.31.0) — template win-*, accès RDP, plan medium+
 cetic vm create --name win-app --region RNN --vnet <VNET> \
     --plan medium --template win-2022 \

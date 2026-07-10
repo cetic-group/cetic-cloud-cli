@@ -34,6 +34,7 @@ def list_containers(
             "name": c["name"],
             "region": c["region"],
             "plan": c["plan"],
+            "disk_gb": c.get("disk_gb") if c.get("disk_gb") is not None else "—",
             "status": c["status"],
             "ip": c.get("ip_address") or "—",
         }
@@ -43,7 +44,7 @@ def list_containers(
         rows,
         title=f"Containers ({len(rows)})",
         columns=[("id", "ID"), ("name", "Nom"), ("region", "Région"),
-                 ("plan", "Plan"), ("status", "Statut"), ("ip", "IP")],
+                 ("plan", "Plan"), ("disk_gb", "Disque (Go)"), ("status", "Statut"), ("ip", "IP")],
     )
 
 
@@ -65,6 +66,10 @@ def create(
     plan: str = typer.Option("nano", "--plan", "-p", help="nano|micro|small|medium|large|xlarge"),
     template: str = typer.Option("debian-12", "--template", "-t"),
     vnet_id: str = typer.Option(..., "--vnet", help="UUID du VNet"),
+    disk_gb: int | None = typer.Option(
+        None, "--disk-gb",
+        help="Taille du disque OS (Go) ; défaut = disque du plan, extensible ensuite.",
+    ),
     ssh_key_ids: list[str] = typer.Option(None, "--ssh-key", help="UUID(s) des clés SSH (répéter)"),
     cloud_init: Path = typer.Option(
         None, "--cloud-init",
@@ -104,6 +109,8 @@ def create(
     }
     if ssh_key_ids:
         body["ssh_key_ids"] = ssh_key_ids
+    if disk_gb is not None:
+        body["disk_gb"] = disk_gb
     apply_compute_access_options(
         body, cloud_init=cloud_init, bastion_access=bastion_access,
         template_source=template_source,
@@ -164,6 +171,23 @@ def reboot(container_id: str = typer.Argument(...)) -> None:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
     rprint("[green]✓[/green] Redémarrage demandé.")
+
+
+@app.command(name="resize-disk")
+def resize_disk(
+    container_id: str = typer.Argument(...),
+    disk_gb: int = typer.Option(..., "--disk-gb", help="Nouvelle taille du disque OS (Go) — agrandissement uniquement."),
+    yes: bool = typer.Option(False, "--yes", "-y"),
+) -> None:
+    """Redimensionne le disque OS d'un container (agrandissement uniquement)."""
+    if not yes and not typer.confirm(f"Redimensionner le disque OS de {container_id} à {disk_gb} Go ?"):
+        raise typer.Abort()
+    try:
+        c = client.post(f"/v1/containers/{container_id}/resize-disk", json={"disk_gb": disk_gb})
+    except client.APIError as e:
+        rprint(f"[red]Erreur : {e.detail}[/red]")
+        raise typer.Exit(1)
+    rprint(f"[green]✓[/green] Redimensionnement demandé. Nouveau statut : {c.get('status', '—')}")
 
 
 # ── Catalogue (plans & templates) ─────────────────────────────────────────

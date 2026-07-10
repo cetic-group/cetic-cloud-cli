@@ -54,6 +54,7 @@ def _create(  # noqa: PLR0913
     *, endpoint: str, kind: str, name: str, region: str, plan: str, template: str,
     vnet: str | None, root_password: str, desired: int, min_: int, max_: int,
     ssh_key: list[str] | None, tag: list[str] | None,
+    disk_gb: int | None = None,
     cloud_init: Path | None = None, bastion_access: bool = False,
     windows_license_consent: bool = False,
 ) -> None:
@@ -73,6 +74,8 @@ def _create(  # noqa: PLR0913
         body["ssh_key_ids"] = ssh_key
     if tag:
         body["tags"] = tag
+    if disk_gb is not None:
+        body["disk_gb"] = disk_gb
     apply_compute_access_options(
         body, cloud_init=cloud_init, bastion_access=bastion_access,
         windows_license_consent=windows_license_consent,
@@ -101,6 +104,10 @@ def create(  # noqa: PLR0913
     plan: str = typer.Option("nano", "--plan", "-p", help="nano|micro|small|medium|large|xlarge"),
     template: str = typer.Option("debian-12", "--template", "-t"),
     vnet: str = typer.Option(..., "--vnet", help="UUID du VNet"),
+    disk_gb: int | None = typer.Option(
+        None, "--disk-gb",
+        help="Taille du disque OS (Go) ; défaut = disque du plan, extensible ensuite.",
+    ),
     desired: int = typer.Option(1, "--desired", help="Replicas souhaités au démarrage."),
     min_: int = typer.Option(1, "--min", help="Replicas minimum (autoscaling)."),
     max_: int = typer.Option(10, "--max", help="Replicas maximum (autoscaling)."),
@@ -124,7 +131,7 @@ def create(  # noqa: PLR0913
     _create(endpoint="/v1/container-scale-sets", kind="Container scale set",
             name=name, region=region, plan=plan, template=template, vnet=vnet,
             root_password=root_password, desired=desired, min_=min_, max_=max_,
-            ssh_key=ssh_key, tag=tag,
+            ssh_key=ssh_key, tag=tag, disk_gb=disk_gb,
             cloud_init=cloud_init, bastion_access=bastion_access)
 
 
@@ -190,6 +197,10 @@ def create(  # noqa: PLR0913
     plan: str = typer.Option("nano", "--plan", "-p", help="nano|micro|small|medium|large|xlarge"),
     template: str = typer.Option("ubuntu-24.04", "--template", "-t"),
     vnet: str = typer.Option(..., "--vnet", help="UUID du VNet"),
+    disk_gb: int | None = typer.Option(
+        None, "--disk-gb",
+        help="Taille du disque OS (Go) ; défaut = disque du plan, extensible ensuite.",
+    ),
     desired: int = typer.Option(1, "--desired", help="Replicas souhaités au démarrage."),
     min_: int = typer.Option(1, "--min", help="Replicas minimum (autoscaling)."),
     max_: int = typer.Option(10, "--max", help="Replicas maximum (autoscaling)."),
@@ -225,7 +236,7 @@ def create(  # noqa: PLR0913
     _create(endpoint="/v1/vm-scale-sets", kind="VM scale set",
             name=name, region=region, plan=plan, template=template, vnet=vnet,
             root_password=root_password, desired=desired, min_=min_, max_=max_,
-            ssh_key=ssh_key, tag=tag,
+            ssh_key=ssh_key, tag=tag, disk_gb=disk_gb,
             cloud_init=cloud_init, bastion_access=bastion_access,
             windows_license_consent=windows_license_consent)
 

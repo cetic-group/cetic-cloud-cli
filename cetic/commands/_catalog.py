@@ -55,6 +55,7 @@ def render_compute_plans(
             "vcpu": p.get("cores", "—"),
             "ram_mb": p.get("memory_mb", "—"),
             "disk_gb": p.get("disk_gb", "—"),
+            "min_disk_gb": p.get("min_disk_gb") if p.get("min_disk_gb") is not None else "—",
             "prix_mois": p.get("price_eur_month") if p.get("price_eur_month") is not None else "—",
             "défaut": "✓" if p.get("is_default") else "",
         }
@@ -66,6 +67,7 @@ def render_compute_plans(
         columns=[
             ("key", "Plan"), ("label", "Libellé"), ("family", "Famille"),
             ("vcpu", "vCPU"), ("ram_mb", "RAM (Mo)"), ("disk_gb", "Disque (Go)"),
+            ("min_disk_gb", "Disque min (Go)"),
             ("prix_mois", "€/mois"), ("défaut", "Défaut"),
         ],
     )
