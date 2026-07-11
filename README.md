@@ -247,7 +247,7 @@ cetic vm create --name tpl-prep --region RNN --vnet <VNET> \
 
 # Docker dans un conteneur (depuis v0.42.0) — container / ct-scale-set uniquement
 cetic container create --name ci-runner --region RNN --vnet <VNET> \
-    --docker                              # active Docker (opt-in ; réduit l'isolation)
+    --docker                              # requis pour exécuter Docker (opt-in)
 
 # Disque OS dimensionnable / extensible (depuis v0.41.0) — sur vm/container/vm-scale-set/ct-scale-set/k8s
 cetic container create --name api --region RNN --vnet <VNET> \
