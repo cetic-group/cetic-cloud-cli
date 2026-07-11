@@ -56,7 +56,7 @@ def _create(  # noqa: PLR0913
     ssh_key: list[str] | None, tag: list[str] | None,
     disk_gb: int | None = None,
     cloud_init: Path | None = None, bastion_access: bool = False,
-    windows_license_consent: bool = False,
+    windows_license_consent: bool = False, docker: bool = False,
 ) -> None:
     if len(root_password) < 8:
         rprint("[red]Erreur : le mot de passe root doit faire au moins 8 caractères.[/red]")
@@ -78,7 +78,7 @@ def _create(  # noqa: PLR0913
         body["disk_gb"] = disk_gb
     apply_compute_access_options(
         body, cloud_init=cloud_init, bastion_access=bastion_access,
-        windows_license_consent=windows_license_consent,
+        windows_license_consent=windows_license_consent, docker=docker,
     )
     try:
         s = client.post(endpoint, json=body)
@@ -122,6 +122,10 @@ def create(  # noqa: PLR0913
         False, "--bastion-access",
         help="Autoriser l'accès SSH via le Bastion du tenant (opt-in).",
     ),
+    docker: bool = typer.Option(
+        False, "--docker",
+        help="Activer Docker sur chaque réplica (opt-in). Réduit l'isolation vis-à-vis de l'infrastructure d'hébergement.",
+    ),
     root_password: str = typer.Option(
         ..., "--root-password", prompt=True, hide_input=True, confirmation_prompt=True,
         help="Mot de passe root (8 chars min). Demandé interactivement si non fourni.",
@@ -132,7 +136,7 @@ def create(  # noqa: PLR0913
             name=name, region=region, plan=plan, template=template, vnet=vnet,
             root_password=root_password, desired=desired, min_=min_, max_=max_,
             ssh_key=ssh_key, tag=tag, disk_gb=disk_gb,
-            cloud_init=cloud_init, bastion_access=bastion_access)
+            cloud_init=cloud_init, bastion_access=bastion_access, docker=docker)
 
 
 @container_app.command()

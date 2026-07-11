@@ -88,6 +88,22 @@ def test_options_absent_by_default(
     assert "user_data" not in body
     assert "bastion_access" not in body
     assert "is_template_source" not in body
+    assert "docker" not in body
+
+
+# --docker n'existe que sur les containers (container + ct-scale-set), pas les VM.
+DOCKER_CASES = [
+    (["container", "create"], "/v1/containers", "--vnet"),
+    (["ct-scale-set", "create"], "/v1/container-scale-sets", "--vnet"),
+]
+
+
+@pytest.mark.parametrize("prefix,endpoint,vnet_flag", DOCKER_CASES)
+def test_docker_flag_sets_field(runner, mock_api, prefix, endpoint, vnet_flag):
+    captured = _capture_post(mock_api, endpoint)
+    result = runner.invoke(app, [*_base_args(prefix, vnet_flag), "--docker"])
+    assert result.exit_code == 0, result.stdout
+    assert captured["body"]["docker"] is True
 
 
 @pytest.mark.parametrize("prefix,endpoint,vnet_flag,_ts", CREATE_CASES)
