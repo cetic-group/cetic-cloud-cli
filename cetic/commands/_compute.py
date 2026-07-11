@@ -53,8 +53,9 @@ def apply_compute_access_options(
     bastion_access: bool,
     template_source: bool | None = None,
     windows_license_consent: bool = False,
+    docker: bool = False,
 ) -> None:
-    """Ajoute `user_data`/`bastion_access`/`is_template_source`/`windows_license_consent` au body si demandés.
+    """Ajoute `user_data`/`bastion_access`/`is_template_source`/`windows_license_consent`/`docker` au body si demandés.
 
     - ``user_data`` n'est ajouté que si un fichier cloud-init est fourni (sinon le
       backend applique ses défauts cloud-init CETIC).
@@ -63,6 +64,8 @@ def apply_compute_access_options(
       l'option n'existe pas pour cette ressource (scale-sets).
     - ``windows_license_consent`` n'est ajouté que s'il vaut True (obligatoire pour
       un template Windows ; défaut backend = False).
+    - ``docker`` n'est ajouté que s'il vaut True (active le nesting ; défaut
+      backend = False → conteneur durci).
     """
     user_data = read_cloud_init(cloud_init)
     if user_data is not None:
@@ -73,3 +76,5 @@ def apply_compute_access_options(
         body["is_template_source"] = True
     if windows_license_consent:
         body["windows_license_consent"] = True
+    if docker:
+        body["docker"] = True

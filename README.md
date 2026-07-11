@@ -245,6 +245,10 @@ cetic vm create --name web --region RNN --vnet <VNET> \
 cetic vm create --name tpl-prep --region RNN --vnet <VNET> \
     --template-source                     # instance de préparation de template (vm/container)
 
+# Docker dans un conteneur (depuis v0.42.0) — container / ct-scale-set uniquement
+cetic container create --name ci-runner --region RNN --vnet <VNET> \
+    --docker                              # active Docker (opt-in ; réduit l'isolation)
+
 # Disque OS dimensionnable / extensible (depuis v0.41.0) — sur vm/container/vm-scale-set/ct-scale-set/k8s
 cetic container create --name api --region RNN --vnet <VNET> \
     --disk-gb 40                           # défaut = disque du plan si omis

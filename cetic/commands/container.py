@@ -84,6 +84,10 @@ def create(
         False, "--template-source",
         help="Créer une instance de préparation de template (visible dans « Mes templates »).",
     ),
+    docker: bool = typer.Option(
+        False, "--docker",
+        help="Activer Docker dans le conteneur (opt-in). Réduit l'isolation vis-à-vis de l'infrastructure d'hébergement.",
+    ),
     root_password: str = typer.Option(
         ..., "--root-password",
         prompt=True, hide_input=True, confirmation_prompt=True,
@@ -113,7 +117,7 @@ def create(
         body["disk_gb"] = disk_gb
     apply_compute_access_options(
         body, cloud_init=cloud_init, bastion_access=bastion_access,
-        template_source=template_source,
+        template_source=template_source, docker=docker,
     )
     try:
         c = client.post("/v1/containers", json=body)
