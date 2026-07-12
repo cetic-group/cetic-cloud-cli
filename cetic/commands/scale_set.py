@@ -124,7 +124,7 @@ def create(  # noqa: PLR0913
     ),
     docker: bool = typer.Option(
         False, "--docker",
-        help="Activer Docker sur chaque réplica (opt-in). Réduit l'isolation vis-à-vis de l'infrastructure d'hébergement.",
+        help="Requis pour exécuter Docker sur chaque réplica (opt-in).",
     ),
     root_password: str = typer.Option(
         ..., "--root-password", prompt=True, hide_input=True, confirmation_prompt=True,

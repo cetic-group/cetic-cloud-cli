@@ -86,7 +86,7 @@ def create(
     ),
     docker: bool = typer.Option(
         False, "--docker",
-        help="Activer Docker dans le conteneur (opt-in). Réduit l'isolation vis-à-vis de l'infrastructure d'hébergement.",
+        help="Requis pour exécuter Docker dans le conteneur (opt-in).",
     ),
     root_password: str = typer.Option(
         ..., "--root-password",
