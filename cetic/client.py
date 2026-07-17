@@ -6,6 +6,7 @@ Gère automatiquement :
 - Affichage d'erreurs en français
 """
 
+import json
 from typing import Any
 
 import httpx
@@ -124,11 +125,30 @@ def delete(path: str) -> Any:
     return None
 
 
+def _normalize_detail(detail: Any) -> str:
+    """Aplatit le champ ``detail`` d'une erreur API en message lisible.
+
+    Depuis le contrat d'erreur structuré de l'API (#618), certains 4xx/5xx
+    renvoient ``detail`` sous forme d'objet ``{"code": ..., "message": ...,
+    "action_url": ...}`` au lieu d'une simple chaîne. Le CLI n'affichant que
+    ``e.detail`` (et faisant parfois ``.lower()`` dessus), on extrait le
+    ``message`` lisible et on retombe sur ``code`` puis sur le JSON brut. Les
+    ``detail`` déjà-chaîne (contrat historique) passent tels quels — le CLI
+    reste compatible quel que soit le format renvoyé par l'API.
+    """
+    if isinstance(detail, dict):
+        msg = detail.get("message") or detail.get("code")
+        if msg:
+            return str(msg)
+        return json.dumps(detail, ensure_ascii=False)
+    return detail if isinstance(detail, str) else str(detail)
+
+
 def _raise_for_status(resp: httpx.Response) -> None:
     if resp.is_success:
         return
     try:
-        detail = resp.json().get("detail", resp.text)
+        detail = _normalize_detail(resp.json().get("detail", resp.text))
     except Exception:
         detail = resp.text
     raise APIError(resp.status_code, detail)
