@@ -678,12 +678,12 @@ def _fetch_repos_page(rid: str, params: dict[str, Any]) -> tuple[list[dict[str, 
         headers["Authorization"] = f"Bearer {token}"
     with httpx.Client(timeout=30) as c:
         resp = c.get(url, headers=headers, params=params)
-    if not resp.is_success:
-        try:
-            detail = resp.json().get("detail", resp.text)
-        except Exception:  # noqa: BLE001
-            detail = resp.text
-        raise client.APIError(resp.status_code, detail)
+    # Passe par le point central `_raise_for_status` (comme tous les autres
+    # appels) pour APLATIR le `detail` structuré (#618, review PR #42) : sans
+    # ça, `e.detail` resterait un dict sur ce chemin (httpx direct pour lire le
+    # header `Link`) → repr Python affiché + `_format_api_error` planterait sur
+    # `(e.detail or "").lower()` en 409.
+    client._raise_for_status(resp)
     payload = resp.json()
     items = payload if isinstance(payload, list) else payload.get("repositories", [])
     next_url = _parse_link_header(resp.headers.get("Link"))

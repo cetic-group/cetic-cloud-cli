@@ -490,6 +490,26 @@ def test_repos_pagination_with_all(runner, mock_api):
     assert calls[1].get("last") == "myapp/b"
 
 
+def test_repos_structured_detail_error_flattened(runner, mock_api):
+    """Review PR #42 : `_fetch_repos_page` (httpx direct pour lire le header
+    `Link`) doit passer par `_raise_for_status` → `e.detail` aplati en string.
+    Un 409 à `detail` structuré (contrat #618) ferait sinon planter
+    `_format_api_error` sur `(e.detail or "").lower()` (dict → AttributeError)
+    et afficherait le repr Python du dict."""
+    mock_api.get(f"/v1/registries/{REG_ID}/repositories").mock(
+        return_value=httpx.Response(
+            409,
+            json={"detail": {"code": "conflict", "message": "Opération en conflit"}},
+        )
+    )
+    result = runner.invoke(app, ["registry", "repos", REG_ID])
+    assert result.exit_code == 1, result.stdout
+    # message aplati affiché, pas le repr du dict ni un crash
+    assert "Opération en conflit" in result.stdout
+    assert "'code'" not in result.stdout
+    assert "Traceback" not in result.stdout
+
+
 def test_tags_list(runner, mock_api):
     mock_api.get(f"/v1/registries/{REG_ID}/repositories/myapp/api/tags").mock(
         return_value=httpx.Response(200, json=[
