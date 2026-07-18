@@ -49,6 +49,7 @@ from cetic.commands import (
     region,
     registry,
     scale_set,
+    schedule,
     secret,
     service_account,
     ssh,
@@ -94,6 +95,7 @@ app.add_typer(scale_set.container_app, name="ct-scale-set")
 # Alias rétro-compat : `cetic scale-set` reste accepté (renommé en ct-scale-set).
 app.add_typer(scale_set.container_app, name="scale-set", hidden=True)
 app.add_typer(scale_set.vm_app, name="vm-scale-set")
+app.add_typer(schedule.app, name="schedule")
 app.add_typer(secret.app, name="secret")
 app.add_typer(service_account.app, name="service-account")
 app.add_typer(template.app, name="template")
