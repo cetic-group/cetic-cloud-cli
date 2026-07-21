@@ -32,6 +32,28 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
+      # La version de la CLI est TOUJOURS dérivée du tag de release (v1.4.0 -> 1.4.0)
+      # et écrite dans les sources avant le build. Le tag est donc la source unique
+      # de vérité : `cetic --version` == tag, impossible de diverger.
+      # Python (pas sed) pour rester portable sur les runners linux/macOS/windows.
+      - name: Stamp version from tag
+        shell: bash
+        env:
+          REF: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import os, re, pathlib
+          v = os.environ["REF"].removeprefix("v")
+          targets = {
+              "cetic/__init__.py": (r'(?m)^__version__ = .*', f'__version__ = "{v}"'),
+              "pyproject.toml":    (r'(?m)^version = ".*"',   f'version = "{v}"'),
+          }
+          for f, (pat, repl) in targets.items():
+              p = pathlib.Path(f)
+              p.write_text(re.sub(pat, lambda _m: repl, p.read_text()))
+              print(f"{f} -> {v}")
+          PY
+
       - name: Build PyInstaller binary
         run: pyinstaller --clean --noconfirm cetic.spec
 
