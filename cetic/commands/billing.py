@@ -15,6 +15,56 @@ def _eur(cents: int) -> str:
     return f"{cents / 100:.2f} €"
 
 
+def _unit_price(hourly_price_cents: float) -> str:
+    """Prix de l'unité consommée, sans arrondir un tarif sub-centime à zéro.
+
+    Les tarifs à l'unité descendent sous le centime (le stockage est en
+    `NUMERIC(10,4)` pour ça) : un `:.2f` afficherait « 0.00 € » pour un prix
+    bien réel. On garde donc quatre décimales, et on retire la queue de zéros
+    quand elle ne porte rien.
+    """
+    value = hourly_price_cents / 100
+    text = f"{value:.6f}".rstrip("0").rstrip(".") or "0"
+    if "." not in text:
+        text = f"{value:.2f}"
+    return f"{text} € / unité"
+
+
+def _price_or_unit(item: dict, field: str) -> str:
+    """Prix périodique, ou prix unitaire quand la dimension facture à l'unité.
+
+    `monthly_price_eur` / `yearly_price_eur` / `effective_monthly_price_eur`
+    valent `None` pour les dimensions facturées à l'unité consommée (un Go
+    sorti, une requête RPC) : il n'y a pas de prix mensuel, et l'API a cessé
+    d'en inventer un en multipliant par 730 — elle annonçait 7,30 € le Go
+    d'egress facturé 0,01 €.
+
+    On affiche alors le prix de l'unité plutôt qu'un tiret : un tiret ferait
+    disparaître une information qui existe et que l'utilisateur cherche. Le
+    rendu s'aligne sur le back-office (`formatPeriodEur`).
+    """
+    value = item.get(field)
+    if value is None:
+        return _unit_price(float(item.get("hourly_price_cents") or 0))
+    return f"{value:.2f} €"
+
+
+#: Les quatre durées d'engagement que l'API accepte, et leur remise.
+#: Aucun repli binaire : un type inconnu s'affiche tel quel plutôt que de se
+#: déguiser en mensuel — un engagement de trois ans annoncé « Mensuel » est une
+#: information fausse que rien dans l'affichage ne permet de rattraper.
+COMMIT_TYPES: dict[str, str] = {
+    "monthly": "Mensuel (-10%)",
+    "yearly": "Annuel (-20%)",
+    "two_years": "2 ans (-25%)",
+    "three_years": "3 ans (-30%)",
+}
+
+
+def _commit_label(commit_type: str) -> str:
+    return COMMIT_TYPES.get(commit_type, commit_type)
+
+
 @app.command()
 def credits() -> None:
     """Affiche le solde de crédit + transactions."""
@@ -85,8 +135,8 @@ def pricing(
                 "type": p["resource_type"],
                 "plan": p.get("plan") or "—",
                 "horaire": "Gratuit" if p.get("is_free") else f"{p['hourly_price_cents']} cts/h",
-                "mensuel": "—" if p.get("is_free") else f"{p['monthly_price_eur']:.2f} €",
-                "annuel": "—" if p.get("is_free") else f"{p['yearly_price_eur']:.2f} €",
+                "mensuel": "—" if p.get("is_free") else _price_or_unit(p, "monthly_price_eur"),
+                "annuel": "—" if p.get("is_free") else _price_or_unit(p, "yearly_price_eur"),
                 "dimension": p.get("billing_dimension", "flat_hourly"),
                 "stopped_disk": str(p.get("stopped_disk_price_cents_per_gb_hour") or "—"),
             }
@@ -102,7 +152,7 @@ def pricing(
                 "type": p["resource_type"],
                 "plan": p.get("plan") or "—",
                 "horaire": f"{p['hourly_price_cents']} cts/h",
-                "mensuel": f"{p['monthly_price_eur']:.2f} €",
+                "mensuel": _price_or_unit(p, "monthly_price_eur"),
                 "description": (p.get("description") or "—"),
             }
             for p in items
@@ -209,7 +259,9 @@ def budget_delete(budget_id: str = typer.Argument(...)) -> None:
 
 # ─── Engagement (commits) ───────────────────────────────────────────────────
 
-commit_app = typer.Typer(help="Engagement -10% mensuel ou -20% annuel")
+commit_app = typer.Typer(
+    help="Engagement : -10% mensuel, -20% annuel, -25% sur 2 ans, -30% sur 3 ans",
+)
 app.add_typer(commit_app, name="commit")
 
 
@@ -224,7 +276,7 @@ def commit_list() -> None:
     rows = [
         {
             "id": c["id"],
-            "type": "Annuel" if c["commit_type"] == "yearly" else "Mensuel",
+            "type": _commit_label(c["commit_type"]),
             "remise": f"-{c['discount_pct']}%",
             "debut": c["start_at"][:10],
             "fin": c["end_at"][:10],
@@ -239,12 +291,17 @@ def commit_list() -> None:
 
 @commit_app.command("create")
 def commit_create(
-    commit_type: str = typer.Argument(..., help="monthly (-10%) ou yearly (-20%)"),
+    commit_type: str = typer.Argument(
+        ..., help="monthly (-10%), yearly (-20%), two_years (-25%) ou three_years (-30%)",
+    ),
     no_auto_renew: bool = typer.Option(False, "--no-auto-renew", help="Désactive le renouvellement auto"),
 ) -> None:
     """Souscrit à un engagement mensuel ou annuel."""
-    if commit_type not in ("monthly", "yearly"):
-        rprint("[red]Type d'engagement invalide : utiliser 'monthly' ou 'yearly'[/red]")
+    if commit_type not in COMMIT_TYPES:
+        rprint(
+            "[red]Type d'engagement invalide : utiliser "
+            f"{', '.join(COMMIT_TYPES)}[/red]"
+        )
         raise typer.Exit(1)
     try:
         c = client.post("/v1/billing/commits", json={
@@ -254,7 +311,7 @@ def commit_create(
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
-    label = "Annuel (-20%)" if commit_type == "yearly" else "Mensuel (-10%)"
+    label = _commit_label(commit_type)
     rprint(f"[bold green]Engagement {label} activé[/bold green]")
     rprint(f"  Valide jusqu'au {c['end_at'][:10]}")
 
@@ -334,13 +391,16 @@ def estimate(
         rprint("[green]Cette ressource est gratuite.[/green]")
         return
     rprint(f"  Horaire : {e['hourly_price_cents']} cts/h")
-    rprint(f"  Mensuel : {e['monthly_price_eur']:.2f} €")
-    rprint(f"  Annuel  : {e['yearly_price_eur']:.2f} €")
+    rprint(f"  Mensuel : {_price_or_unit(e, 'monthly_price_eur')}")
+    rprint(f"  Annuel  : {_price_or_unit(e, 'yearly_price_eur')}")
     if e["commit_discount_pct"] > 0:
         rprint(f"[dim]  Engagement actif : [/dim][green]-{e['commit_discount_pct']}%[/green]")
     if e["promo_discount_pct"] > 0:
         rprint(f"[dim]  Code promo actif : [/dim][magenta]-{e['promo_discount_pct']}%[/magenta]")
-    if e["effective_monthly_price_eur"] != e["monthly_price_eur"]:
-        rprint(f"[bold yellow]  Effectif : {e['effective_monthly_price_eur']:.2f} €/mois[/bold yellow]")
+    # `None != None` est `False`, donc la comparaison se comportait déjà
+    # correctement par accident — autant l'écrire.
+    effectif = e.get("effective_monthly_price_eur")
+    if effectif is not None and effectif != e.get("monthly_price_eur"):
+        rprint(f"[bold yellow]  Effectif : {effectif:.2f} €/mois[/bold yellow]")
     if e["free_tier_units_remaining"] > 0:
         rprint(f"[green]  Free tier : {e['free_tier_units_remaining']} unité(s) restante(s) ce mois[/green]")
