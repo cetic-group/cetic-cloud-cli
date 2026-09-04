@@ -305,6 +305,62 @@ def templates(
                          ("built_at", "Buildé le")])
 
 
+def vnet_egress_state(vnets: list[dict], vnet_id: str) -> bool | None:
+    """Le VNet a-t-il une sortie internet ? `None` = inconnu.
+
+    `None` quand le réseau n'est pas dans la liste (course, droits partiels) :
+    l'inconnu ne doit jamais se lire comme « isolé », un avertissement faux
+    apprend surtout à ignorer les avertissements.
+    """
+    for v in vnets:
+        if str(v.get("id")) == vnet_id:
+            return bool(v.get("snat"))
+    return None
+
+
+def _guard_isolated_vnet(vpc_id: str, vnet_id: str, *, wants_public_ip: bool) -> None:
+    """Réseau isolé : rappel toujours, refus quand une IP publique est demandée.
+
+    Un cluster se crée parfaitement dans un réseau sans sortie internet (images
+    préchargées dans le template, relais DNS interne) : le CLI n'écarte aucun
+    VNet, c'est tout l'objet de l'issue #48.
+
+    ⚠️ **Le garde `snat` de la plateforme est sur `attach-ip`, PAS sur la
+    création.** `POST /v1/k8s/clusters` valide propriété, région et statut de
+    l'IP fournie, puis la passe à `ALLOCATED` — sans jamais regarder le `snat`
+    du VNet (l'unique contrôle vit dans `k8s_clusters.attach_public_ip`).
+    Annoncer « seront refusés » puis afficher « ✓ Cluster créé » était donc
+    faux, et laissait une IP publique réservée — donc facturée — sur un cluster
+    qui ne pourra jamais la porter. On refuse ici plutôt que d'annoncer un
+    refus qui n'aura pas lieu : le coût pour l'utilisateur est de retirer un
+    drapeau, celui de l'inverse est une IP immobilisée en silence.
+
+    Le refus n'a lieu que sur un `snat=false` CONSTATÉ. Lecture inaccessible ou
+    VNet absent de la liste → aucun blocage : un `except` large parce qu'une
+    panne réseau (`httpx`) n'est pas une `APIError`, et qu'aucune des deux ne
+    doit empêcher de créer un cluster.
+    """
+    try:
+        vnets = client.get(f"/v1/vpcs/{vpc_id}/vnets")
+    except Exception:  # noqa: BLE001 — lecture de confort, jamais bloquante
+        return
+    if vnet_egress_state(vnets, vnet_id) is not False:
+        return
+    rprint(
+        "[yellow]⚠[/yellow] Ce réseau est isolé (aucune sortie internet) : "
+        "le cluster s'y crée normalement, mais aucune IP publique ne pourra "
+        "lui être attachée (l'attache exige un réseau avec sortie internet)."
+    )
+    if wants_public_ip:
+        rprint(
+            "[red]--ingress-ip / --apiserver-ip sont refusés ici : la création "
+            "réserverait l'IP sans que le cluster puisse jamais la porter.[/red]\n"
+            "[dim]Retirez le drapeau, ou visez un réseau avec sortie internet "
+            "(cetic vpc vnet list <VPC>, colonne « Sortie »).[/dim]"
+        )
+        raise typer.Exit(1)
+
+
 def _resolve_os_template_key(
     templates: list[dict], *, region: str, k8s_version: str, os_slug: str
 ) -> str | None:
@@ -328,7 +384,14 @@ def create(
     name: str = typer.Option(..., "--name", "-n"),
     region: str = typer.Option(..., "--region", "-r"),
     vpc_id: str = typer.Option(..., "--vpc"),
-    vnet_id: str = typer.Option(..., "--vnet"),
+    vnet_id: str = typer.Option(
+        ..., "--vnet",
+        help=(
+            "Sous-réseau des nœuds. Un réseau isolé (sans sortie internet) est "
+            "accepté — aucune IP publique ne pourra alors être attachée. "
+            "Voir : cetic vpc vnet list <VPC>."
+        ),
+    ),
     k8s_version: str = typer.Option(
         "v1.31.0", "--version",
         help="Version Kubernetes du CONTROL PLANE (ex: v1.31.0).",
@@ -423,6 +486,13 @@ def create(
 
     if pool_version is not None:
         _validate_k8s_version(pool_version)
+
+    # Un VNet sans sortie internet est accepté (rien ne le filtre ici) ; on dit
+    # ce qu'il implique avant de lancer un provisioning de 5-15 min, et on
+    # refuse la seule combinaison que la plateforme laisse passer en silence.
+    _guard_isolated_vnet(
+        vpc_id, vnet_id, wants_public_ip=bool(ingress_ip_id or apiserver_ip_id)
+    )
 
     pool_body: dict = {"name": pool_name, "plan": pool_plan, "replicas": pool_replicas}
     if pool_min is not None:

@@ -60,7 +60,69 @@ tests/
 
 ## Versions
 
-**Latest : `v0.34.7`**
+**Latest : `v1.6.0`**
+
+⚠️ **Le TAG fait foi, pas `pyproject.toml`.** Depuis #44, le workflow de release
+écrit la version tirée du tag dans `cetic/__init__.py` et `pyproject.toml` avant
+le build — la valeur commitée n'a donc plus aucun effet et a dérivé : elle est
+restée en `0.4x` pendant que les releases passaient en `v1.x`. Avant tout bump,
+lire `git ls-remote --tags origin` ou `gh release list`, JAMAIS `pyproject.toml`.
+Le journal ci-dessous n'a pas été tenu entre `v0.34.7` et `v1.5.0`.
+
+- `v1.6.0` — feat : **`cetic dns`** (issue cli#49, alignement
+  cetic-cloud-platform#1387) + **`cetic email`** (issue cli#45, alignement #932)
+  + **VNets isolés** sur `k8s`/`vpc` (issue cli#48).
+  **(1) DNS privé** : `dns zone list|get|create|verify|delete`,
+  `dns record list|set|delete`. Trois décisions du contrat amont
+  (`apps/api/app/services/DNS_CONTRACT.md`) portées telles quelles : l'unité
+  d'édition est le **rrset** — `record set` REMPLACE le couple (nom, type) et
+  toutes ses valeurs (POST si absent, PATCH sinon), et le dit dans son aide ;
+  le rrset s'adresse par **(nom, type)**, l'UUID est résolu depuis le listing et
+  n'apparaît qu'en JSON ; la zone est portée par un **VPC** (`--vpc`), pas par un
+  sous-réseau — d'où `zone get` qui rend `resolver.endpoints`, une adresse PAR
+  sous-réseau. ⚠️ **Écart avec le texte de l'issue** : le contrat mergé a ajouté
+  une **preuve de possession** pour les domaines publics (`zone verify` +
+  `ownership_challenge`) et l'unicité du nom est **par organisation**, plus par
+  plateforme — l'issue disait l'inverse, elle est antérieure à la PR #1389.
+  **(2) Messagerie** : `email domain list|create|show|verify|recheck|delete`,
+  `email account list|create|show|update|password|delete`,
+  `email account token list|create|revoke`,
+  `email alias list|create|update|delete`. Le mot de passe n'est **jamais** un
+  argument (saisie masquée sur TTY, sinon lecture de l'entrée standard) — il n'y
+  a pas d'option `--password` du tout. `--forward` / `--to` REMPLACENT la liste.
+  Quota par défaut laissé à l'API (rien n'est envoyé si `--quota-gb` est omis).
+  Antispam absent (forcé côté plateforme) ; « Envoyer en tant que »
+  (`send_as_any_address`, #964) **lu** sur la fiche mais non modifiable depuis le
+  CLI — élévation de privilège dans le domaine, elle se délègue par l'IAM.
+  **(3) VNets isolés** : `vpc vnet list` gagne une colonne **Sortie**
+  (`Sortie internet` / `Réseau isolé`, libellés de la console) à la place de la
+  colonne `SNAT` (jargon) — le booléen `snat` reste brut en JSON/YAML, `egress`
+  porte le libellé. `k8s create` **n'écartait aucun VNet** (aucun filtre à
+  retirer côté CLI) et rappelle désormais, avant un provisioning de 5-15 min,
+  qu'un réseau isolé n'admettra aucune IP publique ; lecture best-effort des
+  VNets du VPC, jamais bloquante.
+  **Suites de revue** (4 défauts réels, tous vérifiés dans le code amont) :
+  **(a)** le CLI ajoutait « réessayer n'y changera rien » sur tout 503 alors que
+  les **deux seuls** 503 du domaine DNS demandent de réessayer
+  (`powerdns.py`, `dns_zones.py`) — la ligne venait du tableau d'erreurs de
+  `DNS_CONTRACT.md`, **périmé sur ce point depuis #1396**. Glose retirée, et le
+  test qui la verrouillait remplacé par son inverse ; sur `zone verify`, le
+  client qui renonçait perdait sa zone (7 j après CRÉATION). **(b)** `k8s create`
+  annonçait un refus qui n'existe pas : le garde `snat` de la plateforme est
+  dans `attach_public_ip`, **pas** à la création — qui réserve l'IP en
+  `ALLOCATED` sans rien vérifier. Le CLI **refuse** donc lui-même
+  `--ingress-ip`/`--apiserver-ip` sur un `snat=false` constaté, plutôt que
+  d'immobiliser une IP facturée sur un cluster qui ne peut pas la porter.
+  **(c)** les listes `email` rendaient des libellés d'affichage en JSON
+  (`"oui"`, `"5.0 Go"`, destinations concaténées) → charge de l'API telle quelle
+  en JSON/YAML, même correction que `vpc vnet list` ; `dns zone list` alignée.
+  **(d)** `domain show` rendait le MX sans `hostname` — le champ existe
+  précisément pour éviter que la priorité soit collée dans le champ « serveur »
+  (plus aucun courrier, sans message). Plus deux points courts : plancher de mot
+  de passe vérifié localement (sinon double saisie avant 422) et `rstrip("\r\n")`
+  (une entrée CRLF créait une boîte au secret intypable).
+  Tests : +93 (`test_dns.py` 40, `test_email.py` 43, +10 sur k8s/vpc) —
+  584 au total, dont 6 mutations rejouées après les suites de revue.
 
 - `v0.34.7` — fix : **refresh automatique du JWT expiré** (le bug que le
   docstring du client promettait depuis toujours sans l'implémenter). Le JWT
