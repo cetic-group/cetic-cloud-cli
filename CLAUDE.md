@@ -9,7 +9,10 @@
 ## Stack
 
 Python 3.12 · Typer + Rich · httpx · keyring · pytest + respx (mock HTTP).
-Binaire `cetic` distribué via PyInstaller (GitHub Actions sur tag `v*`, 6 plateformes).
+Binaire `cetic` distribué via PyInstaller (GitHub Actions sur tag `v*`) — **4**
+plateformes : `linux-amd64`, `linux-arm64`, `darwin-arm64`, `windows-amd64`.
+Pas de `darwin-amd64` : la matrice ne le construit pas (Mac Intel = depuis les
+sources).
 
 ## Layout
 
