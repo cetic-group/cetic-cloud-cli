@@ -208,7 +208,7 @@ cetic schedule enable weekend          # réactiver
 cetic schedule delete weekend          # supprime le planning et rallume la cible
 ```
 
-## DNS privé (depuis v0.44.0)
+## DNS privé (depuis v1.6.0)
 
 `cetic dns` déclare des zones DNS servies **uniquement dans votre réseau privé**
 (VPC) : aucun serveur public, aucune délégation depuis Internet. Les machines
@@ -255,7 +255,7 @@ est posé par la plateforme et rendu en lecture seule ; une délégation sur un
 sous-nom est refusée (une zone privée ne délègue rien). Le nom accepte le relatif
 (`www`), l'absolu et `@` pour l'apex.
 
-## Messagerie hébergée (depuis v0.44.0)
+## Messagerie hébergée (depuis v1.6.0)
 
 `cetic email` gère les domaines de messagerie, les boîtes aux lettres, les alias
 et les jetons d'application.
@@ -498,19 +498,19 @@ cetic appgw route create web-edge --listener-id <lst-uuid> --target-group-id <tg
   --path /api --rate-limit 100 --waf-preset strict
 cetic appgw health web-edge                                  # UP/DOWN par backend
 
-# Réseaux — mode de sortie (depuis v0.44.0)
+# Réseaux — mode de sortie (depuis v1.6.0)
 cetic vpc vnet list <VPC>             # colonne « Sortie » : Sortie internet | Réseau isolé
 cetic k8s create --name prod --region RNN --vpc <VPC> --vnet <VNET_ISOLE>
                                       # un réseau isolé est accepté (rappel affiché) ;
                                       # --ingress-ip / --apiserver-ip y sont refusés :
                                       # l'API réserverait l'IP sans pouvoir l'attacher
 
-# DNS privé (depuis v0.44.0)
+# DNS privé (depuis v1.6.0)
 cetic dns zone create corp.internal --vpc prod
 cetic dns record set corp.internal www A 10.0.0.10      # REMPLACE le couple (nom, type)
 cetic dns zone get corp.internal                        # résolveur : une adresse par sous-réseau
 
-# Messagerie hébergée (depuis v0.44.0)
+# Messagerie hébergée (depuis v1.6.0)
 cetic email domain create exemple.com
 cetic email domain show exemple.com                     # enregistrements DNS + état
 cetic email account create contact@exemple.com          # mot de passe demandé, jamais en argument
@@ -584,10 +584,12 @@ Releases are published automatically on tag push (`v*`) via GitHub Actions :
 - Builds PyInstaller binaries for Linux (amd64/arm64), macOS (Intel/Apple Silicon), Windows
 - Uploads to GitHub Releases with SHA256 checksums
 
-To publish a new version :
+The **tag is the single source of truth** for the version : the workflow writes it
+into `cetic/__init__.py` and `pyproject.toml` before building, so `cetic --version`
+always equals the tag.
+
 ```bash
-# Bump version in pyproject.toml
-git tag v0.5.4 && git push origin v0.5.4
+git tag -a v1.6.0 -m "…" && git push origin v1.6.0
 ```
 
 ## License

@@ -60,11 +60,16 @@ tests/
 
 ## Versions
 
-**Latest : `v0.44.0`** *(le journal ci-dessous n'a pas été tenu de v0.35 à v0.43 —
-la version fait foi dans `pyproject.toml` / `cetic/__init__.py`, et depuis v0.42
-c'est le tag poussé qui l'écrit dans les sources au build)*
+**Latest : `v1.6.0`**
 
-- `v0.44.0` — feat : **`cetic dns`** (issue cli#49, alignement
+⚠️ **Le TAG fait foi, pas `pyproject.toml`.** Depuis #44, le workflow de release
+écrit la version tirée du tag dans `cetic/__init__.py` et `pyproject.toml` avant
+le build — la valeur commitée n'a donc plus aucun effet et a dérivé : elle est
+restée en `0.4x` pendant que les releases passaient en `v1.x`. Avant tout bump,
+lire `git ls-remote --tags origin` ou `gh release list`, JAMAIS `pyproject.toml`.
+Le journal ci-dessous n'a pas été tenu entre `v0.34.7` et `v1.5.0`.
+
+- `v1.6.0` — feat : **`cetic dns`** (issue cli#49, alignement
   cetic-cloud-platform#1387) + **`cetic email`** (issue cli#45, alignement #932)
   + **VNets isolés** sur `k8s`/`vpc` (issue cli#48).
   **(1) DNS privé** : `dns zone list|get|create|verify|delete`,
