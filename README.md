@@ -31,15 +31,15 @@ chmod +x cetic && sudo mv cetic /usr/local/bin/
 curl -L https://github.com/cetic-group/cetic-cloud-cli/releases/latest/download/cetic-darwin-arm64 -o cetic
 chmod +x cetic && sudo mv cetic /usr/local/bin/
 
-# macOS Intel
-curl -L https://github.com/cetic-group/cetic-cloud-cli/releases/latest/download/cetic-darwin-amd64 -o cetic
-chmod +x cetic && sudo mv cetic /usr/local/bin/
-
 # Windows x86_64 (PowerShell)
 Invoke-WebRequest -Uri https://github.com/cetic-group/cetic-cloud-cli/releases/latest/download/cetic-windows-amd64.exe -OutFile cetic.exe
 ```
 
 > **macOS Gatekeeper** : `xattr -d com.apple.quarantine cetic` si bloqué.
+>
+> **macOS Intel** : aucun binaire n'est publié pour `darwin-amd64` — la matrice de
+> build couvre `linux-amd64`, `linux-arm64`, `darwin-arm64` et `windows-amd64`.
+> Sur un Mac Intel, installer depuis les sources (section suivante).
 
 ### From source (Python 3.12+)
 
