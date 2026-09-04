@@ -208,6 +208,98 @@ cetic schedule enable weekend          # réactiver
 cetic schedule delete weekend          # supprime le planning et rallume la cible
 ```
 
+## DNS privé (depuis v0.44.0)
+
+`cetic dns` déclare des zones DNS servies **uniquement dans votre réseau privé**
+(VPC) : aucun serveur public, aucune délégation depuis Internet. Les machines
+créées dans ce réseau reçoivent automatiquement le résolveur comme serveur de noms.
+
+Trois points qui ne se devinent pas :
+
+1. **`record set` REMPLACE, il n'ajoute pas.** L'unité d'édition est le *rrset* :
+   le couple (nom, type) et **toutes** ses valeurs. `cetic dns record set
+   corp.internal www A 10.0.0.11` sur un nom qui portait déjà `10.0.0.10`
+   **supprime** `10.0.0.10`. Pour ajouter une valeur, listez d'abord et renvoyez
+   la liste complète. C'est pour cela que la commande s'appelle `set`.
+2. **La portée est le VPC, pas le sous-réseau** (`--vpc`) : le résolveur a une
+   patte dans chaque sous-réseau du VPC et y répond les mêmes zones. `cetic dns
+   zone get` affiche **une adresse par sous-réseau** — depuis une machine, utilisez
+   celle de SON sous-réseau, les autres ne lui répondent pas.
+3. **`--tier` est une propriété du RÉSEAU** : toutes les zones d'un même VPC
+   partagent leur résolveur, donc son niveau (`dev` = un serveur, `prod` = paire
+   redondante). Un niveau différent de celui en place est refusé (409) avec le
+   niveau effectif dans le message.
+
+Un nom à suffixe interne (`corp.internal`, `home.arpa`, `lan`) part directement en
+provisionnement. Un **domaine public** (`exemple.com`) naît en attente de preuve :
+publiez le TXT rendu par la commande dans son DNS public, puis `zone verify`.
+
+⚠️ Les machines reçoivent le résolveur **à leur création** : activer le DNS privé
+sur un réseau déjà peuplé ne rend pas la zone visible depuis les machines existantes.
+
+```bash
+cetic dns zone create corp.internal --vpc prod            # --tier dev|prod, --ttl, --dnssec
+cetic dns zone list
+cetic dns zone get corp.internal                          # état + résolveur par sous-réseau
+cetic dns zone verify exemple.com                         # domaines publics uniquement
+cetic dns zone delete corp.internal --yes                 # refusé si elle porte des enregistrements
+
+cetic dns record list corp.internal
+cetic dns record set corp.internal www A 10.0.0.10 10.0.0.11   # les DEUX valeurs du couple
+cetic dns record set corp.internal @ MX "10 mail.exemple.com."
+cetic dns record delete corp.internal www A --yes
+```
+
+Types acceptés : `A` `AAAA` `CNAME` `MX` `TXT` `SRV` `CAA` `NS`. Le `NS` de l'apex
+est posé par la plateforme et rendu en lecture seule ; une délégation sur un
+sous-nom est refusée (une zone privée ne délègue rien). Le nom accepte le relatif
+(`www`), l'absolu et `@` pour l'apex.
+
+## Messagerie hébergée (depuis v0.44.0)
+
+`cetic email` gère les domaines de messagerie, les boîtes aux lettres, les alias
+et les jetons d'application.
+
+- **Le mot de passe ne passe jamais en argument** : saisie interactive masquée, ou
+  lecture sur l'entrée standard (`printf '%s' "$MDP" | cetic email account create …`).
+  Un mot de passe en argument finit dans l'historique du shell et dans la liste des
+  processus.
+- **Un domaine naît en attente** : le nom est réservé, rien n'est routé tant que le
+  TXT de possession n'est pas publié et constaté.
+- **`--to` et `--forward` REMPLACENT** la liste existante : n'en passer qu'une
+  retire les autres.
+- Le **quota par défaut vient de l'API** (1 Go aujourd'hui) : `--quota-gb` omis, le
+  CLI n'envoie rien.
+- Les réglages antispam ne sont pas exposés (forcés côté plateforme), et « Envoyer
+  en tant que » se lit sur la fiche mais ne s'active pas depuis le CLI : c'est une
+  élévation de privilège dans le domaine, elle se délègue par l'IAM.
+
+```bash
+cetic email domain create exemple.com
+cetic email domain show exemple.com          # enregistrements DNS à poser + leur état
+cetic email domain verify exemple.com        # constate le TXT de possession
+cetic email domain recheck exemple.com       # re-constate l'état des enregistrements
+cetic email domain delete exemple.com --yes  # refusé s'il porte adresses ou alias
+
+cetic email account create contact@exemple.com --quota-gb 5   # mot de passe demandé
+cetic email account list --domain exemple.com
+cetic email account show contact@exemple.com                  # + « Configuration client »
+cetic email account update contact@exemple.com \
+    --forward archive@ailleurs.com --no-forward-keep          # REMPLACE les destinations
+cetic email account password contact@exemple.com              # saisie masquée
+cetic email account delete contact@exemple.com --yes          # pas de corbeille
+
+cetic email account token create contact@exemple.com \
+    --comment "sauvegarde" --ip 203.0.113.7/32                # valeur révélée UNE fois
+cetic email account token list contact@exemple.com            # la liste fait foi
+cetic email account token revoke contact@exemple.com <TOKEN_ID> --yes
+
+cetic email alias create info@exemple.com --to contact@exemple.com --to b@ailleurs.com
+cetic email alias create "*@exemple.com" --to contact@exemple.com --wildcard
+cetic email alias update info@exemple.com --to seul@ailleurs.com   # REMPLACE
+cetic email alias delete info@exemple.com --yes
+```
+
 ## IAM quickstart (depuis v0.8.0)
 
 CETIC Cloud expose un système IAM AWS-style en additif du RBAC owner/admin/member/viewer.
@@ -398,6 +490,23 @@ cetic appgw tg member add web-edge --tg-id <tg-uuid> --container <ct-uuid> --por
 cetic appgw route create web-edge --listener-id <lst-uuid> --target-group-id <tg-uuid> \
   --path /api --rate-limit 100 --waf-preset strict
 cetic appgw health web-edge                                  # UP/DOWN par backend
+
+# Réseaux — mode de sortie (depuis v0.44.0)
+cetic vpc vnet list <VPC>             # colonne « Sortie » : Sortie internet | Réseau isolé
+cetic k8s create --name prod --region RNN --vpc <VPC> --vnet <VNET_ISOLE>
+                                      # un réseau isolé est accepté : aucune IP publique
+                                      # ne pourra être attachée au cluster (rappel affiché)
+
+# DNS privé (depuis v0.44.0)
+cetic dns zone create corp.internal --vpc prod
+cetic dns record set corp.internal www A 10.0.0.10      # REMPLACE le couple (nom, type)
+cetic dns zone get corp.internal                        # résolveur : une adresse par sous-réseau
+
+# Messagerie hébergée (depuis v0.44.0)
+cetic email domain create exemple.com
+cetic email domain show exemple.com                     # enregistrements DNS + état
+cetic email account create contact@exemple.com          # mot de passe demandé, jamais en argument
+cetic email alias create info@exemple.com --to contact@exemple.com
 
 # Databases
 cetic db pg create --name app-db --plan dev

@@ -60,7 +60,43 @@ tests/
 
 ## Versions
 
-**Latest : `v0.34.7`**
+**Latest : `v0.44.0`** *(le journal ci-dessous n'a pas été tenu de v0.35 à v0.43 —
+la version fait foi dans `pyproject.toml` / `cetic/__init__.py`, et depuis v0.42
+c'est le tag poussé qui l'écrit dans les sources au build)*
+
+- `v0.44.0` — feat : **`cetic dns`** (issue cli#49, alignement
+  cetic-cloud-platform#1387) + **`cetic email`** (issue cli#45, alignement #932)
+  + **VNets isolés** sur `k8s`/`vpc` (issue cli#48).
+  **(1) DNS privé** : `dns zone list|get|create|verify|delete`,
+  `dns record list|set|delete`. Trois décisions du contrat amont
+  (`apps/api/app/services/DNS_CONTRACT.md`) portées telles quelles : l'unité
+  d'édition est le **rrset** — `record set` REMPLACE le couple (nom, type) et
+  toutes ses valeurs (POST si absent, PATCH sinon), et le dit dans son aide ;
+  le rrset s'adresse par **(nom, type)**, l'UUID est résolu depuis le listing et
+  n'apparaît qu'en JSON ; la zone est portée par un **VPC** (`--vpc`), pas par un
+  sous-réseau — d'où `zone get` qui rend `resolver.endpoints`, une adresse PAR
+  sous-réseau. ⚠️ **Écart avec le texte de l'issue** : le contrat mergé a ajouté
+  une **preuve de possession** pour les domaines publics (`zone verify` +
+  `ownership_challenge`) et l'unicité du nom est **par organisation**, plus par
+  plateforme — l'issue disait l'inverse, elle est antérieure à la PR #1389.
+  **(2) Messagerie** : `email domain list|create|show|verify|recheck|delete`,
+  `email account list|create|show|update|password|delete`,
+  `email account token list|create|revoke`,
+  `email alias list|create|update|delete`. Le mot de passe n'est **jamais** un
+  argument (saisie masquée sur TTY, sinon lecture de l'entrée standard) — il n'y
+  a pas d'option `--password` du tout. `--forward` / `--to` REMPLACENT la liste.
+  Quota par défaut laissé à l'API (rien n'est envoyé si `--quota-gb` est omis).
+  Antispam absent (forcé côté plateforme) ; « Envoyer en tant que »
+  (`send_as_any_address`, #964) **lu** sur la fiche mais non modifiable depuis le
+  CLI — élévation de privilège dans le domaine, elle se délègue par l'IAM.
+  **(3) VNets isolés** : `vpc vnet list` gagne une colonne **Sortie**
+  (`Sortie internet` / `Réseau isolé`, libellés de la console) à la place de la
+  colonne `SNAT` (jargon) — le booléen `snat` reste brut en JSON/YAML, `egress`
+  porte le libellé. `k8s create` **n'écartait aucun VNet** (aucun filtre à
+  retirer côté CLI) mais rappelle désormais, avant un provisioning de 5-15 min,
+  qu'un réseau isolé n'admettra aucune IP publique (garde 422 côté API,
+  inchangée) ; lecture best-effort des VNets du VPC, jamais bloquante.
+  Tests : +80 (`test_dns.py` 38, `test_email.py` 34, +8 sur k8s/vpc).
 
 - `v0.34.7` — fix : **refresh automatique du JWT expiré** (le bug que le
   docstring du client promettait depuis toujours sans l'implémenter). Le JWT
