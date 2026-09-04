@@ -305,6 +305,49 @@ def templates(
                          ("built_at", "Buildé le")])
 
 
+def vnet_egress_state(vnets: list[dict], vnet_id: str) -> bool | None:
+    """Le VNet a-t-il une sortie internet ? `None` = inconnu.
+
+    `None` quand le réseau n'est pas dans la liste (course, droits partiels) :
+    l'inconnu ne doit jamais se lire comme « isolé », un avertissement faux
+    apprend surtout à ignorer les avertissements.
+    """
+    for v in vnets:
+        if str(v.get("id")) == vnet_id:
+            return bool(v.get("snat"))
+    return None
+
+
+def _warn_if_isolated(vpc_id: str, vnet_id: str, *, wants_public_ip: bool) -> None:
+    """Rappelle qu'un réseau isolé n'admet aucune IP publique — sans rien refuser.
+
+    Un cluster se crée parfaitement dans un réseau sans sortie internet (images
+    préchargées dans le template, relais DNS interne) : le CLI n'écarte donc
+    aucun VNet. Ce qui doit être dit, c'est ce que le réseau change — l'API
+    refuse l'attache d'une IP publique (422), et c'est la seule garde en place.
+
+    Best-effort : un échec de lecture ne bloque pas la création. D'où un
+    `except` large — une panne réseau (`httpx`) n'est pas une `APIError`, et
+    aucune des deux ne doit empêcher de créer un cluster pour un simple rappel.
+    """
+    try:
+        vnets = client.get(f"/v1/vpcs/{vpc_id}/vnets")
+    except Exception:  # noqa: BLE001 — rappel informatif, jamais bloquant
+        return
+    if vnet_egress_state(vnets, vnet_id) is not False:
+        return
+    rprint(
+        "[yellow]⚠[/yellow] Ce réseau est isolé (aucune sortie internet) : "
+        "le cluster s'y crée normalement, mais aucune IP publique ne pourra "
+        "lui être attachée."
+    )
+    if wants_public_ip:
+        rprint(
+            "[yellow]--ingress-ip / --apiserver-ip seront refusés sur un réseau "
+            "isolé.[/yellow]"
+        )
+
+
 def _resolve_os_template_key(
     templates: list[dict], *, region: str, k8s_version: str, os_slug: str
 ) -> str | None:
@@ -328,7 +371,14 @@ def create(
     name: str = typer.Option(..., "--name", "-n"),
     region: str = typer.Option(..., "--region", "-r"),
     vpc_id: str = typer.Option(..., "--vpc"),
-    vnet_id: str = typer.Option(..., "--vnet"),
+    vnet_id: str = typer.Option(
+        ..., "--vnet",
+        help=(
+            "Sous-réseau des nœuds. Un réseau isolé (sans sortie internet) est "
+            "accepté — aucune IP publique ne pourra alors être attachée. "
+            "Voir : cetic vpc vnet list <VPC>."
+        ),
+    ),
     k8s_version: str = typer.Option(
         "v1.31.0", "--version",
         help="Version Kubernetes du CONTROL PLANE (ex: v1.31.0).",
@@ -423,6 +473,12 @@ def create(
 
     if pool_version is not None:
         _validate_k8s_version(pool_version)
+
+    # Un VNet sans sortie internet est accepté (rien ne le filtre ici) ; on dit
+    # simplement ce qu'il implique avant de lancer un provisioning de 5-15 min.
+    _warn_if_isolated(
+        vpc_id, vnet_id, wants_public_ip=bool(ingress_ip_id or apiserver_ip_id)
+    )
 
     pool_body: dict = {"name": pool_name, "plan": pool_plan, "replicas": pool_replicas}
     if pool_min is not None:

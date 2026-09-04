@@ -15,6 +15,17 @@ vnet_app.add_typer(ip_resv_app, name="ip-reservation")
 vnet_app.add_typer(fw_app, name="firewall")
 
 
+def fmt_egress(snat: object) -> str:
+    """Mode de sortie d'un VNet, dans les libellés retenus côté console.
+
+    Un réseau sans sortie (`snat=false`) est parfaitement utilisable — un
+    cluster Kubernetes y démarre depuis le préchargement des images et le relais
+    DNS interne. Ce qu'il n'a pas, c'est Internet : sans l'afficher, on choisit
+    un réseau sans savoir lequel des deux on prend.
+    """
+    return "Sortie internet" if snat else "Réseau isolé"
+
+
 @app.command(name="list")
 def list_vpcs() -> None:
     """Liste les VPCs."""
@@ -94,12 +105,15 @@ def list_vnets(vpc_id: str = typer.Argument(..., help="UUID du VPC parent")) -> 
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
     rows = [
+        # `snat` reste le booléen brut (exploitable en JSON/YAML) ; `egress` en
+        # est le libellé lisible, seul affiché en table.
         {"id": v["id"], "name": v["name"], "cidr": v["cidr"],
-         "snat": "✓" if v.get("snat") else "—"}
+         "snat": bool(v.get("snat")), "egress": fmt_egress(v.get("snat"))}
         for v in items
     ]
     render_list(rows, title=f"VNets du VPC {vpc_id[:8]} ({len(rows)})",
-                columns=[("id", "ID"), ("name", "Nom"), ("cidr", "CIDR"), ("snat", "SNAT")])
+                columns=[("id", "ID"), ("name", "Nom"), ("cidr", "CIDR"),
+                         ("egress", "Sortie")])
 
 
 @vnet_app.command()
@@ -110,7 +124,7 @@ def create(
         None, "--cidr", help="ex: 10.0.0.0/24 — auto-attribué si omis"),
     snat: bool = typer.Option(
         False, "--snat/--no-snat",
-        help="Activer l'accès internet sortant (désactivé par défaut)"),
+        help="--snat = sortie internet ; --no-snat (défaut) = réseau isolé"),
 ) -> None:
     """Crée un VNet dans un VPC (réseau isolé par défaut ; CIDR auto-attribué si omis)."""
     body: dict = {"name": name, "snat": snat}

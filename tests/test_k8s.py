@@ -831,3 +831,82 @@ def test_pool_list_shows_version_column(runner, mock_api):
     assert "Version" in result.stdout
     assert "v1.31.0" in result.stdout
     assert "héritée" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# VNets isolés acceptés + rappel du mode de sortie (issue cetic-cloud-cli#48)
+# ---------------------------------------------------------------------------
+
+
+def _vnets(*, snat: bool) -> list[dict[str, Any]]:
+    return [
+        {"id": VNET_ID, "vpc_id": VPC_ID, "name": "isole",
+         "cidr": "10.0.0.0/24", "snat": snat},
+        {"id": "cccccccc-cccc-cccc-cccc-cccccccccccc", "vpc_id": VPC_ID,
+         "name": "autre", "cidr": "10.0.1.0/24", "snat": not snat},
+    ]
+
+
+def test_vnet_egress_state_reads_the_right_vnet() -> None:
+    from cetic.commands.k8s import vnet_egress_state
+
+    assert vnet_egress_state(_vnets(snat=False), VNET_ID) is False
+    assert vnet_egress_state(_vnets(snat=True), VNET_ID) is True
+    # Réseau absent de la liste → inconnu, jamais « isolé ».
+    assert vnet_egress_state(_vnets(snat=False), "dddddddd-dddd-dddd-dddd-dddddddddddd") is None
+
+
+def test_create_on_isolated_vnet_warns_but_creates(runner, mock_api):
+    captured: dict[str, Any] = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(201, json=_cluster(status="Provisioning"))
+
+    mock_api.get(f"/v1/vpcs/{VPC_ID}/vnets").mock(
+        return_value=httpx.Response(200, json=_vnets(snat=False))
+    )
+    mock_api.post("/v1/k8s/clusters").mock(side_effect=_capture)
+    result = runner.invoke(app, _create_args())
+    assert result.exit_code == 0, result.stdout
+    # Le VNet isolé n'est ni écarté ni refusé : le POST part avec.
+    assert captured["body"]["vnet_id"] == VNET_ID
+    assert "isolé" in result.stdout
+    assert "IP publique" in result.stdout
+
+
+def test_create_on_isolated_vnet_flags_requested_public_ip(runner, mock_api):
+    mock_api.get(f"/v1/vpcs/{VPC_ID}/vnets").mock(
+        return_value=httpx.Response(200, json=_vnets(snat=False))
+    )
+    mock_api.post("/v1/k8s/clusters").mock(
+        return_value=httpx.Response(201, json=_cluster(status="Provisioning"))
+    )
+    result = runner.invoke(app, _create_args("--ingress-ip", CLUSTER_ID))
+    assert result.exit_code == 0, result.stdout
+    assert "--ingress-ip" in result.stdout
+
+
+def test_create_on_connected_vnet_stays_silent(runner, mock_api):
+    mock_api.get(f"/v1/vpcs/{VPC_ID}/vnets").mock(
+        return_value=httpx.Response(200, json=_vnets(snat=True))
+    )
+    mock_api.post("/v1/k8s/clusters").mock(
+        return_value=httpx.Response(201, json=_cluster(status="Provisioning"))
+    )
+    result = runner.invoke(app, _create_args())
+    assert result.exit_code == 0, result.stdout
+    assert "isolé" not in result.stdout
+
+
+def test_create_survives_unreadable_vnet_list(runner, mock_api):
+    """Le rappel est un confort : son échec ne doit jamais empêcher la création."""
+    mock_api.get(f"/v1/vpcs/{VPC_ID}/vnets").mock(
+        return_value=httpx.Response(403, json={"detail": "interdit"})
+    )
+    mock_api.post("/v1/k8s/clusters").mock(
+        return_value=httpx.Response(201, json=_cluster(status="Provisioning"))
+    )
+    result = runner.invoke(app, _create_args())
+    assert result.exit_code == 0, result.stdout
+    assert "Cluster créé" in result.stdout
