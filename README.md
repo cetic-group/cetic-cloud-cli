@@ -263,7 +263,8 @@ et les jetons d'application.
 - **Le mot de passe ne passe jamais en argument** : saisie interactive masquée, ou
   lecture sur l'entrée standard (`printf '%s' "$MDP" | cetic email account create …`).
   Un mot de passe en argument finit dans l'historique du shell et dans la liste des
-  processus.
+  processus. Le plancher de 12 caractères est vérifié **avant** l'appel — sinon un
+  mot de passe trop court se saisit deux fois (confirmation) pour un 422.
 - **Un domaine naît en attente** : le nom est réservé, rien n'est routé tant que le
   TXT de possession n'est pas publié et constaté.
 - **`--to` et `--forward` REMPLACENT** la liste existante : n'en passer qu'une
@@ -273,6 +274,12 @@ et les jetons d'application.
 - Les réglages antispam ne sont pas exposés (forcés côté plateforme), et « Envoyer
   en tant que » se lit sur la fiche mais ne s'active pas depuis le CLI : c'est une
   élévation de privilège dans le domaine, elle se délègue par l'IAM.
+- **`CCP_OUTPUT=json` rend la charge de l'API telle quelle** sur les listes : `jq
+  '.[].destinations[]'` reçoit le tableau, et une jauge reçoit `quota_bytes`, pas
+  « 5.0 Go ». Les libellés lisibles n'existent qu'en table.
+- **`domain show` rend le MX en trois champs** — valeur complète, serveur, priorité —
+  parce que les interfaces DNS en demandent deux : coller `10 mail.exemple.com.` dans
+  le champ « serveur » invalide l'enregistrement et plus aucun courrier n'arrive.
 
 ```bash
 cetic email domain create exemple.com
@@ -494,8 +501,9 @@ cetic appgw health web-edge                                  # UP/DOWN par backe
 # Réseaux — mode de sortie (depuis v0.44.0)
 cetic vpc vnet list <VPC>             # colonne « Sortie » : Sortie internet | Réseau isolé
 cetic k8s create --name prod --region RNN --vpc <VPC> --vnet <VNET_ISOLE>
-                                      # un réseau isolé est accepté : aucune IP publique
-                                      # ne pourra être attachée au cluster (rappel affiché)
+                                      # un réseau isolé est accepté (rappel affiché) ;
+                                      # --ingress-ip / --apiserver-ip y sont refusés :
+                                      # l'API réserverait l'IP sans pouvoir l'attacher
 
 # DNS privé (depuis v0.44.0)
 cetic dns zone create corp.internal --vpc prod

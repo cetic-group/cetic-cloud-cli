@@ -13,6 +13,7 @@ import json
 from typing import Any
 
 import httpx
+import pytest
 
 from cetic.main import app
 
@@ -593,3 +594,142 @@ def test_email_group_is_registered(runner) -> None:
     from cetic.main import app as main_app
 
     assert "email" in [g.name for g in main_app.registered_groups]
+
+
+# ---------------------------------------------------------------------------
+# Suites de revue : sortie machine, MX en trois champs, saisie du mot de passe
+# ---------------------------------------------------------------------------
+
+
+def test_account_list_json_is_the_raw_payload(runner, monkeypatch, mock_api) -> None:
+    """`jq` a besoin des octets et des tableaux, pas de « 5.0 Go » ni de « oui »."""
+    monkeypatch.setenv("CCP_OUTPUT", "json")
+    _mock_account_list(mock_api, [_account(forward_enabled=True,
+                                           forward_destination=["a@ex.com", "b@ex.com"])])
+    result = runner.invoke(app, ["email", "account", "list"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.stdout)
+    assert data[0]["quota_bytes"] == 1073741824
+    assert data[0]["enabled"] is True
+    assert data[0]["forward_destination"] == ["a@ex.com", "b@ex.com"]
+    # Un champ que la table n'affiche pas ne disparaît pas de la sortie machine.
+    assert data[0]["usage_updated_at"] == "2026-09-04T08:00:00Z"
+
+
+def test_alias_list_json_keeps_destinations_as_a_list(runner, monkeypatch, mock_api) -> None:
+    monkeypatch.setenv("CCP_OUTPUT", "json")
+    mock_api.get("/v1/email/aliases").mock(return_value=httpx.Response(
+        200, json=[_alias(destinations=[ADDRESS, "b@ailleurs.com"])],
+    ))
+    result = runner.invoke(app, ["email", "alias", "list"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.stdout)
+    assert data[0]["destinations"] == [ADDRESS, "b@ailleurs.com"]
+
+
+def test_domain_list_json_is_the_raw_payload(runner, monkeypatch, mock_api) -> None:
+    monkeypatch.setenv("CCP_OUTPUT", "json")
+    _mock_domain_list(mock_api)
+    result = runner.invoke(app, ["email", "domain", "list"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.stdout)
+    assert data[0]["externally_managed"] is False
+    assert data[0]["dkim_generated_at"] == "2026-09-01T10:00:00Z"
+
+
+def test_token_list_json_keeps_authorized_ips_as_a_list(runner, monkeypatch, mock_api) -> None:
+    monkeypatch.setenv("CCP_OUTPUT", "json")
+    _mock_account_list(mock_api)
+    mock_api.get(f"/v1/email/accounts/{ACCOUNT_ID}/tokens").mock(
+        return_value=httpx.Response(200, json=[{
+            "id": TOKEN_ID, "comment": "sauvegarde",
+            "authorized_ips": ["203.0.113.7/32", "198.51.100.0/24"],
+            "created_at": "2026-09-04T08:00:00Z",
+        }])
+    )
+    result = runner.invoke(app, ["email", "account", "token", "list", ADDRESS])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.stdout)
+    assert data[0]["authorized_ips"] == ["203.0.113.7/32", "198.51.100.0/24"]
+
+
+def test_domain_show_renders_the_mx_hostname_apart(runner, mock_api) -> None:
+    """Une interface DNS demande DEUX champs pour un MX : serveur et priorité.
+
+    Rendre la seule valeur complète conduit à coller « 10 » dans le champ
+    serveur — l'enregistrement devient invalide et plus aucun courrier n'arrive,
+    sans message. L'API sert le découpage déjà fait (`hostname` + `priority`).
+    """
+    _mock_domain_list(mock_api)
+    mock_api.get(f"/v1/email/domains/{DOMAIN_ID}").mock(
+        return_value=httpx.Response(200, json=_domain_detail())
+    )
+    result = runner.invoke(app, ["email", "domain", "show", FQDN])
+    assert result.exit_code == 0, result.output
+    flat = " ".join(result.output.split())
+    assert "Serveur (MX)" in flat
+    # L'hôte seul, sans la priorité collée devant.
+    assert "mail.cloud.cetic-group.com" in flat
+    assert "10" in flat
+
+
+class _FakeStdin:
+    """Entrée standard non-TTY qui rend la ligne TELLE QUELLE.
+
+    `CliRunner` passe son entrée dans un `TextIOWrapper` en mode « universal
+    newlines » : un `\r\n` fourni en `input=` arrive déjà traduit en `\n`, et un
+    test de bout en bout ne peut donc PAS reproduire la fin de ligne CRLF. Il
+    resterait vert avec `rstrip("\n")` — le défaut même qu'il prétend couvrir.
+    """
+
+    def __init__(self, line: str) -> None:
+        self._line = line
+
+    def isatty(self) -> bool:
+        return False
+
+    def readline(self) -> str:
+        return self._line
+
+
+def test_read_password_strips_a_crlf_line_ending(monkeypatch) -> None:
+    """Un fichier de mots de passe écrit sous Windows porte des fins CRLF.
+
+    Le `\r` conservé créait une boîte au secret intypable, et l'échec ne
+    ressortait que plus tard en erreur d'authentification IMAP.
+    """
+    import sys as _sys
+
+    from cetic.commands.email import read_password
+
+    monkeypatch.setattr(_sys, "stdin", _FakeStdin(f"{PASSWORD}\r\n"))
+    assert read_password("Mot de passe") == PASSWORD
+
+
+def test_read_password_rejects_an_empty_stdin(monkeypatch) -> None:
+    import sys as _sys
+
+    import typer
+
+    from cetic.commands.email import read_password
+
+    monkeypatch.setattr(_sys, "stdin", _FakeStdin("\n"))
+    with pytest.raises(typer.Exit):
+        read_password("Mot de passe")
+
+
+def test_password_too_short_is_refused_before_any_call(runner, mock_api) -> None:
+    """Le plancher est vérifié avant l'appel : sinon on saisit deux fois pour un 422."""
+    result = runner.invoke(app, ["email", "account", "create", ADDRESS], input="court\n")
+    assert result.exit_code == 1
+    assert "12 caractères" in " ".join(result.output.split())
+    assert not mock_api.calls
+
+
+def test_password_reset_also_enforces_the_floor(runner, mock_api) -> None:
+    _mock_account_list(mock_api)
+    result = runner.invoke(
+        app, ["email", "account", "password", ADDRESS], input="court\n"
+    )
+    assert result.exit_code == 1
+    assert not any(call.request.method == "POST" for call in mock_api.calls)

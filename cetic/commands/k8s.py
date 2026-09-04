@@ -318,34 +318,47 @@ def vnet_egress_state(vnets: list[dict], vnet_id: str) -> bool | None:
     return None
 
 
-def _warn_if_isolated(vpc_id: str, vnet_id: str, *, wants_public_ip: bool) -> None:
-    """Rappelle qu'un réseau isolé n'admet aucune IP publique — sans rien refuser.
+def _guard_isolated_vnet(vpc_id: str, vnet_id: str, *, wants_public_ip: bool) -> None:
+    """Réseau isolé : rappel toujours, refus quand une IP publique est demandée.
 
     Un cluster se crée parfaitement dans un réseau sans sortie internet (images
-    préchargées dans le template, relais DNS interne) : le CLI n'écarte donc
-    aucun VNet. Ce qui doit être dit, c'est ce que le réseau change — l'API
-    refuse l'attache d'une IP publique (422), et c'est la seule garde en place.
+    préchargées dans le template, relais DNS interne) : le CLI n'écarte aucun
+    VNet, c'est tout l'objet de l'issue #48.
 
-    Best-effort : un échec de lecture ne bloque pas la création. D'où un
-    `except` large — une panne réseau (`httpx`) n'est pas une `APIError`, et
-    aucune des deux ne doit empêcher de créer un cluster pour un simple rappel.
+    ⚠️ **Le garde `snat` de la plateforme est sur `attach-ip`, PAS sur la
+    création.** `POST /v1/k8s/clusters` valide propriété, région et statut de
+    l'IP fournie, puis la passe à `ALLOCATED` — sans jamais regarder le `snat`
+    du VNet (l'unique contrôle vit dans `k8s_clusters.attach_public_ip`).
+    Annoncer « seront refusés » puis afficher « ✓ Cluster créé » était donc
+    faux, et laissait une IP publique réservée — donc facturée — sur un cluster
+    qui ne pourra jamais la porter. On refuse ici plutôt que d'annoncer un
+    refus qui n'aura pas lieu : le coût pour l'utilisateur est de retirer un
+    drapeau, celui de l'inverse est une IP immobilisée en silence.
+
+    Le refus n'a lieu que sur un `snat=false` CONSTATÉ. Lecture inaccessible ou
+    VNet absent de la liste → aucun blocage : un `except` large parce qu'une
+    panne réseau (`httpx`) n'est pas une `APIError`, et qu'aucune des deux ne
+    doit empêcher de créer un cluster.
     """
     try:
         vnets = client.get(f"/v1/vpcs/{vpc_id}/vnets")
-    except Exception:  # noqa: BLE001 — rappel informatif, jamais bloquant
+    except Exception:  # noqa: BLE001 — lecture de confort, jamais bloquante
         return
     if vnet_egress_state(vnets, vnet_id) is not False:
         return
     rprint(
         "[yellow]⚠[/yellow] Ce réseau est isolé (aucune sortie internet) : "
         "le cluster s'y crée normalement, mais aucune IP publique ne pourra "
-        "lui être attachée."
+        "lui être attachée (l'attache exige un réseau avec sortie internet)."
     )
     if wants_public_ip:
         rprint(
-            "[yellow]--ingress-ip / --apiserver-ip seront refusés sur un réseau "
-            "isolé.[/yellow]"
+            "[red]--ingress-ip / --apiserver-ip sont refusés ici : la création "
+            "réserverait l'IP sans que le cluster puisse jamais la porter.[/red]\n"
+            "[dim]Retirez le drapeau, ou visez un réseau avec sortie internet "
+            "(cetic vpc vnet list <VPC>, colonne « Sortie »).[/dim]"
         )
+        raise typer.Exit(1)
 
 
 def _resolve_os_template_key(
@@ -475,8 +488,9 @@ def create(
         _validate_k8s_version(pool_version)
 
     # Un VNet sans sortie internet est accepté (rien ne le filtre ici) ; on dit
-    # simplement ce qu'il implique avant de lancer un provisioning de 5-15 min.
-    _warn_if_isolated(
+    # ce qu'il implique avant de lancer un provisioning de 5-15 min, et on
+    # refuse la seule combinaison que la plateforme laisse passer en silence.
+    _guard_isolated_vnet(
         vpc_id, vnet_id, wants_public_ip=bool(ingress_ip_id or apiserver_ip_id)
     )
 

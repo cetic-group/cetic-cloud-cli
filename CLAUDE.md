@@ -93,10 +93,31 @@ c'est le tag poussé qui l'écrit dans les sources au build)*
   (`Sortie internet` / `Réseau isolé`, libellés de la console) à la place de la
   colonne `SNAT` (jargon) — le booléen `snat` reste brut en JSON/YAML, `egress`
   porte le libellé. `k8s create` **n'écartait aucun VNet** (aucun filtre à
-  retirer côté CLI) mais rappelle désormais, avant un provisioning de 5-15 min,
-  qu'un réseau isolé n'admettra aucune IP publique (garde 422 côté API,
-  inchangée) ; lecture best-effort des VNets du VPC, jamais bloquante.
-  Tests : +80 (`test_dns.py` 38, `test_email.py` 34, +8 sur k8s/vpc).
+  retirer côté CLI) et rappelle désormais, avant un provisioning de 5-15 min,
+  qu'un réseau isolé n'admettra aucune IP publique ; lecture best-effort des
+  VNets du VPC, jamais bloquante.
+  **Suites de revue** (4 défauts réels, tous vérifiés dans le code amont) :
+  **(a)** le CLI ajoutait « réessayer n'y changera rien » sur tout 503 alors que
+  les **deux seuls** 503 du domaine DNS demandent de réessayer
+  (`powerdns.py`, `dns_zones.py`) — la ligne venait du tableau d'erreurs de
+  `DNS_CONTRACT.md`, **périmé sur ce point depuis #1396**. Glose retirée, et le
+  test qui la verrouillait remplacé par son inverse ; sur `zone verify`, le
+  client qui renonçait perdait sa zone (7 j après CRÉATION). **(b)** `k8s create`
+  annonçait un refus qui n'existe pas : le garde `snat` de la plateforme est
+  dans `attach_public_ip`, **pas** à la création — qui réserve l'IP en
+  `ALLOCATED` sans rien vérifier. Le CLI **refuse** donc lui-même
+  `--ingress-ip`/`--apiserver-ip` sur un `snat=false` constaté, plutôt que
+  d'immobiliser une IP facturée sur un cluster qui ne peut pas la porter.
+  **(c)** les listes `email` rendaient des libellés d'affichage en JSON
+  (`"oui"`, `"5.0 Go"`, destinations concaténées) → charge de l'API telle quelle
+  en JSON/YAML, même correction que `vpc vnet list` ; `dns zone list` alignée.
+  **(d)** `domain show` rendait le MX sans `hostname` — le champ existe
+  précisément pour éviter que la priorité soit collée dans le champ « serveur »
+  (plus aucun courrier, sans message). Plus deux points courts : plancher de mot
+  de passe vérifié localement (sinon double saisie avant 422) et `rstrip("\r\n")`
+  (une entrée CRLF créait une boîte au secret intypable).
+  Tests : +93 (`test_dns.py` 40, `test_email.py` 43, +10 sur k8s/vpc) —
+  584 au total, dont 6 mutations rejouées après les suites de revue.
 
 - `v0.34.7` — fix : **refresh automatique du JWT expiré** (le bug que le
   docstring du client promettait depuis toujours sans l'implémenter). Le JWT

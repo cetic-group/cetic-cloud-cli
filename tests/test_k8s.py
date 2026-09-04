@@ -875,7 +875,14 @@ def test_create_on_isolated_vnet_warns_but_creates(runner, mock_api):
     assert "IP publique" in result.stdout
 
 
-def test_create_on_isolated_vnet_flags_requested_public_ip(runner, mock_api):
+def test_create_on_isolated_vnet_refuses_a_requested_public_ip(runner, mock_api):
+    """`POST /v1/k8s/clusters` ne regarde PAS `snat` — il réserve l'IP quand même.
+
+    L'unique garde `snat` de la plateforme est dans `attach_public_ip`. Créer
+    avec `--ingress-ip` sur un réseau isolé passait donc : l'IP partait en
+    `ALLOCATED`, facturée, sur un cluster incapable de la porter. Le CLI refuse
+    plutôt que d'annoncer un refus qui n'aura pas lieu.
+    """
     mock_api.get(f"/v1/vpcs/{VPC_ID}/vnets").mock(
         return_value=httpx.Response(200, json=_vnets(snat=False))
     )
@@ -883,8 +890,34 @@ def test_create_on_isolated_vnet_flags_requested_public_ip(runner, mock_api):
         return_value=httpx.Response(201, json=_cluster(status="Provisioning"))
     )
     result = runner.invoke(app, _create_args("--ingress-ip", CLUSTER_ID))
+    assert result.exit_code == 1
+    assert "refusés" in result.stdout
+    # Rien n'est créé, donc aucune IP n'est réservée.
+    assert not any(call.request.method == "POST" for call in mock_api.calls)
+
+
+def test_create_on_connected_vnet_accepts_a_public_ip(runner, mock_api):
+    """Le refus ne vaut QUE sur un réseau isolé constaté."""
+    mock_api.get(f"/v1/vpcs/{VPC_ID}/vnets").mock(
+        return_value=httpx.Response(200, json=_vnets(snat=True))
+    )
+    mock_api.post("/v1/k8s/clusters").mock(
+        return_value=httpx.Response(201, json=_cluster(status="Provisioning"))
+    )
+    result = runner.invoke(app, _create_args("--ingress-ip", CLUSTER_ID))
     assert result.exit_code == 0, result.stdout
-    assert "--ingress-ip" in result.stdout
+
+
+def test_create_with_public_ip_when_vnet_state_is_unknown_proceeds(runner, mock_api):
+    """VNet illisible → aucun blocage : l'inconnu ne vaut pas « isolé »."""
+    mock_api.get(f"/v1/vpcs/{VPC_ID}/vnets").mock(
+        return_value=httpx.Response(403, json={"detail": "interdit"})
+    )
+    mock_api.post("/v1/k8s/clusters").mock(
+        return_value=httpx.Response(201, json=_cluster(status="Provisioning"))
+    )
+    result = runner.invoke(app, _create_args("--ingress-ip", CLUSTER_ID))
+    assert result.exit_code == 0, result.stdout
 
 
 def test_create_on_connected_vnet_stays_silent(runner, mock_api):

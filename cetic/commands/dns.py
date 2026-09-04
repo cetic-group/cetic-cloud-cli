@@ -116,16 +116,23 @@ def _fmt_values(values: Any) -> str:
 
 
 def _bail(e: client.APIError) -> typer.Exit:
-    """Affiche l'erreur API telle qu'elle vient, et n'y ajoute que l'utile.
+    """Affiche l'erreur API telle qu'elle vient. Rien de plus, et c'est voulu.
 
-    Les messages de l'API disent déjà quoi faire (autre nom, niveau effectif du
-    réseau, enregistrements à retirer d'abord). Le seul cas qu'ils ne peuvent
-    pas dire, c'est qu'il est inutile de réessayer : un 503 signifie que le
-    service DNS n'est pas déployé sur cette plateforme.
+    Les messages de l'API portent déjà le geste à faire : autre nom, niveau
+    effectif du réseau, enregistrements à retirer d'abord.
+
+    ⚠️ **Ne pas ré-ajouter de glose sur le 503.** Une version antérieure de ce
+    fichier ajoutait « le service DNS n'est pas déployé ici : réessayer n'y
+    changera rien » — la ligne du tableau d'erreurs de `DNS_CONTRACT.md`, qui
+    n'est plus vraie du code. Les deux seuls 503 que le domaine DNS émet disent
+    l'inverse et demandent de réessayer : `powerdns.py` (« Votre serveur DNS
+    n'est pas encore prêt ») et `dns_zones.py` (résolveur de vérification en
+    panne, « votre enregistrement TXT n'est pas en cause »). Le client lisait
+    donc deux phrases contradictoires — et sur `zone verify`, celui qui renonce
+    perd sa zone : `_expire_unverified_zones` la supprime 7 jours après sa
+    CRÉATION, pas après la dernière tentative.
     """
     rprint(f"[red]Erreur : {e.detail}[/red]")
-    if e.status_code == 503:
-        rprint("[dim]Le service DNS n'est pas déployé ici : réessayer n'y changera rien.[/dim]")
     return typer.Exit(1)
 
 
@@ -200,6 +207,14 @@ def list_zones() -> None:
         items = client.get(ZONES_PATH)
     except client.APIError as e:
         raise _bail(e) from e
+
+    if config.get_output() in ("json", "yaml"):
+        # Charge de l'API telle quelle : `dnssec_enabled`, `error_message` et
+        # `created_at` ne sont pas dans la table, ils ne doivent pas disparaître
+        # de la sortie machine pour autant.
+        render_list(items, title="", columns=[])
+        return
+
     rows = [
         {
             "id": z.get("id"),
@@ -466,7 +481,11 @@ def list_records(zone: str = typer.Argument(..., help="UUID ou nom de la zone"))
 @record_app.command(name="set")
 def set_record(
     zone: str = typer.Argument(..., help="UUID ou nom de la zone"),
-    name: str = typer.Argument(..., help="Nom relatif (www), absolu, ou @ pour l'apex"),
+    name: str = typer.Argument(
+        ...,
+        help="Nom relatif (www), absolu, ou @ pour l'apex "
+             "(253 caractères au plus, nom de la zone compris)",
+    ),
     record_type: str = typer.Argument(..., help=f"Type : {', '.join(RECORD_TYPES)}"),
     values: list[str] = typer.Argument(
         ...,
@@ -528,7 +547,11 @@ def set_record(
 @record_app.command(name="delete")
 def delete_record(
     zone: str = typer.Argument(..., help="UUID ou nom de la zone"),
-    name: str = typer.Argument(..., help="Nom relatif (www), absolu, ou @ pour l'apex"),
+    name: str = typer.Argument(
+        ...,
+        help="Nom relatif (www), absolu, ou @ pour l'apex "
+             "(253 caractères au plus, nom de la zone compris)",
+    ),
     record_type: str = typer.Argument(..., help=f"Type : {', '.join(RECORD_TYPES)}"),
     yes: bool = typer.Option(False, "--yes", "-y"),
 ) -> None:

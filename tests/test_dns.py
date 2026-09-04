@@ -80,6 +80,11 @@ def _rrset(
     }
 
 
+def _flat(output: str) -> str:
+    """Texte de sortie sans les retours à la ligne posés par Rich (largeur 80)."""
+    return " ".join(output.split())
+
+
 def _mock_zone(mock_api, zone: dict[str, Any] | None = None) -> None:
     """Résolution d'une zone par UUID (GET direct de la fiche)."""
     mock_api.get(f"/v1/dns/zones/{ZONE_ID}").mock(
@@ -235,13 +240,36 @@ def test_zone_create_public_domain_prints_the_ownership_record(runner, mock_api)
     assert "zone verify" in result.output
 
 
-def test_service_unavailable_says_retrying_is_pointless(runner, mock_api) -> None:
+def test_503_is_relayed_verbatim_and_never_contradicted(runner, mock_api) -> None:
+    """Les deux 503 du domaine DNS demandent de RÉESSAYER — ne rien ajouter.
+
+    `powerdns.py` (« Votre serveur DNS n'est pas encore prêt ») et `dns_zones.py`
+    (résolveur de vérification en panne) sont les seuls émetteurs. Une glose
+    « réessayer n'y changera rien » les contredirait mot pour mot, et sur
+    `zone verify` le client qui renonce perd sa zone au bout de 7 jours.
+    """
     mock_api.get("/v1/dns/zones").mock(return_value=httpx.Response(
-        503, json={"detail": "Le service DNS n'est pas déployé sur cette plateforme."},
+        503, json={"detail": "Votre serveur DNS n'est pas encore prêt. "
+                             "Réessayez dans quelques instants."},
     ))
     result = runner.invoke(app, ["dns", "zone", "list"])
     assert result.exit_code == 1
-    assert "réessayer n'y changera rien" in result.output.lower()
+    # Rich replie les lignes longues : on compare sur le texte normalisé.
+    assert "Réessayez dans quelques instants" in _flat(result.output)
+    assert "changera rien" not in result.output
+
+
+def test_503_on_verify_keeps_the_platform_message(runner, mock_api) -> None:
+    _mock_zone(mock_api, _zone(status="pending_verification", name="exemple.com"))
+    mock_api.post(f"/v1/dns/zones/{ZONE_ID}/verify").mock(return_value=httpx.Response(
+        503, json={"detail": "La vérification est momentanément indisponible côté "
+                             "plateforme. Réessayez dans quelques minutes : votre "
+                             "enregistrement TXT n'est pas en cause."},
+    ))
+    result = runner.invoke(app, ["dns", "zone", "verify", ZONE_ID])
+    assert result.exit_code == 1
+    assert "votre enregistrement TXT n'est pas en cause" in _flat(result.output)
+    assert "changera rien" not in result.output
 
 
 def test_zone_get_table_shows_resolver_per_subnet_and_the_guest_caveat(
@@ -265,6 +293,18 @@ def test_zone_get_without_resolver_says_so(runner, mock_api) -> None:
     result = runner.invoke(app, ["dns", "zone", "get", ZONE_ID])
     assert result.exit_code == 0, result.output
     assert "pas encore debout" in result.output
+
+
+def test_zone_list_json_is_the_raw_payload(runner, monkeypatch, mock_api) -> None:
+    """Les champs absents de la table ne disparaissent pas de la sortie machine."""
+    monkeypatch.setenv("CCP_OUTPUT", "json")
+    mock_api.get("/v1/dns/zones").mock(return_value=httpx.Response(200, json=[_zone()]))
+    result = runner.invoke(app, ["dns", "zone", "list"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.stdout)
+    assert data[0]["dnssec_enabled"] is False
+    assert data[0]["created_at"] == "2026-09-01T10:00:00Z"
+    assert data[0]["resolver"]["ns_hostname"] == "ns1.dns.cloud.cetic-group.com"
 
 
 def test_zone_get_json_is_the_raw_payload(runner, monkeypatch, mock_api) -> None:

@@ -110,17 +110,38 @@ def read_password(label: str) -> str:
     (script, tube) → première ligne lue telle quelle : c'est le seul moyen
     d'automatiser sans écrire le secret dans l'historique du shell ni dans la
     liste des processus.
+
+    ⚠️ `rstrip("\\r\\n")` et non `rstrip("\\n")` : un fichier de mots de passe
+    écrit sous Windows (ou lu par le binaire PyInstaller Windows) porte des fins
+    de ligne CRLF. Le `\\r` conservé partait dans le mot de passe, la boîte était
+    créée avec un secret intypable, et l'échec ne ressortait que plus tard en
+    erreur d'authentification IMAP.
+
+    La longueur est vérifiée ICI, avant tout appel : sur un terminal, le plancher
+    de l'API ferait saisir DEUX fois (confirmation) un mot de passe trop court
+    avant de rendre son 422. L'API reste l'autorité — son refus est relayé tel
+    quel si elle est plus stricte que ce plancher.
     """
     if not sys.stdin.isatty():
-        password = sys.stdin.readline().rstrip("\n")
+        password = sys.stdin.readline().rstrip("\r\n")
         if not password:
             rprint(
                 "[red]Aucun mot de passe reçu sur l'entrée standard.[/red]\n"
                 "[dim]Exemple : printf '%s' \"$MDP\" | cetic email account create …[/dim]"
             )
             raise typer.Exit(1)
-        return password
-    return typer.prompt(label, hide_input=True, confirmation_prompt=True)
+    else:
+        password = typer.prompt(label, hide_input=True, confirmation_prompt=True)
+
+    if len(password) < PASSWORD_MIN_LENGTH:
+        rprint(
+            f"[red]Mot de passe trop court : {PASSWORD_MIN_LENGTH} caractères "
+            "minimum.[/red]\n"
+            "[dim]Une boîte s'éprouve directement sur IMAP/SMTP, exposés à "
+            "Internet et sans limitation applicative.[/dim]"
+        )
+        raise typer.Exit(1)
+    return password
 
 
 def _find_by(path: str, field: str, value: str, *, what: str) -> str:
@@ -151,6 +172,21 @@ def _alias_id(ref: str) -> str:
     return _find_by(ALIASES_PATH, "address", ref, what="alias")
 
 
+def _raw_if_structured(items: list[dict[str, Any]]) -> bool:
+    """Sortie JSON/YAML → la charge de l'API telle quelle, sans rien formater.
+
+    Une liste rendue en JSON sert à être relue par un programme : `jq
+    '.[].destinations[]'` a besoin du TABLEAU, pas de « a@ex.com, b@ex.com », et
+    une jauge a besoin de `quota_bytes`, pas de « 5.0 Go ». Les libellés lisibles
+    n'ont de sens qu'en table — et un champ que la table n'affiche pas ne doit
+    pas disparaître de la sortie machine pour autant.
+    """
+    if config.get_output() not in ("json", "yaml"):
+        return False
+    render_list(items, title="", columns=[])
+    return True
+
+
 def _render_dns_records(domain: dict[str, Any]) -> None:
     """Affiche les enregistrements DNS attendus, un par ligne, copiables tels quels.
 
@@ -171,6 +207,14 @@ def _render_dns_records(domain: dict[str, Any]) -> None:
             "type": r.get("type"),
             "name": r.get("name"),
             "value": r.get("value"),
+            # `hostname` + `priority` vont par PAIRE, et c'est le couple que
+            # réclament les interfaces DNS (IONOS, OVH, Cloudflare, Gandi…) pour
+            # un MX. Rendre la seule `value` — « 10 mail.exemple.com. » — conduit
+            # à coller la priorité dans le champ « serveur » : l'enregistrement
+            # devient invalide et plus aucun courrier n'arrive, sans que rien ne
+            # le signale. L'API sert le découpage déjà fait ; l'ignorer
+            # reproduisait exactement la panne muette qu'il existe pour éviter.
+            "hostname": r.get("hostname") or "—",
             "priority": r.get("priority") if r.get("priority") is not None else "—",
             "status": r.get("status"),
             "purpose": r.get("purpose"),
@@ -184,6 +228,7 @@ def _render_dns_records(domain: dict[str, Any]) -> None:
             ("type", "Type"),
             ("name", "Nom"),
             ("value", "Valeur"),
+            ("hostname", "Serveur (MX)"),
             ("priority", "Priorité"),
             ("status", "État"),
             ("purpose", "À quoi ça sert"),
@@ -244,6 +289,9 @@ def list_domains() -> None:
         items = client.get(DOMAINS_PATH)
     except client.APIError as e:
         raise _bail(e) from e
+
+    if _raw_if_structured(items):
+        return
     rows = [
         {
             "id": d.get("id"),
@@ -390,6 +438,9 @@ def list_accounts(
         items = client.get(ACCOUNTS_PATH, params=params or None)
     except client.APIError as e:
         raise _bail(e) from e
+
+    if _raw_if_structured(items):
+        return
     rows = [
         {
             "id": a.get("id"),
@@ -626,6 +677,9 @@ def list_tokens(address: str = typer.Argument(..., help="UUID ou adresse")) -> N
         items = client.get(f"{ACCOUNTS_PATH}/{account_id}/tokens")
     except client.APIError as e:
         raise _bail(e) from e
+
+    if _raw_if_structured(items):
+        return
     rows = [
         {
             "id": t.get("id"),
@@ -721,6 +775,9 @@ def list_aliases(
         items = client.get(ALIASES_PATH, params=params or None)
     except client.APIError as e:
         raise _bail(e) from e
+
+    if _raw_if_structured(items):
+        return
     rows = [
         {
             "id": a.get("id"),
