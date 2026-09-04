@@ -39,6 +39,7 @@ from cetic.commands import (
     container,
     db,
     dns,
+    email,
     iam,
     ip,
     k8s,
@@ -110,6 +111,7 @@ app.add_typer(tag.app, name="tag")
 app.add_typer(bastion.app, name="bastion")
 app.add_typer(vpn.app, name="vpn")
 app.add_typer(dns.app, name="dns")
+app.add_typer(email.app, name="email")
 
 # Commandes de premier niveau (PAS sous une sous-app) : accès et transfert
 # sécurisés vers une cible privée via le bastion.
