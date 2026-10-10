@@ -116,6 +116,13 @@ limit, IP allow/deny, WAF, CORS, basic auth) — tout en un seul produit.
    cetic appgw listener add web-edge --hostname api.example.com \
      --acme-challenge dns01 --acme-dns-provider cloudflare \
      --acme-dns-credential api_token=xxx
+
+   # Votre propre certificat (vérifié à l'envoi : clé, validité, nom couvert).
+   # Il ne se renouvelle pas tout seul : remplacez-le avec `rotate-cert`.
+   cetic appgw listener add web-edge --hostname api.example.com \
+     --acme-challenge custom --cert-file fullchain.pem --key-file privkey.pem
+   cetic appgw listener rotate-cert web-edge --listener-id <listener-uuid> \
+     --cert-file fullchain.pem --key-file privkey.pem
    ```
 
 3. **Créer un target group + ajouter des backends** (containers, VMs, ou IPs) :
@@ -126,6 +133,10 @@ limit, IP allow/deny, WAF, CORS, basic auth) — tout en un seul produit.
      --container <container-uuid> --port 8080
    cetic appgw tg member add web-edge --tg-id <tg-uuid> \
      --vm <vm-uuid> --port 3000 --weight 200
+   # Scale set : UNE cible dynamique, ses nouvelles instances reçoivent le trafic
+   cetic appgw tg member add web-edge --tg-id <tg-uuid> \
+     --vm-scale-set <vmss-uuid> --port 8080
+   cetic appgw tg member list web-edge --tg-id <tg-uuid>
    ```
 
 4. **Créer une route** (host implicite via listener + path + policies) :
@@ -150,6 +161,13 @@ limit, IP allow/deny, WAF, CORS, basic auth) — tout en un seul produit.
 
    ```bash
    cetic appgw health web-edge
+   ```
+
+6. **Page d'indisponibilité** (servie quand aucun backend ne répond, 7 Kio max) :
+
+   ```bash
+   cetic appgw update web-edge --error-page-file maintenance.html
+   cetic appgw update web-edge --reset-error-page     # page par défaut
    ```
 
 Plans disponibles : `small` (50 routes, 100 req/s), `medium` (200 routes, 1000
@@ -479,6 +497,8 @@ cetic vpc-peering delete <peering-uuid>
 cetic ip list
 cetic ip allocate --region RNN --label passerelle-prod --description "IP fixe de prod"
 cetic ip allocate --region RNN --quantity 3 --label ip-fixe-api   # 3 IPs d'un coup
+cetic ip types --region RNN                                    # types d'IP proposés (edge, firewall, nat)
+cetic ip allocate --region RNN --type firewall                 # choisir le type (sinon : 1er type proposé avec des IPs libres)
 cetic ip update <ip-uuid> --label nouveau-nom
 
 # Load Balancers L4 avec certificat Let's Encrypt (depuis v0.19.0)
@@ -488,6 +508,12 @@ cetic lb create --name web-lb --region RNN --vnet <vnet-uuid> \
   --backend container:<ct-uuid>:8080
 cetic lb acme-providers                                      # catalogue DNS-01
 cetic lb backend add <lb-uuid> <listener-uuid> --container <ct-uuid> --port 8080
+cetic lb backend add <lb-uuid> <listener-uuid> --vm-scale-set <vmss-uuid> --port 8080  # cible dynamique
+cetic lb listener add <lb-uuid> --protocol https --port 443 --domain www.example.com \
+  --acme-challenge custom --cert-file fullchain.pem --key-file privkey.pem   # votre certificat
+cetic lb listener rotate-cert <lb-uuid> <listener-uuid> --cert-file fullchain.pem --key-file privkey.pem
+cetic lb update <lb-uuid> --error-page-file maintenance.html  # page d'indisponibilité (--reset-error-page)
+cetic lb health <lb-uuid>                                    # instances en service par scale set
 
 # Application Gateways (L7 HTTP/HTTPS routing, depuis v0.11.0)
 cetic appgw create --name web-edge --region RNN --plan small --vpc prod --vnet web-tier

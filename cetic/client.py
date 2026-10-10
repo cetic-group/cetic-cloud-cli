@@ -141,6 +141,17 @@ def _normalize_detail(detail: Any) -> str:
         if msg:
             return str(msg)
         return json.dumps(detail, ensure_ascii=False)
+    if isinstance(detail, list) and detail and all(isinstance(d, dict) for d in detail):
+        # 422 de validation FastAPI : [{"loc": [...], "msg": "...", ...}, ...].
+        # Le rendu brut de la liste n'est pas un message : on garde, pour chaque
+        # erreur, le champ en cause et son message.
+        parts = []
+        for d in detail:
+            msg = str(d.get("msg") or d.get("message") or d)
+            msg = msg.removeprefix("Value error, ")
+            loc = [str(x) for x in d.get("loc") or [] if x not in ("body", "query", "path")]
+            parts.append(f"{loc[-1]} : {msg}" if loc else msg)
+        return " ; ".join(parts)
     return detail if isinstance(detail, str) else str(detail)
 
 

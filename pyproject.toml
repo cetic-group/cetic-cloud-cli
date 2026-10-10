@@ -15,6 +15,8 @@ dependencies = [
     "keyring>=25.0.0",
     "platformdirs>=4.2.0",
     "cryptography>=42.0.0",
+    # `-o yaml` (`_render.py`) : typer[all] ne l'apporte plus depuis typer 0.27.
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]

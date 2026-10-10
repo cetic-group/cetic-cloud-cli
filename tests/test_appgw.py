@@ -1678,17 +1678,19 @@ def test_appgw_app_command_count():
         return {c.name or c.callback.__name__.replace("_", "-") for c in commands}
 
     top_level = _names(appgw.app.registered_commands)
-    # list, get, create, delete, attach-ip, detach-ip, health, acme-providers, plans
-    assert len(top_level) == 9, top_level
+    # list, get, create, update, delete, attach-ip, detach-ip, health,
+    # acme-providers, plans — `update` (#53 : page d'indisponibilité)
+    assert len(top_level) == 10, top_level
     for expected in (
-        "list", "get", "create", "delete",
+        "list", "get", "create", "update", "delete",
         "attach-ip", "detach-ip", "health", "acme-providers", "plans",
     ):
         assert expected in top_level, f"{expected} manquant dans {top_level}"
 
     listener_cmds = _names(appgw.listener_app.registered_commands)
-    assert len(listener_cmds) == 5, listener_cmds  # add, get, list, delete, renew-cert
-    for expected in ("add", "get", "list", "delete", "renew-cert"):
+    # add, get, list, delete, renew-cert, rotate-cert (#53 : certificat client)
+    assert len(listener_cmds) == 6, listener_cmds
+    for expected in ("add", "get", "list", "delete", "renew-cert", "rotate-cert"):
         assert expected in listener_cmds, f"listener {expected} manquant"
 
     tg_cmds = _names(appgw.tg_app.registered_commands)
@@ -1697,7 +1699,7 @@ def test_appgw_app_command_count():
         assert expected in tg_cmds, f"tg {expected} manquant"
 
     tg_member_cmds = _names(appgw.tg_member_app.registered_commands)
-    assert len(tg_member_cmds) == 2, tg_member_cmds  # add, remove
+    assert len(tg_member_cmds) == 3, tg_member_cmds  # add, list (#53), remove
 
     route_cmds = _names(appgw.route_app.registered_commands)
     assert len(route_cmds) == 5, route_cmds  # create, get, list, update, delete
@@ -1711,7 +1713,7 @@ def test_appgw_app_command_count():
         + len(tg_member_cmds)
         + len(route_cmds)
     )
-    assert total == 25  # +1 : `plans` (v0.23.0)
+    assert total == 28  # +1 : `plans` (v0.23.0) ; +3 : update, rotate-cert, member list (#53)
 
 
 def test_format_api_error_messages():
