@@ -18,19 +18,30 @@ Architecture interne (transparente côté tenant) :
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import typer
 from rich import print as rprint
 
-from cetic import client
+from cetic import client, config
 from cetic._resolve import resolve_id
 from cetic.commands._catalog import render_compute_plans
+from cetic.commands._gateway import (
+    cert_expiry_label,
+    network_label,
+    read_cert_pair,
+    read_error_page,
+    table_view,
+    target_label,
+)
 from cetic.commands._render import render_list, render_one
 
 APPGW_PATH = "/v1/app-gateways"
 
-_ACME_CHALLENGES = ("http01", "dns01")
+# `custom` = certificat fourni par le client (#1579), remplacé avec
+# `cetic appgw listener rotate-cert` (il ne se renouvelle pas tout seul).
+_ACME_CHALLENGES = ("http01", "dns01", "custom")
 
 
 def _parse_credentials(entries: list[str]) -> dict[str, str]:
@@ -185,7 +196,54 @@ def get(
         gw = client.get(f"{APPGW_PATH}/{gid}")
     except client.APIError as e:
         raise _bail(e) from e
-    render_one(gw, title=f"Application Gateway {gw.get('name', gid)}")
+    if config.get_output() != "table":
+        # JSON/YAML : la ressource telle que l'API la renvoie (page HTML comprise).
+        render_one(gw, title=f"Application Gateway {gw.get('name', gid)}")
+        return
+    view = table_view(gw)
+    view["network"] = network_label(gw)
+    render_one(view, title=f"Application Gateway {gw.get('name', gid)}")
+
+
+@app.command()
+def update(
+    id_or_name: str = typer.Argument(..., metavar="ID|NAME"),
+    error_page_file: Path | None = typer.Option(  # noqa: B008
+        None, "--error-page-file", exists=True, dir_okay=False,
+        help="Page HTML d'indisponibilité, servie quand aucun backend ne répond "
+             "(7 Kio max, UTF-8).",
+    ),
+    reset_error_page: bool = typer.Option(
+        False, "--reset-error-page", help="Rétablit la page d'indisponibilité par défaut.",
+    ),
+) -> None:
+    """Modifie la page d'indisponibilité d'une Application Gateway.
+
+    Exemples :
+      cetic appgw update web-edge --error-page-file maintenance.html
+      cetic appgw update web-edge --reset-error-page
+    """
+    if error_page_file and reset_error_page:
+        rprint("[red]Erreur : --error-page-file et --reset-error-page s'excluent.[/red]")
+        raise typer.Exit(1)
+    if error_page_file:
+        try:
+            body: dict[str, Any] = {"custom_error_page_html": read_error_page(error_page_file)}
+        except ValueError as e:
+            rprint(f"[red]Erreur : {e}[/red]")
+            raise typer.Exit(1)
+    elif reset_error_page:
+        # Présence du champ à null = retour à la page par défaut.
+        body = {"custom_error_page_html": None}
+    else:
+        rprint("[red]Erreur : préciser --error-page-file ou --reset-error-page.[/red]")
+        raise typer.Exit(1)
+    gid = _resolve_appgw(id_or_name)
+    try:
+        client.patch(f"{APPGW_PATH}/{gid}", json=body)
+    except client.APIError as e:
+        raise _bail(e) from e
+    rprint("[green]✓[/green] Application Gateway mise à jour.")
 
 
 @app.command()
@@ -354,9 +412,18 @@ def listener_add(
     acme_challenge: str | None = typer.Option(
         None, "--acme-challenge",
         help=(
-            "Challenge ACME pour émettre un certificat Let's Encrypt : "
-            "http01 ou dns01. Sans cette option, aucun certificat n'est émis."
+            "Certificat : http01 ou dns01 (Let's Encrypt), ou custom (votre "
+            "certificat, avec --cert-file et --key-file). Sans cette option, "
+            "aucun certificat n'est émis."
         ),
+    ),
+    cert_file: Path | None = typer.Option(  # noqa: B008
+        None, "--cert-file", exists=True, dir_okay=False,
+        help="Certificat PEM (+ chaîne) pour --acme-challenge custom.",
+    ),
+    key_file: Path | None = typer.Option(  # noqa: B008
+        None, "--key-file", exists=True, dir_okay=False,
+        help="Clé privée PEM NON chiffrée pour --acme-challenge custom.",
     ),
     acme_dns_provider: str | None = typer.Option(
         None, "--acme-dns-provider",
@@ -389,10 +456,18 @@ def listener_add(
       cetic appgw listener add web-edge --hostname api.example.com \\
         --acme-challenge dns01 \\
         --acme-dns-provider cloudflare --acme-dns-credential api_token=xxx
+
+      # Votre propre certificat (vérifié à l'envoi : clé, validité, nom couvert)
+      cetic appgw listener add web-edge --hostname api.example.com \\
+        --acme-challenge custom --cert-file fullchain.pem --key-file privkey.pem
     """
     acme_dns_credential = acme_dns_credential or []
 
     body: dict[str, Any] = {"hostname": hostname}
+    if (cert_file or key_file) and acme_challenge != "custom":
+        rprint("[red]Erreur : --cert-file/--key-file requièrent "
+               "--acme-challenge custom.[/red]")
+        raise typer.Exit(1)
 
     if acme_challenge is not None:
         if acme_challenge not in _ACME_CHALLENGES:
@@ -402,6 +477,12 @@ def listener_add(
             )
             raise typer.Exit(1)
         body["acme_challenge"] = acme_challenge
+        if acme_challenge == "custom":
+            try:
+                body.update(read_cert_pair(cert_file, key_file))
+            except ValueError as e:
+                rprint(f"[red]Erreur : {e}[/red]")
+                raise typer.Exit(1)
         if acme_challenge == "dns01":
             if not acme_dns_provider:
                 rprint(
@@ -430,7 +511,11 @@ def listener_add(
         raise _bail(e) from e
 
     name = listener.get("hostname", hostname)
-    if acme_challenge is not None:
+    if acme_challenge == "custom":
+        expires = cert_expiry_label(listener.get("tls_cert_not_after"))
+        rprint(f"[green]✓[/green] Listener ajouté : [bold]{name}[/bold] "
+               f"(votre certificat, expire le {expires})")
+    elif acme_challenge is not None:
         rprint(
             f"[green]✓[/green] Listener ajouté : [bold]{name}[/bold] "
             f"(émission certificat en cours, statut: "
@@ -460,6 +545,7 @@ def listener_list(
             "acme_challenge": item.get("acme_challenge") or "—",
             "acme_status": item.get("acme_status", "—"),
             "last_renewal": (item.get("acme_last_renewal_at") or "—")[:10],
+            "expires": cert_expiry_label(item.get("tls_cert_not_after")),
         }
         for item in items
     ]
@@ -472,6 +558,7 @@ def listener_list(
             ("acme_challenge", "Challenge"),
             ("acme_status", "Cert"),
             ("last_renewal", "Renouvelé le"),
+            ("expires", "Expire le"),
         ],
     )
 
@@ -547,8 +634,47 @@ def listener_renew_cert(
     try:
         client.post(f"{APPGW_PATH}/{gid}/listeners/{listener_id}/renew-cert")
     except client.APIError as e:
+        if e.status_code == 409:
+            rprint(f"[red]Erreur : {e.detail}[/red]")
+            rprint("[yellow]Pour remplacer votre certificat : cetic appgw listener "
+                   "rotate-cert GW --listener-id … --cert-file … --key-file …[/yellow]")
+            raise typer.Exit(1) from e
         raise _bail(e) from e
     rprint("[green]✓[/green] Renouvellement de certificat déclenché.")
+
+
+@listener_app.command(name="rotate-cert")
+def listener_rotate_cert(
+    id_or_name: str = typer.Argument(..., metavar="GW_ID|GW_NAME"),
+    listener_id: str = typer.Option(..., "--listener-id", help="UUID du listener"),
+    cert_file: Path = typer.Option(  # noqa: B008
+        ..., "--cert-file", exists=True, dir_okay=False,
+        help="Nouveau certificat PEM (+ chaîne).",
+    ),
+    key_file: Path = typer.Option(  # noqa: B008
+        ..., "--key-file", exists=True, dir_okay=False,
+        help="Clé privée PEM NON chiffrée correspondante.",
+    ),
+) -> None:
+    """Remplace le certificat d'un listener par le vôtre.
+
+    Sert à la rotation d'un certificat fourni par vous (il ne se renouvelle
+    pas tout seul), ou à remplacer un certificat Let's Encrypt par le vôtre.
+    """
+    try:
+        body = read_cert_pair(cert_file, key_file)
+    except ValueError as e:
+        rprint(f"[red]Erreur : {e}[/red]")
+        raise typer.Exit(1)
+    gid = _resolve_appgw(id_or_name)
+    try:
+        listener = client.post(
+            f"{APPGW_PATH}/{gid}/listeners/{listener_id}/renew-cert", json=body,
+        )
+    except client.APIError as e:
+        raise _bail(e) from e
+    expires = cert_expiry_label((listener or {}).get("tls_cert_not_after"))
+    rprint(f"[green]✓[/green] Certificat remplacé (expire le {expires}).")
 
 
 # ---------------------------------------------------------------------------
@@ -599,7 +725,7 @@ def tg_list(
             "name": tg.get("name", "—"),
             "algorithm": tg.get("algorithm", "—"),
             "hc_path": tg.get("hc_path", "—"),
-            "members": str(tg.get("member_count", "—")),
+            "members": str(len(tg.get("members") or [])),
         }
         for tg in items
     ]
@@ -787,14 +913,24 @@ def tg_member_add(
         None, "--target-ip",
         help="IP brute dans le VNet (backend non-managé)",
     ),
+    container_scale_set: str | None = typer.Option(
+        None, "--container-scale-set",
+        help="UUID d'un scale set de containers (cible dynamique)",
+    ),
+    vm_scale_set: str | None = typer.Option(
+        None, "--vm-scale-set", help="UUID d'un scale set de VM (cible dynamique)",
+    ),
     port: int = typer.Option(..., "--port", help="Port d'écoute du backend (1-65535)"),
     weight: int = typer.Option(
         100, "--weight", help="Poids relatif (0-1000, défaut 100)"
     ),
 ) -> None:
-    """Ajoute un membre (container, VM, ou IP brute) à un target group.
+    """Ajoute un membre (container, VM, scale set ou IP brute) à un target group.
 
-    Exactement un de --container / --vm / --target-ip doit être fourni.
+    Exactement un de --container / --vm / --container-scale-set /
+    --vm-scale-set / --target-ip doit être fourni. Un scale set est UNE cible
+    dynamique : toutes ses instances en service reçoivent le trafic, y compris
+    celles ajoutées après coup.
 
     Exemples :
       # Container backend
@@ -803,14 +939,24 @@ def tg_member_add(
       # VM backend
       cetic appgw tg member add web-edge --tg-id <tg-uuid> --vm <vm-uuid> --port 3000
 
+      # Scale set de VM (les instances ajoutées plus tard sont servies aussi)
+      cetic appgw tg member add web-edge --tg-id <tg-uuid> --vm-scale-set <vmss-uuid> --port 8080
+
       # IP brute (legacy / non-managé)
       cetic appgw tg member add web-edge --tg-id <tg-uuid> --target-ip 10.0.0.5 --port 8080
     """
-    provided = sum(1 for v in (container, vm, target_ip) if v)
-    if provided != 1:
+    targets = {
+        "container_id": container,
+        "vm_instance_id": vm,
+        "target_ip": target_ip,
+        "container_scale_set_id": container_scale_set,
+        "vm_scale_set_id": vm_scale_set,
+    }
+    chosen = {k: v for k, v in targets.items() if v}
+    if len(chosen) != 1:
         rprint(
-            "[red]Erreur : fournissez exactement un de "
-            "--container, --vm, ou --target-ip.[/red]"
+            "[red]Erreur : fournissez exactement un de --container, --vm, "
+            "--container-scale-set, --vm-scale-set ou --target-ip.[/red]"
         )
         raise typer.Exit(1)
     if port < 1 or port > 65535:
@@ -820,13 +966,7 @@ def tg_member_add(
         rprint("[red]Erreur : le poids doit être compris entre 0 et 1000.[/red]")
         raise typer.Exit(1)
     gid = _resolve_appgw(id_or_name)
-    body: dict[str, Any] = {"port": port, "weight": weight}
-    if container:
-        body["container_id"] = container
-    elif vm:
-        body["vm_instance_id"] = vm
-    elif target_ip:
-        body["target_ip"] = target_ip
+    body: dict[str, Any] = {"port": port, "weight": weight, **chosen}
     try:
         member = client.post(
             f"{APPGW_PATH}/{gid}/target-groups/{tg_id}/members",
@@ -838,6 +978,36 @@ def tg_member_add(
         f"[green]✓[/green] Membre ajouté au target group : "
         f"[bold]{member.get('id', '—')}[/bold]"
     )
+
+
+@tg_member_app.command(name="list")
+def tg_member_list(
+    id_or_name: str = typer.Argument(..., metavar="GW_ID|GW_NAME"),
+    tg_id: str = typer.Option(..., "--tg-id", help="UUID du target group"),
+) -> None:
+    """Liste les membres d'un target group (une cible scale set est dynamique)."""
+    gid = _resolve_appgw(id_or_name)
+    try:
+        groups = client.get(f"{APPGW_PATH}/{gid}/target-groups")
+    except client.APIError as e:
+        raise _bail(e) from e
+    tg = next((g for g in groups if g.get("id") == tg_id), None)
+    if tg is None:
+        rprint(f"[red]Erreur : aucun target group {tg_id} sur cette gateway.[/red]")
+        raise typer.Exit(1)
+    members = tg.get("members") or []
+    if config.get_output() != "table":
+        render_list(members, title="", columns=[])
+        return
+    rows = [
+        {"id": m.get("id"), "target": target_label(m), "port": m.get("port"),
+         "weight": m.get("weight"),
+         "enabled": "oui" if m.get("enabled", True) else "non"}
+        for m in members
+    ]
+    render_list(rows, title=f"Membres de {tg.get('name', tg_id)} ({len(rows)})",
+                columns=[("id", "ID"), ("target", "Cible"), ("port", "Port"),
+                         ("weight", "Poids"), ("enabled", "Actif")])
 
 
 @tg_member_app.command(name="remove")
