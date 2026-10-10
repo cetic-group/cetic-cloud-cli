@@ -8,6 +8,15 @@ from cetic.commands._render import render_list, render_one
 
 app = typer.Typer(help="IPs publiques CETIC Cloud")
 
+# Types d'IP publique (#1612). La plateforme décide lesquels elle propose :
+# `cetic ip types --region X` les liste, l'API refuse un type non proposé.
+VALID_TYPES = ("edge", "firewall", "nat")
+TYPE_LABELS = {
+    "edge": "Routée par edge",
+    "firewall": "Via pare-feu",
+    "nat": "NAT 1:1",
+}
+
 
 @app.command(name="list")
 def list_ips(region: str | None = typer.Option(None, "--region", "-r")) -> None:
@@ -20,19 +29,51 @@ def list_ips(region: str | None = typer.Option(None, "--region", "-r")) -> None:
     rows = [
         {"id": p["id"], "address": p.get("ip_address") or "—",
          "label": p.get("label") or "—",
+         "type": p.get("type") or "—",
          "region": p["region"], "status": p["status"],
          "attached_to": (p.get("container_id") or p.get("vm_instance_id")
                          or p.get("load_balancer_id") or "—")}
         for p in items
     ]
     render_list(rows, title=f"IPs publiques ({len(rows)})",
-                columns=[("id", "ID"), ("address", "Adresse"), ("label", "Nom"),
+                columns=[("id", "ID"), ("address", "Adresse"), ("label", "Nom"), ("type", "Type"),
                          ("region", "Région"), ("status", "Statut"), ("attached_to", "Attachée à")])
+
+
+@app.command()
+def types(region: str = typer.Option(..., "--region", "-r")) -> None:
+    """Types d'IP publique proposés dans une région, avec les IPs libres."""
+    try:
+        pools = client.get("/v1/public-ips/pools", params={"region": region})
+    except client.APIError as e:
+        rprint(f"[red]Erreur : {e.detail}[/red]")
+        raise typer.Exit(1)
+    # Les pools arrivent dans l'ordre de préférence de la plateforme : le
+    # premier type est celui pris par `cetic ip allocate` sans `--type`.
+    available: dict[str, int] = {}
+    for p in pools:
+        t = p.get("type") or "—"
+        available[t] = available.get(t, 0) + int(p.get("available_ips") or 0)
+    rows = [
+        {"type": t, "label": TYPE_LABELS.get(t, t), "available": n,
+         "default": "oui" if i == 0 else ""}
+        for i, (t, n) in enumerate(available.items())
+    ]
+    render_list(rows, title=f"Types d'IP publique — {region} ({len(rows)})",
+                columns=[("type", "Type"), ("label", "Libellé"),
+                         ("available", "IPs libres"), ("default", "Par défaut")])
 
 
 @app.command()
 def allocate(
     region: str = typer.Option(..., "--region", "-r"),
+    ip_type: str | None = typer.Option(
+        None, "--type", "-t",
+        help=("Type d'IP publique : edge (routée par edge), firewall (via pare-feu), "
+              "nat (NAT 1:1). Sans --type : le type par défaut de la région "
+              "(cf. `cetic ip types`)."),
+        case_sensitive=False,
+    ),
     pool_id: str | None = typer.Option(None, "--pool", help="UUID du pool, sinon auto"),
     label: str | None = typer.Option(None, "--label", "-l",
                                      help="Nom de l'IP (ex : passerelle-prod, ip-fixe-api)"),
@@ -43,6 +84,15 @@ def allocate(
 ) -> None:
     """Alloue une ou plusieurs IPs publiques."""
     body: dict = {"region": region}
+    if ip_type:
+        type_norm = ip_type.lower()
+        if type_norm not in VALID_TYPES:
+            rprint(
+                f"[red]--type invalide : '{ip_type}'. "
+                f"Valeurs autorisées : {', '.join(VALID_TYPES)}.[/red]"
+            )
+            raise typer.Exit(1)
+        body["type"] = type_norm
     if pool_id:
         body["pool_id"] = pool_id
     if label:
@@ -60,7 +110,8 @@ def allocate(
         raise typer.Exit(1)
     for ip in ips:
         suffix = f" ({ip['label']})" if ip.get("label") else ""
-        rprint(f"[green]✓[/green] IP allouée : [bold]{ip.get('ip_address', ip['id'])}[/bold]{suffix}")
+        kind = f" — {TYPE_LABELS.get(ip['type'], ip['type'])}" if ip.get("type") else ""
+        rprint(f"[green]✓[/green] IP allouée : [bold]{ip.get('ip_address', ip['id'])}[/bold]{suffix}{kind}")
 
 
 @app.command()
