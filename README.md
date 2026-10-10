@@ -498,7 +498,7 @@ cetic ip list
 cetic ip allocate --region RNN --label passerelle-prod --description "IP fixe de prod"
 cetic ip allocate --region RNN --quantity 3 --label ip-fixe-api   # 3 IPs d'un coup
 cetic ip types --region RNN                                    # types d'IP proposés (edge, firewall, nat)
-cetic ip allocate --region RNN --type firewall                 # choisir le type (sinon : type par défaut de la région)
+cetic ip allocate --region RNN --type firewall                 # choisir le type (sinon : 1er type proposé avec des IPs libres)
 cetic ip update <ip-uuid> --label nouveau-nom
 
 # Load Balancers L4 avec certificat Let's Encrypt (depuis v0.19.0)

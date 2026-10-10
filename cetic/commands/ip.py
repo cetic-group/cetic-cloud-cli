@@ -48,8 +48,8 @@ def types(region: str = typer.Option(..., "--region", "-r")) -> None:
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
-    # Les pools arrivent dans l'ordre de préférence de la plateforme : le
-    # premier type est celui pris par `cetic ip allocate` sans `--type`.
+    # Les pools arrivent dans l'ordre de préférence de la plateforme : sans
+    # `--type`, `cetic ip allocate` prend le premier qui a assez d'IPs libres.
     available: dict[str, int] = {}
     for p in pools:
         t = p.get("type") or "—"
@@ -70,8 +70,8 @@ def allocate(
     ip_type: str | None = typer.Option(
         None, "--type", "-t",
         help=("Type d'IP publique : edge (routée par edge), firewall (via pare-feu), "
-              "nat (NAT 1:1). Sans --type : le type par défaut de la région "
-              "(cf. `cetic ip types`)."),
+              "nat (NAT 1:1). Sans --type : le premier type proposé qui a encore "
+              "des IPs libres dans la région (cf. `cetic ip types`)."),
         case_sensitive=False,
     ),
     pool_id: str | None = typer.Option(None, "--pool", help="UUID du pool, sinon auto"),
