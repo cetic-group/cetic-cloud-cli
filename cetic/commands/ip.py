@@ -18,6 +18,18 @@ TYPE_LABELS = {
 }
 
 
+# Une plateforme antérieure aux types ignore le champ `type` : sans ce
+# contrôle, `--type firewall` allouait (et facturait) une IP d'un autre type,
+# sans erreur. Les pools d'une plateforme qui connaît les types portent tous
+# la clé `type`.
+_TYPES_NOT_SUPPORTED = ("La plateforme ne propose pas encore le choix du type "
+                        "d'IP publique : relancez sans --type.")
+
+
+def _platform_knows_types(pools: list[dict]) -> bool:
+    return not pools or any("type" in p for p in pools)
+
+
 @app.command(name="list")
 def list_ips(region: str | None = typer.Option(None, "--region", "-r")) -> None:
     """Liste les IPs publiques du tenant."""
@@ -48,6 +60,9 @@ def types(region: str = typer.Option(..., "--region", "-r")) -> None:
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
+    if not _platform_knows_types(pools):
+        rprint(f"[yellow]{_TYPES_NOT_SUPPORTED}[/yellow]")
+        return
     # Les pools arrivent dans l'ordre de préférence de la plateforme : sans
     # `--type`, `cetic ip allocate` prend le premier qui a assez d'IPs libres.
     available: dict[str, int] = {}
@@ -91,6 +106,14 @@ def allocate(
                 f"[red]--type invalide : '{ip_type}'. "
                 f"Valeurs autorisées : {', '.join(VALID_TYPES)}.[/red]"
             )
+            raise typer.Exit(1)
+        try:
+            pools = client.get("/v1/public-ips/pools", params={"region": region})
+        except client.APIError as e:
+            rprint(f"[red]Erreur : {e.detail}[/red]")
+            raise typer.Exit(1)
+        if not _platform_knows_types(pools):
+            rprint(f"[red]{_TYPES_NOT_SUPPORTED}[/red]")
             raise typer.Exit(1)
         body["type"] = type_norm
     if pool_id:

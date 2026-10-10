@@ -95,6 +95,9 @@ def test_list_shows_label_column(runner, mock_api) -> None:
 
 # ── #1612 — type d'IP publique ───────────────────────────────────────────────
 
+_POOLS = [{"id": "p1", "region": "RNN", "name": "a", "cidr": "x", "available_ips": 3,
+           "type": "edge"}]
+
 
 def test_allocate_with_type_sends_it(runner, mock_api) -> None:
     captured: dict[str, Any] = {}
@@ -103,6 +106,7 @@ def test_allocate_with_type_sends_it(runner, mock_api) -> None:
         captured.update(json.loads(request.content))
         return httpx.Response(201, json={**_ip(), "type": "firewall"})
 
+    mock_api.get("/v1/public-ips/pools").mock(return_value=httpx.Response(200, json=_POOLS))
     mock_api.post("/v1/public-ips").mock(side_effect=_handler)
     result = runner.invoke(app, ["ip", "allocate", "--region", "RNN", "--type", "Firewall"])
     assert result.exit_code == 0, result.output
@@ -117,6 +121,7 @@ def test_allocate_batch_with_type_sends_it(runner, mock_api) -> None:
         captured.update(json.loads(request.content))
         return httpx.Response(201, json=[{**_ip(), "type": "edge"}])
 
+    mock_api.get("/v1/public-ips/pools").mock(return_value=httpx.Response(200, json=_POOLS))
     mock_api.post("/v1/public-ips/batch").mock(side_effect=_handler)
     result = runner.invoke(app, ["ip", "allocate", "-r", "RNN", "-n", "2", "-t", "edge"])
     assert result.exit_code == 0, result.output
@@ -168,3 +173,25 @@ def test_list_shows_type_column(runner, mock_api, monkeypatch) -> None:
     result = runner.invoke(app, ["ip", "list"])
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)[0]["type"] == "edge"
+
+
+def test_allocate_with_type_refused_before_allocating_on_older_platform(runner, mock_api) -> None:
+    """Plateforme sans types : le champ serait ignoré et une IP d'un autre type
+    allouée et facturée. On refuse AVANT d'allouer."""
+    mock_api.get("/v1/public-ips/pools").mock(return_value=httpx.Response(200, json=[
+        {"id": "p1", "region": "RNN", "name": "a", "cidr": "x", "available_ips": 3},
+    ]))
+    route = mock_api.post("/v1/public-ips")
+    result = runner.invoke(app, ["ip", "allocate", "-r", "RNN", "--type", "firewall"])
+    assert result.exit_code == 1
+    assert "ne propose pas encore le choix du type" in result.output
+    assert not route.called
+
+
+def test_types_on_older_platform_says_so(runner, mock_api) -> None:
+    mock_api.get("/v1/public-ips/pools").mock(return_value=httpx.Response(200, json=[
+        {"id": "p1", "region": "RNN", "name": "a", "cidr": "x", "available_ips": 3},
+    ]))
+    result = runner.invoke(app, ["ip", "types", "-r", "RNN"])
+    assert result.exit_code == 0, result.output
+    assert "ne propose pas encore le choix du type" in result.output
