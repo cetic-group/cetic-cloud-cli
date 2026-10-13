@@ -1,6 +1,6 @@
 """Tests de `cetic dns` — zones privées et rrsets (issue cetic-cloud-cli#49).
 
-Contrat amont : `apps/api/app/services/DNS_CONTRACT.md` (cetic-cloud-platform#1387).
+Contrat amont : API DNS.
 Ce qui est vérifié ici et ne se devine pas :
 - `record set` REMPLACE le couple (nom, type) — POST si absent, PATCH sinon ;
 - le rrset s'adresse par (nom, type), l'UUID est résolu depuis le listing ;
@@ -243,7 +243,7 @@ def test_zone_create_public_domain_prints_the_ownership_record(runner, mock_api)
 def test_503_is_relayed_verbatim_and_never_contradicted(runner, mock_api) -> None:
     """Les deux 503 du domaine DNS demandent de RÉESSAYER — ne rien ajouter.
 
-    `powerdns.py` (« Votre serveur DNS n'est pas encore prêt ») et `dns_zones.py`
+    « Votre serveur DNS n'est pas encore prêt » et la vérification de zone
     (résolveur de vérification en panne) sont les seuls émetteurs. Une glose
     « réessayer n'y changera rien » les contredirait mot pour mot, et sur
     `zone verify` le client qui renonce perd sa zone au bout de 7 jours.

@@ -15,7 +15,6 @@ Sous-commandes :
 Le `policy_document` est lu depuis un fichier JSON local (cf. `_load.py`).
 Les ARN dans `resources` sont validés côté CLI via `parse_arn` AVANT POST.
 
-Cf. apps/api/IAM_CONTRACT_FROZEN.md + apps/docs-internal/services/iam-arn-scheme.md.
 """
 from __future__ import annotations
 

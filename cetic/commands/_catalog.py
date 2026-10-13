@@ -2,17 +2,16 @@
 
 Factorise le rendu des listes de catalogue consommées par plusieurs sous-apps
 (`container`, `vm`, `scale-set`, `vm-scale-set`, `k8s`). Les plans compute sont
-partagés VM + LXC + scale sets côté backend (table `compute_plans`, endpoint
-`GET /v1/compute/plans`), d'où la factorisation ; chaque sous-app expose
+partagés VM + containers + scale sets (endpoint `GET /v1/compute/plans`), d'où la factorisation ; chaque sous-app expose
 néanmoins la commande pour l'ergonomie.
 
-Endpoints backend (source de vérité `apps/api/app/api/v1/`) :
-  GET /v1/compute/plans[?kind=&family=]  → compute_plans.py (plans VM/LXC/k8s_node/lb/appgw)
-  GET /v1/templates[?include_infra=]     → templates.py (templates LXC)
-  GET /v1/qemu-templates                 → qemu_templates.py (templates VM)
-  GET /v1/custom-templates               → custom_templates.py (snapshots réutilisables)
-  GET /v1/k8s/templates[?region=]        → k8s_templates.py (images CAPI buildées)
-  GET /v1/db/engine-versions?engine=...  → db_engine_versions.py (réutilisé par db)
+Endpoints :
+  GET /v1/compute/plans[?kind=&family=]  → plans VM / container / k8s_node / lb / appgw
+  GET /v1/templates                      → templates container
+  GET /v1/qemu-templates                 → templates VM
+  GET /v1/custom-templates               → snapshots réutilisables
+  GET /v1/k8s/templates[?region=]        → images OS des nœuds Kubernetes
+  GET /v1/db/engine-versions?engine=...  → versions des moteurs (réutilisé par db)
 """
 
 import typer
@@ -73,11 +72,10 @@ def render_compute_plans(
     )
 
 
-def render_lxc_templates(include_infra: bool = False) -> None:
+def render_lxc_templates() -> None:
     """Liste les templates de conteneurs actifs (`GET /v1/templates`)."""
-    params = {"include_infra": "true"} if include_infra else None
     try:
-        data = client.get("/v1/templates", params=params)
+        data = client.get("/v1/templates")
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)

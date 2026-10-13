@@ -12,7 +12,7 @@ app = typer.Typer(help="IPs publiques CETIC Cloud")
 # `cetic ip types --region X` les liste, l'API refuse un type non proposé.
 VALID_TYPES = ("edge", "firewall", "nat")
 TYPE_LABELS = {
-    "edge": "Routée par edge",
+    "edge": "Routée",
     "firewall": "Via pare-feu",
     "nat": "NAT 1:1",
 }
@@ -84,12 +84,11 @@ def allocate(
     region: str = typer.Option(..., "--region", "-r"),
     ip_type: str | None = typer.Option(
         None, "--type", "-t",
-        help=("Type d'IP publique : edge (routée par edge), firewall (via pare-feu), "
+        help=("Type d'IP publique : edge (routée), firewall (via pare-feu), "
               "nat (NAT 1:1). Sans --type : le premier type proposé qui a encore "
               "des IPs libres dans la région (cf. `cetic ip types`)."),
         case_sensitive=False,
     ),
-    pool_id: str | None = typer.Option(None, "--pool", help="UUID du pool, sinon auto"),
     label: str | None = typer.Option(None, "--label", "-l",
                                      help="Nom de l'IP (ex : passerelle-prod, ip-fixe-api)"),
     description: str | None = typer.Option(None, "--description", "-d",
@@ -116,8 +115,6 @@ def allocate(
             rprint(f"[red]{_TYPES_NOT_SUPPORTED}[/red]")
             raise typer.Exit(1)
         body["type"] = type_norm
-    if pool_id:
-        body["pool_id"] = pool_id
     if label:
         body["label"] = label
     if description:

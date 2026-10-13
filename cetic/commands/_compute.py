@@ -16,7 +16,7 @@ from rich import print as rprint
 def validate_windows_password(password: str) -> None:
     """Valide la complexité du mot de passe administrateur Windows.
 
-    Politique alignée sur le backend (`apps/api/app/api/v1/vm_instances.py`) :
+    Politique alignée sur l'API :
     ≥ 12 caractères ET ≥ 3 catégories parmi minuscule / majuscule / chiffre /
     symbole. Échoue tôt côté CLI pour un message clair (le backend renvoie sinon
     un 422). Appelé uniquement quand le template est Windows

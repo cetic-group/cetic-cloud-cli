@@ -1,6 +1,5 @@
-"""IAM ARN parser/builder/matcher — copie du backend.
+"""IAM ARN parser/builder/matcher — même grammaire que l'API.
 
-Source de vérité : `apps/api/app/services/iam_arn.py` (cetic-cloud-platform).
 Ce module est dupliqué côté CLI pour valider les `--resource ARN` AVANT
 l'appel API (UX, fail-fast côté client). Toute modification de la
 grammaire ARN doit être propagée des deux côtés.
@@ -8,8 +7,6 @@ grammaire ARN doit être propagée des deux côtés.
 Grammaire :
     arn:ccp:<service>:<region>:<tenant_id>:<resource_path>
 
-Cf. `apps/docs-internal/content/services/iam-arn-scheme.md` pour la BNF
-+ exemples + différences avec ARN AWS.
 """
 from __future__ import annotations
 

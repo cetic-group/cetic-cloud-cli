@@ -73,11 +73,8 @@ jobs:
           # sont le stockage durable et ne comptent PAS dans ce quota. Passé le
           # run, l'artefact est un doublon de l'asset.
           #
-          # Sans cette ligne le défaut GitHub est de **90 jours** : le 19/09/2026
-          # 15 builds × 4 plateformes pesaient **1,6 Go de doublons vivants**, soit
-          # plus de 3× le quota de stockage de TOUTE l'organisation (500 Mo, plan
-          # Free). Résultat : « Artifact storage quota has been hit » sur TOUS les
-          # dépôts de l'org, y compris la MEP de la plateforme.
+          # Sans cette ligne le défaut GitHub est de 90 jours, et les doublons
+          # épuisent le quota de stockage d'artefacts.
           retention-days: 1
 
   # macOS Intel (darwin-amd64) : PAS de binaire pré-compilé. La dépendance

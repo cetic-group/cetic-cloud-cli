@@ -102,9 +102,8 @@ def close(
 
 
 # ─── cetic support plan {list,show,current,subscribe,unsubscribe} ────────────
-# Sous-commande introduite par la vague C6.
 
-plan_app = typer.Typer(help="Plans de support CETIC Cloud (vague C6)")
+plan_app = typer.Typer(help="Plans de support CETIC Cloud")
 app.add_typer(plan_app, name="plan")
 
 

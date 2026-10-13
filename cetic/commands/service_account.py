@@ -12,7 +12,6 @@ Sous-commandes :
     cetic service-account rotate ID|NAME [--save-keyring]
     cetic service-account revoke ID|NAME [--yes]
 
-Cf. apps/api/IAM_CONTRACT_FROZEN.md (Phase A1 livrée 2026-05-10).
 """
 from __future__ import annotations
 

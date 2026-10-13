@@ -7,8 +7,8 @@ from cetic import client
 from cetic.commands._render import render_list, render_one
 
 app = typer.Typer(help="DBaaS CETIC Cloud (PostgreSQL, MariaDB, Valkey, FerretDB)")
-pg_app = typer.Typer(help="PostgreSQL (CNPG)")
-my_app = typer.Typer(help="MySQL (MariaDB-operator)")
+pg_app = typer.Typer(help="PostgreSQL")
+my_app = typer.Typer(help="MySQL (MariaDB)")
 rd_app = typer.Typer(help="Redis (Valkey)")
 mg_app = typer.Typer(help="MongoDB (FerretDB)")
 app.add_typer(pg_app, name="pg")

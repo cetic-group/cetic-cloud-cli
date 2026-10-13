@@ -1,6 +1,6 @@
 """cetic appgw — Application Gateways L7 CETIC Cloud.
 
-Gère les Application Gateways managées (ccp-appgw) : aiguillage HTTP/HTTPS par
+Gère les Application Gateways managées : aiguillage HTTP/HTTPS par
 hostname + path, certificats Let's Encrypt automatiques (SNI multi-domaine),
 politiques de routage (rate limit, IP allow/deny, WAF, CORS, basic auth).
 
@@ -8,7 +8,7 @@ Service distinct du Load Balancer L4 (`cetic lb`) :
 - LB L4 : forward TCP/UDP brut (Postgres, gRPC, jeux)
 - AppGW L7 : routage HTTP avec règles host/path et policies
 
-Architecture interne (transparente côté tenant) :
+Fonctionnement :
 - Une gateway expose 1 IP publique flottante (haute disponibilité) partagée par plusieurs
   hostnames via SNI.
 - Hostnames sous-domaine auto (`<slug>-<id8>.app.cloud.cetic-group.com`) ou

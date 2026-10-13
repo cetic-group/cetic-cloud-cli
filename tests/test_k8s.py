@@ -36,7 +36,7 @@ def _cluster(
         "tier": tier,
         "os_image": os_image,
         "proxy_secondary_vmid": 1234 if tier == "prod" else None,
-        "proxy_secondary_node": "pve-02" if tier == "prod" else None,
+        "proxy_secondary_node": "node-b" if tier == "prod" else None,
         "proxy_vip_vnet": "10.42.0.10" if tier == "prod" else None,
     }
 
