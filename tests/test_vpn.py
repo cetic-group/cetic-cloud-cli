@@ -634,13 +634,13 @@ def test_gateway_vpc_rm(runner, mock_api):
 
 def test_gateway_attach_ip(runner, mock_api):
     gw = _gw()
-    gw["public_ip_address"] = "163.172.1.2"
+    gw["public_ip_address"] = "203.0.113.2"
     mock_api.post(f"/v1/vpn/gateways/{GW_ID}/attach-ip").mock(
         return_value=httpx.Response(200, json=gw)
     )
     result = runner.invoke(app, ["vpn", "gateway", "attach-ip", GW_ID])
     assert result.exit_code == 0, result.stdout
-    assert "163.172.1.2" in result.stdout
+    assert "203.0.113.2" in result.stdout
 
 
 def test_gateway_detach_ip(runner, mock_api):

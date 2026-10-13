@@ -67,7 +67,7 @@ def _k8s_template(version: str = "1.34.6", region: str = "RNN", os_label: str = 
         "display_name": f"{os_label} — Kubernetes v{version}",
         "k8s_version": version,
         "region": region,
-        "vmid": 9100,
+        "vmid": 1,
         "built_at": "2026-06-01T08:00:00Z",
     }
 
@@ -186,7 +186,7 @@ def test_container_plans_json_exposes_price(runner, mock_api, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Templates système (LXC + QEMU)
+# Templates système (containers + VM)
 # ---------------------------------------------------------------------------
 
 
@@ -203,19 +203,6 @@ def test_container_templates_default_excludes_infra(runner, mock_api):
     # Pas de include_infra par défaut.
     assert "include_infra" not in captured["params"]
     assert "debian-12" in result.stdout
-
-
-def test_container_templates_include_infra_flag(runner, mock_api):
-    captured: dict[str, Any] = {}
-
-    def _capture(request: httpx.Request) -> httpx.Response:
-        captured["params"] = dict(request.url.params)
-        return httpx.Response(200, json=[_lxc_template("cl-lb-base")])
-
-    mock_api.get("/v1/templates").mock(side_effect=_capture)
-    result = runner.invoke(app, ["container", "templates", "--include-infra"])
-    assert result.exit_code == 0, result.stdout
-    assert captured["params"].get("include_infra") == "true"
 
 
 def test_vm_templates_hits_qemu_endpoint(runner, mock_api):

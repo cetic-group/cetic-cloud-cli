@@ -204,14 +204,9 @@ def plans() -> None:
 
 
 @app.command()
-def templates(
-    include_infra: bool = typer.Option(
-        False, "--include-infra",
-        help="Inclure les templates d'infrastructure interne (réservés CETIC).",
-    ),
-) -> None:
+def templates() -> None:
     """Liste les templates container (CT) disponibles."""
-    render_lxc_templates(include_infra)
+    render_lxc_templates()
 
 
 @app.command(name="custom-templates")

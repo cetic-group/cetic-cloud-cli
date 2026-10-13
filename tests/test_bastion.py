@@ -181,14 +181,14 @@ def test_attach_ip_auto(runner, mock_api):
     def _capture(request: httpx.Request) -> httpx.Response:
         captured["body"] = json.loads(request.content)
         b = _bastion()
-        b["public_ip_address"] = "163.172.1.9"
+        b["public_ip_address"] = "203.0.113.9"
         return httpx.Response(200, json=b)
 
     mock_api.post(f"/v1/bastions/{BASTION_ID}/attach-ip").mock(side_effect=_capture)
     result = runner.invoke(app, ["bastion", "attach-ip", BASTION_ID])
     assert result.exit_code == 0, result.stdout
     assert captured["body"] == {}
-    assert "163.172.1.9" in result.stdout
+    assert "203.0.113.9" in result.stdout
 
 
 def test_attach_ip_explicit(runner, mock_api):

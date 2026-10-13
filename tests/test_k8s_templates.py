@@ -56,7 +56,7 @@ def test_templates_grouped_by_name_then_version(runner, mock_api, _json_out):
 
 
 def test_templates_show_both_pve_tags(runner, mock_api, _json_out):
-    # Chaque template expose les DEUX tags PVE : version (os_key) + OS (os_tag).
+    # Chaque template expose les DEUX tags : version (os_key) + OS (os_tag).
     payload = [_tmpl("kube-v1-34-8", "Ubuntu 1.34.8", "v1.34.8", os_slug="ubuntu")]
     mock_api.get("/v1/k8s/templates").mock(return_value=httpx.Response(200, json=payload))
     result = runner.invoke(app, ["k8s", "templates"])

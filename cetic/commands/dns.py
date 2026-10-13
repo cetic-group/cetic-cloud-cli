@@ -14,7 +14,7 @@ dans ce réseau reçoivent automatiquement le résolveur comme serveur de noms.
     cetic dns record set <ZONE> <NOM> <TYPE> <VALEUR>... [--ttl 3600]
     cetic dns record delete <ZONE> <NOM> <TYPE>
 
-Trois points qui ne se devinent pas (cf. `DNS_CONTRACT.md` côté API) :
+Trois points qui ne se devinent pas (contrat de l'API DNS) :
 
 1. **`record set` REMPLACE** — l'unité d'édition est le rrset, c'est-à-dire le
    couple (nom, type) et TOUTES ses valeurs. Poser une valeur sur un nom qui en
@@ -123,10 +123,10 @@ def _bail(e: client.APIError) -> typer.Exit:
 
     ⚠️ **Ne pas ré-ajouter de glose sur le 503.** Une version antérieure de ce
     fichier ajoutait « le service DNS n'est pas déployé ici : réessayer n'y
-    changera rien » — la ligne du tableau d'erreurs de `DNS_CONTRACT.md`, qui
-    n'est plus vraie du code. Les deux seuls 503 que le domaine DNS émet disent
-    l'inverse et demandent de réessayer : `powerdns.py` (« Votre serveur DNS
-    n'est pas encore prêt ») et `dns_zones.py` (résolveur de vérification en
+    changera rien » — une ancienne description de l'API, qui
+    n'est plus vraie. Les deux seuls 503 que le domaine DNS émet disent
+    l'inverse et demandent de réessayer : « Votre serveur DNS n'est pas
+    encore prêt » et la vérification de zone (résolveur de vérification en
     panne, « votre enregistrement TXT n'est pas en cause »). Le client lisait
     donc deux phrases contradictoires — et sur `zone verify`, celui qui renonce
     perd sa zone : `_expire_unverified_zones` la supprime 7 jours après sa

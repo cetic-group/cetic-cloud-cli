@@ -360,7 +360,7 @@ Cf. [docs/iam](https://docs.cloud.cetic-group.com/services/iam) pour le détail 
    ```
 
    Les ARN dans `resources` sont validés côté CLI **avant** l'appel API
-   (parse strict identique au backend — `apps/api/app/services/iam_arn.py`).
+   (parse strict identique à celui de l'API).
 
 3. **Attacher le rôle à un service account ou un membre** :
 
@@ -457,7 +457,7 @@ cetic k8s create --name prod --region RNN --version v1.32.0 --pool-version v1.31
 cetic k8s kubeconfig <cluster-id> > ~/.kube/config
 cetic k8s plans                       # plans node pool (restriction CCKS appliquée)
 cetic k8s versions                    # versions Kubernetes disponibles par région
-cetic k8s templates                   # images OS CAPI (triées par version k8s décroissante)
+cetic k8s templates                   # images OS des nœuds (triées par version k8s décroissante)
 cetic k8s templates --name rocky --k8s-version 1.34   # filtres nom + version — depuis v0.34.0
 cetic k8s pool list <cluster-id>      # colonne Version : version du pool (workers) ou (héritée: <CP>)
 cetic k8s pool create <cluster-id> --name gpu --version v1.31.0   # --version=workers (≤ CP, omis=hérite)
