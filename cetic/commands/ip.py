@@ -11,9 +11,12 @@ app = typer.Typer(help="IPs publiques CETIC Cloud")
 # Types d'IP publique (#1612). La plateforme décide lesquels elle propose :
 # `cetic ip types --region X` les liste, l'API refuse un type non proposé.
 VALID_TYPES = ("edge", "firewall", "nat")
+# `firewall` ne sert que le cloud privé CCP (#1630) : l'adresse vient du réseau
+# privé de l'interface firewall câblée sur le bridge, et c'est le firewall du
+# client qui décide de l'exposer. Jamais proposé sur le cloud public.
 TYPE_LABELS = {
-    "edge": "Routée",
-    "firewall": "Via pare-feu",
+    "edge": "Routée par edge",
+    "firewall": "Via firewall (cloud privé)",
     "nat": "NAT 1:1",
 }
 
@@ -84,9 +87,11 @@ def allocate(
     region: str = typer.Option(..., "--region", "-r"),
     ip_type: str | None = typer.Option(
         None, "--type", "-t",
-        help=("Type d'IP publique : edge (routée), firewall (via pare-feu), "
-              "nat (NAT 1:1). Sans --type : le premier type proposé qui a encore "
-              "des IPs libres dans la région (cf. `cetic ip types`)."),
+        help=("Type d'IP publique : edge (routée par edge), firewall (adresse du "
+              "réseau privé du firewall, cloud privé uniquement ; ni bases de "
+              "données ni clusters Kubernetes), nat (NAT 1:1). Sans --type : le "
+              "premier type proposé qui a encore des IPs libres dans la région "
+              "(cf. `cetic ip types`)."),
         case_sensitive=False,
     ),
     label: str | None = typer.Option(None, "--label", "-l",
