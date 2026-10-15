@@ -16,7 +16,7 @@ VALID_TYPES = ("edge", "firewall", "nat")
 # client qui décide de l'exposer. Jamais proposé sur le cloud public.
 TYPE_LABELS = {
     "edge": "Routée par edge",
-    "firewall": "Via firewall (cloud privé)",
+    "firewall": "Via firewall",
     "nat": "NAT 1:1",
 }
 

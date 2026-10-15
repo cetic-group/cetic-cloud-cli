@@ -111,7 +111,7 @@ def test_allocate_with_type_sends_it(runner, mock_api) -> None:
     result = runner.invoke(app, ["ip", "allocate", "--region", "RNN", "--type", "Firewall"])
     assert result.exit_code == 0, result.output
     assert captured["type"] == "firewall"
-    assert "Via firewall (cloud privé)" in result.output
+    assert "Via firewall" in result.output
     assert "pare-feu" not in result.output
 
 
