@@ -88,8 +88,8 @@ def allocate(
     ip_type: str | None = typer.Option(
         None, "--type", "-t",
         help=("Type d'IP publique : edge (routée par edge), firewall (adresse du "
-              "réseau privé du firewall, cloud privé uniquement ; ni bases de "
-              "données ni clusters Kubernetes), nat (NAT 1:1). Sans --type : le "
+              "réseau privé du firewall, cloud privé uniquement ; toutes les "
+              "ressources), nat (NAT 1:1). Sans --type : le "
               "premier type proposé qui a encore des IPs libres dans la région "
               "(cf. `cetic ip types`)."),
         case_sensitive=False,
