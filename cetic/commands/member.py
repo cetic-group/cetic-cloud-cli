@@ -85,17 +85,22 @@ def remove(
 
 @app.command(name="orgs")
 def accessible_orgs() -> None:
-    """Liste les organisations accessibles (les miennes + celles où je suis membre)."""
+    """Liste les comptes accessibles : le mien et ceux où je suis membre.
+
+    L'API renvoie des **comptes** (`tenant_id`, `email`, `company_name`,
+    `role`), pas des organisations : lire `id`/`name` plantait (#59). Pour les
+    organisations elles-mêmes, utiliser `cetic org list`.
+    """
     try:
-        orgs = client.get("/v1/members/accessible-orgs")
+        comptes = client.get("/v1/members/accessible-orgs")
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
     rows = [
-        {"id": o["id"], "name": o.get("name", "—"),
-         "tenant_id": (o.get("owner_tenant_id") or ""),
-         "role": o.get("role", "owner")}
-        for o in orgs
+        {"tenant_id": c.get("tenant_id") or "—",
+         "name": c.get("company_name") or c.get("email") or "—",
+         "role": c.get("role") or "—"}
+        for c in comptes or []
     ]
-    render_list(rows, title=f"Orgs accessibles ({len(rows)})",
-                columns=[("id", "ID"), ("name", "Nom"), ("tenant_id", "Owner"), ("role", "Rôle")])
+    render_list(rows, title=f"Comptes accessibles ({len(rows)})",
+                columns=[("tenant_id", "Compte"), ("name", "Nom"), ("role", "Rôle")])
