@@ -462,3 +462,40 @@ def test_create_for_zero_refused(runner, mock_api, dur) -> None:
     r = runner.invoke(app, ["schedule", "create", "x", "--vm", VM, "--off", "fri:20-mon:08", "--for", dur])
     assert r.exit_code != 0
     assert not route.called
+
+
+def test_update_no_start_for_counts_from_today_in_stored_tz(runner, mock_api, monkeypatch) -> None:
+    import cetic.commands.schedule as sched
+
+    seen: list[str | None] = []
+    monkeypatch.setattr(sched, "_today_in", lambda tz: seen.append(tz) or date(2030, 3, 10))
+    mock_api.get(f"/v1/schedules/{SID}").mock(return_value=httpx.Response(
+        200, json={"id": SID, "name": "p", "timezone": "Africa/Abidjan", "starts_on": "2026-12-01"}))
+    route = mock_api.patch(f"/v1/schedules/{SID}").mock(side_effect=_echo(200))
+    r = runner.invoke(app, ["schedule", "update", SID, "--no-start", "--for", "2w"])
+    assert r.exit_code == 0, r.output
+    assert seen == ["Africa/Abidjan"]
+    assert json.loads(route.calls.last.request.content) == {"starts_on": None, "ends_on": "2030-03-23"}
+
+
+def test_create_prints_recorded_period(runner, mock_api) -> None:
+    mock_api.post("/v1/schedules").mock(side_effect=_echo())
+    r = runner.invoke(app, ["schedule", "create", "x", "--vm", VM, "--off", "fri:20-mon:08",
+                            "--starts-on", "2027-01-10", "--for", "2w"])
+    assert r.exit_code == 0, r.output
+    assert "2027-01-10 → 2027-01-23" in r.output
+
+
+def test_list_json_ended_at_set(runner, mock_api) -> None:
+    mock_api.get("/v1/schedules").mock(return_value=httpx.Response(200, json=[
+        {"id": SID, "name": "a", "windows": [], "ends_on": "2027-02-19", "ended_at": "2027-02-20T00:01:00Z"}]))
+    r = runner.invoke(app, ["schedule", "list"], env={"CCP_OUTPUT": "json"})
+    row = json.loads(r.output)[0]
+    assert row["ended_at"] == "2027-02-20T00:01:00Z" and row["period"] == "terminé (2027-02-19)"
+
+
+def test_update_invalid_option_checked_before_name_lookup(runner, mock_api) -> None:
+    lookup = mock_api.get("/v1/schedules").mock(return_value=httpx.Response(200, json=[]))
+    r = runner.invoke(app, ["schedule", "update", "mon-planning", "--no-end", "--ends-on", "2027-01-01"])
+    assert r.exit_code != 0
+    assert not lookup.called

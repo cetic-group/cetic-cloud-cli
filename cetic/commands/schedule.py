@@ -612,8 +612,9 @@ def update(
 
     Pour (dés)activer un planning, utilisez `cetic schedule enable|disable`. La
     cible d'un planning ne peut pas être changée (créez-en un nouveau). Pour
-    relancer un planning terminé : repoussez sa fin (--ends-on, --for ou
-    --no-end) puis `cetic schedule enable`.
+    relancer un planning terminé : repoussez sa fin (--ends-on DATE, --no-end,
+    ou une nouvelle durée comptée d'aujourd'hui : --no-start --for 4m) puis
+    `cetic schedule enable`. Seul, --for part de la date de début enregistrée.
     """
     _check_period_options(
         starts_on=starts_on, ends_on=ends_on, for_=for_, no_start=no_start, no_end=no_end,

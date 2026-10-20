@@ -241,6 +241,7 @@ cetic schedule create lundis --vm web-01 --off "mon:08-mon:20" \
 
 cetic schedule update lundis --ends-on 2027-03-31   # repousse la fin
 cetic schedule update lundis --no-end               # retire la fin
+cetic schedule update lundis --no-start --for 4m    # nouvelle durée à partir d'aujourd'hui
 cetic schedule enable lundis                        # relance un planning terminé
 ```
 
