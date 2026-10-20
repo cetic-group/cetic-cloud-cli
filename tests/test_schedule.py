@@ -243,3 +243,121 @@ def test_list_renders_state_and_fee(runner, mock_api) -> None:
     assert r.exit_code == 0, r.output
     assert "OFF" in r.output
     assert "0.39" in r.output
+
+
+# --- période de validité --------------------------------------------------
+
+from datetime import date  # noqa: E402
+
+from cetic.commands.schedule import _period_end  # noqa: E402
+
+
+def _echo(status: int = 201, extra: dict | None = None):
+    """Plateforme qui renvoie le corps reçu (période prise en compte)."""
+
+    def _h(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content) if request.content else {}
+        return httpx.Response(status, json={"id": SID, "name": "p", **body, **(extra or {})})
+
+    return _h
+
+
+@pytest.mark.parametrize(
+    ("start", "count", "unit", "end"),
+    [
+        (date(2026, 10, 20), 4, "m", date(2027, 2, 19)),
+        (date(2026, 10, 19), 2, "w", date(2026, 11, 1)),
+        (date(2027, 1, 31), 1, "m", date(2027, 2, 27)),
+        (date(2026, 11, 30), 3, "m", date(2027, 2, 27)),
+    ],
+)
+def test_period_end(start, count, unit, end) -> None:
+    assert _period_end(start, count, unit) == end
+
+
+def test_create_with_for_sends_inclusive_dates(runner, mock_api) -> None:
+    route = mock_api.post("/v1/schedules").mock(side_effect=_echo())
+    r = runner.invoke(app, ["schedule", "create", "lundis", "--vm", VM, "--off", "mon:08-mon:20",
+                            "--starts-on", "2026-10-20", "--for", "4m"])
+    assert r.exit_code == 0, r.output
+    sent = json.loads(route.calls.last.request.content)
+    assert (sent["starts_on"], sent["ends_on"]) == ("2026-10-20", "2027-02-19")
+
+
+def test_create_without_period_sends_no_bounds(runner, mock_api) -> None:
+    route = mock_api.post("/v1/schedules").mock(side_effect=_echo())
+    r = runner.invoke(app, ["schedule", "create", "x", "--vm", VM, "--off", "fri:20-mon:08"])
+    assert r.exit_code == 0, r.output
+    sent = json.loads(route.calls.last.request.content)
+    assert "starts_on" not in sent and "ends_on" not in sent
+
+
+def test_create_period_ignored_by_platform_rolls_back(runner, mock_api) -> None:
+    """Plateforme qui ignore la période : le planning, qui s'appliquerait sans
+    limite, est supprimé et la commande échoue."""
+    mock_api.post("/v1/schedules").mock(
+        return_value=httpx.Response(201, json={"id": SID, "name": "x", "enabled": True})
+    )
+    delete = mock_api.delete(f"/v1/schedules/{SID}").mock(return_value=httpx.Response(204))
+    r = runner.invoke(app, ["schedule", "create", "x", "--vm", VM, "--off", "fri:20-mon:08",
+                            "--ends-on", "2027-02-19"])
+    assert r.exit_code == 1
+    assert delete.called
+    assert "période" in " ".join(r.output.split())
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["--for", "4m", "--ends-on", "2027-01-01"],
+        ["--starts-on", "2027-03-01", "--ends-on", "2027-02-01"],
+        ["--for", "4j"],
+        ["--ends-on", "19/02/2027"],
+    ],
+)
+def test_create_invalid_period(runner, mock_api, args) -> None:
+    route = mock_api.post("/v1/schedules").mock(side_effect=_echo())
+    r = runner.invoke(app, ["schedule", "create", "x", "--vm", VM, "--off", "fri:20-mon:08", *args])
+    assert r.exit_code != 0
+    assert not route.called
+
+
+def test_update_no_end_sends_null(runner, mock_api) -> None:
+    route = mock_api.patch(f"/v1/schedules/{SID}").mock(side_effect=_echo(200))
+    r = runner.invoke(app, ["schedule", "update", SID, "--no-end"])
+    assert r.exit_code == 0, r.output
+    assert json.loads(route.calls.last.request.content) == {"ends_on": None}
+
+
+def test_update_period_ignored_by_platform_fails(runner, mock_api) -> None:
+    mock_api.patch(f"/v1/schedules/{SID}").mock(
+        return_value=httpx.Response(200, json={"id": SID, "name": "w2"})
+    )
+    r = runner.invoke(app, ["schedule", "update", SID, "--name", "w2", "--ends-on", "2027-02-19"])
+    assert r.exit_code == 1
+    assert "autres modifications" in " ".join(r.output.split())
+
+
+def test_period_error_code_shown(runner, mock_api) -> None:
+    msg = "La date de fin est déjà passée."
+    mock_api.post("/v1/schedules").mock(return_value=httpx.Response(
+        422, json={"detail": {"code": "schedule_period_past", "message": msg}}))
+    r = runner.invoke(app, ["schedule", "create", "x", "--vm", VM, "--off", "fri:20-mon:08",
+                            "--ends-on", "2020-01-01"])
+    assert r.exit_code == 1
+    assert msg in " ".join(r.output.split())
+
+
+def test_list_shows_period_and_ended(runner, mock_api) -> None:
+    mock_api.get("/v1/schedules").mock(return_value=httpx.Response(200, json=[
+        {"id": SID, "name": "a", "resource_type": "vm", "resource_id": VM, "current_state": "on",
+         "enabled": False, "windows": [], "starts_on": "2026-10-20", "ends_on": "2027-02-19",
+         "ended_at": "2027-02-20T00:01:00Z"},
+        {"id": VM, "name": "b", "resource_type": "vm", "resource_id": VM, "current_state": "on",
+         "enabled": True, "windows": [], "starts_on": "2026-10-20", "ends_on": None},
+    ]))
+    r = runner.invoke(app, ["schedule", "list"], env={"CCP_OUTPUT": "json"})
+    assert r.exit_code == 0, r.output
+    rows = json.loads(r.output)
+    assert rows[0]["period"] == "terminé (2027-02-19)"
+    assert rows[1]["period"] == "à partir du 2026-10-20"

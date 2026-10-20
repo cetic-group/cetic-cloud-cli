@@ -22,11 +22,23 @@ Fenêtres OFF (option `--off`, répétable) — syntaxe `JOUR:HEURE-JOUR:HEURE` 
     - L'intervalle [début → fin) peut enjamber le dimanche→lundi (wrap-around) :
       la ressource est ÉTEINTE pendant la fenêtre, ALLUMÉE en dehors.
 
+Période de validité (facultative, dates incluses, fuseau du planning) :
+    --starts-on 2026-10-20    commence ce jour-là (avant : ressource allumée)
+    --ends-on 2027-02-19      s'arrête après ce jour (ressource rallumée,
+                              planning terminé)
+    --for 4m | --for 6w       durée en mois (m) ou semaines (w) à partir de
+                              --starts-on (ou d'aujourd'hui)
+
+    Exemple : tous les lundis 8h-20h pendant 4 mois
+        cetic schedule create lundis --vm web-01 --off "mon:08-mon:20" --for 4m
+
 Sous-commandes :
     cetic schedule list
     cetic schedule get ID|NOM
     cetic schedule create NOM --vm <id> --off "fri:20-mon:08" [--timezone Europe/Paris]
     cetic schedule update ID|NOM [--name ...] [--off ...] [--timezone ...]
+                              [--starts-on ...] [--ends-on ...] [--for ...]
+                              [--no-start] [--no-end]
     cetic schedule delete ID|NOM [--yes]
     cetic schedule enable ID|NOM
     cetic schedule disable ID|NOM
@@ -37,7 +49,9 @@ refusé (aucun gain : l'économie est facturée à l'heure).
 
 from __future__ import annotations
 
+import calendar
 import re
+from datetime import date, timedelta
 from typing import Any
 
 import typer
@@ -204,6 +218,104 @@ def _resolve_target(
 
 
 # ---------------------------------------------------------------------------
+# Période de validité
+# ---------------------------------------------------------------------------
+
+_FOR_RE = re.compile(r"^\s*(?P<n>\d{1,3})\s*(?P<u>[wm])\s*$", re.IGNORECASE)
+
+
+def _parse_date(value: str, flag: str) -> date:
+    try:
+        return date.fromisoformat(value.strip())
+    except ValueError as exc:
+        raise typer.BadParameter(f"{flag} attend une date AAAA-MM-JJ (reçu : {value!r}).") from exc
+
+
+def _period_end(start: date, count: int, unit: str) -> date:
+    """Dernier jour inclus d'une durée de `count` semaines (`w`) ou mois (`m`).
+
+    « 4 mois à partir du 20/10 » → 19/02. Un jour absent du mois d'arrivée est
+    ramené au dernier jour de ce mois (même calcul que la console)."""
+    if unit == "w":
+        return start + timedelta(days=count * 7 - 1)
+    month_index = start.month - 1 + count
+    year, month = start.year + month_index // 12, month_index % 12 + 1
+    day = min(start.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day) - timedelta(days=1)
+
+
+def _parse_for(value: str, start: date) -> date:
+    m = _FOR_RE.match(value)
+    if not m or int(m["n"]) < 1:
+        raise typer.BadParameter(
+            f"--for attend un nombre suivi de w (semaines) ou m (mois), ex : 4m (reçu : {value!r})."
+        )
+    return _period_end(start, int(m["n"]), m["u"].lower())
+
+
+def _period_body(
+    *,
+    starts_on: str | None,
+    ends_on: str | None,
+    for_: str | None,
+    no_start: bool = False,
+    no_end: bool = False,
+) -> dict[str, Any]:
+    """Champs `starts_on` / `ends_on` à envoyer (`None` = retirer la borne)."""
+    if for_ and ends_on:
+        raise typer.BadParameter("--for et --ends-on sont exclusifs.")
+    if no_start and starts_on:
+        raise typer.BadParameter("--no-start et --starts-on sont exclusifs.")
+    if no_end and (ends_on or for_):
+        raise typer.BadParameter("--no-end est exclusif de --ends-on et --for.")
+    body: dict[str, Any] = {}
+    start = _parse_date(starts_on, "--starts-on") if starts_on else None
+    end = _parse_date(ends_on, "--ends-on") if ends_on else None
+    if for_:
+        end = _parse_for(for_, start or date.today())
+    if start and end and end < start:
+        raise typer.BadParameter("La date de fin doit suivre la date de début.")
+    if start:
+        body["starts_on"] = start.isoformat()
+    if end:
+        body["ends_on"] = end.isoformat()
+    if no_start:
+        body["starts_on"] = None
+    if no_end:
+        body["ends_on"] = None
+    return body
+
+
+def _period_ignored(sent: dict[str, Any], s: Any) -> bool:
+    """Vrai si la plateforme n'a pas pris en compte la période envoyée.
+
+    Une plateforme qui ne connaît pas encore la période ignore ces champs en
+    silence : sans cette vérification, le planning s'appliquerait sans limite."""
+    if not isinstance(s, dict):
+        return False
+    return any(key not in s or s.get(key) != value for key, value in sent.items())
+
+
+_PERIOD_UNSUPPORTED = (
+    "la plateforme n'a pas enregistré la période de validité "
+    "(fonctionnalité pas encore disponible sur cette plateforme)."
+)
+
+
+def _fmt_period(s: dict[str, Any]) -> str:
+    start, end = s.get("starts_on"), s.get("ends_on")
+    if s.get("ended_at"):
+        return f"terminé ({end})" if end else "terminé"
+    if start and end:
+        return f"{start} → {end}"
+    if start:
+        return f"à partir du {start}"
+    if end:
+        return f"jusqu'au {end}"
+    return "—"
+
+
+# ---------------------------------------------------------------------------
 # Erreurs API
 # ---------------------------------------------------------------------------
 
@@ -280,6 +392,7 @@ def list_schedules() -> None:
             "state": _state(s.get("current_state")),
             "enabled": "oui" if s.get("enabled", True) else "non",
             "windows": _fmt_windows(s.get("windows")),
+            "period": _fmt_period(s),
             "fee": _fee(s.get("estimated_monthly_fee_cents")),
         }
         for s in items
@@ -295,6 +408,7 @@ def list_schedules() -> None:
             ("state", "État"),
             ("enabled", "Actif"),
             ("windows", "Fenêtres OFF"),
+            ("period", "Période"),
             ("fee", "Coût estimé"),
         ],
     )
@@ -311,6 +425,7 @@ def get(id_or_name: str = typer.Argument(..., metavar="ID|NOM")) -> None:
     view = dict(s)
     view["current_state"] = _state(s.get("current_state"))
     view["windows"] = _fmt_windows(s.get("windows"))
+    view["period"] = _fmt_period(s)
     view["estimated_monthly_fee"] = _fee(s.get("estimated_monthly_fee_cents"))
     render_one(view, title=f"Planning {s.get('name', sid)}")
 
@@ -352,6 +467,18 @@ def create(
     disabled: bool = typer.Option(
         False, "--disabled", help="Crée le planning inactif (aucune transition appliquée)."
     ),
+    starts_on: str | None = typer.Option(
+        None, "--starts-on", metavar="AAAA-MM-JJ",
+        help="Premier jour (inclus) où le planning s'applique. Avant : ressource allumée.",
+    ),
+    ends_on: str | None = typer.Option(
+        None, "--ends-on", metavar="AAAA-MM-JJ",
+        help="Dernier jour (inclus). Ensuite la ressource est rallumée et le planning terminé.",
+    ),
+    for_: str | None = typer.Option(
+        None, "--for", metavar="DURÉE",
+        help="Durée à partir de --starts-on (ou d'aujourd'hui) : 6w (semaines) ou 4m (mois).",
+    ),
 ) -> None:
     """Crée un planning marche/arrêt pour une ressource.
 
@@ -365,6 +492,7 @@ def create(
         cetic schedule create weekend --vm-scale-set fleet \\
             --off "fri:20-mon:08" --timezone Europe/Paris
         cetic schedule create nuit-pool --ccks-node-pool prod gpu --off "mon:20-tue:08"
+        cetic schedule create lundis --vm web-01 --off "mon:08-mon:20" --for 4m
     """
     resource_type, resource_id = _resolve_target(
         vm=vm,
@@ -375,6 +503,7 @@ def create(
         db_instance=db_instance,
     )
     windows = _parse_off_windows(off)
+    period = _period_body(starts_on=starts_on, ends_on=ends_on, for_=for_)
 
     body: dict[str, Any] = {
         "name": name,
@@ -385,11 +514,23 @@ def create(
     }
     if timezone is not None:
         body["timezone"] = timezone
+    body.update(period)
 
     try:
         s = client.post(SCHEDULE_PATH, json=body)
     except client.APIError as e:
         raise _bail(e) from e
+    if period and _period_ignored(period, s):
+        # Un planning sans sa borne s'appliquerait indéfiniment : on le retire.
+        try:
+            client.delete(f"{SCHEDULE_PATH}/{s['id']}")
+            rprint(f"[red]Erreur : {_PERIOD_UNSUPPORTED} Le planning n'a pas été créé.[/red]")
+        except client.APIError:
+            rprint(
+                f"[red]Erreur : {_PERIOD_UNSUPPORTED} Le planning {s['id']} a été créé SANS "
+                "période : supprimez-le (`cetic schedule delete`).[/red]"
+            )
+        raise typer.Exit(1)
     rprint(
         f"[green]✓[/green] Planning créé : [bold]{s.get('name', name)}[/bold] "
         f"([dim]{s['id']}[/dim]) — cible {resource_type} {resource_id}"
@@ -409,11 +550,25 @@ def update(
     timezone: str | None = typer.Option(
         None, "--timezone", "--tz", help="Nouveau fuseau IANA."
     ),
+    starts_on: str | None = typer.Option(
+        None, "--starts-on", metavar="AAAA-MM-JJ", help="Nouveau premier jour (inclus)."
+    ),
+    ends_on: str | None = typer.Option(
+        None, "--ends-on", metavar="AAAA-MM-JJ", help="Nouveau dernier jour (inclus)."
+    ),
+    for_: str | None = typer.Option(
+        None, "--for", metavar="DURÉE",
+        help="Nouvelle fin : durée à partir de --starts-on (ou d'aujourd'hui), ex : 4m, 6w.",
+    ),
+    no_start: bool = typer.Option(False, "--no-start", help="Retire la date de début."),
+    no_end: bool = typer.Option(False, "--no-end", help="Retire la date de fin."),
 ) -> None:
-    """Modifie un planning (nom, fenêtres, fuseau).
+    """Modifie un planning (nom, fenêtres, fuseau, période).
 
     Pour (dés)activer un planning, utilisez `cetic schedule enable|disable`. La
-    cible d'un planning ne peut pas être changée (créez-en un nouveau).
+    cible d'un planning ne peut pas être changée (créez-en un nouveau). Pour
+    relancer un planning terminé : repoussez sa fin (--ends-on, --for ou
+    --no-end) puis `cetic schedule enable`.
     """
     sid = _resolve_schedule(id_or_name)
     body: dict[str, Any] = {}
@@ -423,13 +578,24 @@ def update(
         body["windows"] = _parse_off_windows(off)
     if timezone is not None:
         body["timezone"] = timezone
+    period = _period_body(
+        starts_on=starts_on, ends_on=ends_on, for_=for_, no_start=no_start, no_end=no_end,
+    )
+    body.update(period)
     if not body:
-        rprint("[yellow]Rien à modifier (utilisez --name, --off et/ou --timezone).[/yellow]")
+        rprint(
+            "[yellow]Rien à modifier (utilisez --name, --off, --timezone ou une option "
+            "de période).[/yellow]"
+        )
         raise typer.Exit(0)
     try:
         s = client.patch(f"{SCHEDULE_PATH}/{sid}", json=body)
     except client.APIError as e:
         raise _bail(e) from e
+    if period and _period_ignored(period, s):
+        others = "Les autres modifications ont été appliquées. " if len(body) > len(period) else ""
+        rprint(f"[red]Erreur : {_PERIOD_UNSUPPORTED} {others}[/red]")
+        raise typer.Exit(1)
     rprint(f"[green]✓[/green] Planning [bold]{s.get('name', sid)}[/bold] mis à jour.")
 
 
