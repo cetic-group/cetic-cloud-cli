@@ -1,0 +1,8 @@
+version: 2
+updates:
+  # Les actions sont figées par SHA : Dependabot propose les montées de
+  # version (SHA + commentaire de version) par PR.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

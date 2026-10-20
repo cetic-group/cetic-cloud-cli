@@ -6,11 +6,29 @@ on:
       - 'v*'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
+  verifier-origine:
+    # Un tag ne publie que s'il pointe sur un commit de `main` : un tag posé
+    # sur une branche jamais relue ne doit produire aucune release.
+    name: Tag sur un commit de main
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - name: Le commit taggé appartient à main
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) n'est pas sur main — release refusée."
+            exit 1
+          fi
+
   build:
     name: Build ${{ matrix.os.name }}
+    needs: [verifier-origine]
     runs-on: ${{ matrix.os.runs-on }}
     strategy:
       fail-fast: false
@@ -21,9 +39,8 @@ jobs:
           - { name: darwin-arm64,   runs-on: macos-latest, ext: '',     target: cetic }
           - { name: windows-amd64,  runs-on: windows-latest, ext: .exe, target: cetic }
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.12'
 
@@ -62,7 +79,7 @@ jobs:
         run: mv "dist/${{ matrix.os.target }}${{ matrix.os.ext }}" "dist/cetic-${{ matrix.os.name }}${{ matrix.os.ext }}"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: cetic-${{ matrix.os.name }}
           path: dist/cetic-${{ matrix.os.name }}*
@@ -89,11 +106,14 @@ jobs:
     name: Publish Release
     needs: [build]
     runs-on: ubuntu-latest
+    # Publication soumise à l'approbation d'un membre de `release-managers`.
+    environment: release
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
-
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: dist
           merge-multiple: true
@@ -104,7 +124,7 @@ jobs:
           sha256sum cetic-* > SHA256SUMS
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           files: |
             dist/cetic-*
