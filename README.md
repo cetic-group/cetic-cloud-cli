@@ -227,6 +227,29 @@ cetic schedule enable weekend          # réactiver
 cetic schedule delete weekend          # supprime le planning et rallume la cible
 ```
 
+### Période de validité (depuis v2.1.0)
+
+Un planning peut être borné dans le temps. Les dates sont **incluses** et lues
+dans le fuseau du planning. Avant la date de début comme après la date de fin,
+la ressource reste allumée ; à la fin, elle est rallumée et le planning passe à
+l'état terminé.
+
+```bash
+# Tous les lundis de 8h à 20h pendant 4 mois (fin incluse le 19/02/2027)
+cetic schedule create lundis --vm web-01 --off "mon:08-mon:20" \
+    --starts-on 2026-10-20 --for 4m
+
+cetic schedule update lundis --ends-on 2027-03-31   # repousse la fin
+cetic schedule update lundis --no-end               # retire la fin
+cetic schedule update lundis --no-start --for 4m    # nouvelle durée à partir d'aujourd'hui
+cetic schedule enable lundis                        # relance un planning terminé
+```
+
+`--for` accepte une durée en semaines (`6w`) ou en mois (`4m`), comptée à partir
+de `--starts-on`, à défaut de la date de début déjà enregistrée, sinon d'aujourd'hui
+dans le fuseau du planning. Si la plateforme ne prend pas encore en
+charge la période, la commande échoue sans créer de planning illimité.
+
 ## DNS privé (depuis v1.6.0)
 
 `cetic dns` déclare des zones DNS servies **uniquement dans votre réseau privé**
