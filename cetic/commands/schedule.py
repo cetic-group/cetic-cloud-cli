@@ -27,7 +27,9 @@ Période de validité (facultative, dates incluses, fuseau du planning) :
     --ends-on 2027-02-19      s'arrête après ce jour (ressource rallumée,
                               planning terminé)
     --for 4m | --for 6w       durée en mois (m) ou semaines (w) à partir de
-                              --starts-on (ou d'aujourd'hui)
+                              --starts-on (à défaut : date de début déjà
+                              enregistrée, sinon aujourd'hui dans le fuseau
+                              du planning)
 
     Exemple : tous les lundis 8h-20h pendant 4 mois
         cetic schedule create lundis --vm web-01 --off "mon:08-mon:20" --for 4m
@@ -51,8 +53,9 @@ from __future__ import annotations
 
 import calendar
 import re
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import typer
 from rich import print as rprint
@@ -253,6 +256,37 @@ def _parse_for(value: str, start: date) -> date:
     return _period_end(start, int(m["n"]), m["u"].lower())
 
 
+# Fuseau appliqué par la plateforme quand aucun n'est précisé.
+_DEFAULT_TZ = "Europe/Paris"
+
+
+def _today_in(tz_name: str | None) -> date:
+    """Date du jour dans le fuseau du planning : la plateforme y lit les bornes."""
+    try:
+        return datetime.now(ZoneInfo(tz_name or _DEFAULT_TZ)).date()
+    except (ZoneInfoNotFoundError, ValueError):
+        return date.today()
+
+
+def _check_period_options(
+    *, starts_on: str | None, ends_on: str | None, for_: str | None,
+    no_start: bool = False, no_end: bool = False,
+) -> None:
+    """Contrôles locaux, avant tout appel réseau."""
+    if for_ and ends_on:
+        raise typer.BadParameter("--for et --ends-on sont exclusifs.")
+    if no_start and starts_on:
+        raise typer.BadParameter("--no-start et --starts-on sont exclusifs.")
+    if no_end and (ends_on or for_):
+        raise typer.BadParameter("--no-end est exclusif de --ends-on et --for.")
+    if starts_on:
+        _parse_date(starts_on, "--starts-on")
+    if ends_on:
+        _parse_date(ends_on, "--ends-on")
+    if for_:
+        _parse_for(for_, date(2000, 1, 1))
+
+
 def _period_body(
     *,
     starts_on: str | None,
@@ -260,19 +294,23 @@ def _period_body(
     for_: str | None,
     no_start: bool = False,
     no_end: bool = False,
+    for_base: date | None = None,
 ) -> dict[str, Any]:
-    """Champs `starts_on` / `ends_on` à envoyer (`None` = retirer la borne)."""
-    if for_ and ends_on:
-        raise typer.BadParameter("--for et --ends-on sont exclusifs.")
-    if no_start and starts_on:
-        raise typer.BadParameter("--no-start et --starts-on sont exclusifs.")
-    if no_end and (ends_on or for_):
-        raise typer.BadParameter("--no-end est exclusif de --ends-on et --for.")
+    """Champs `starts_on` / `ends_on` à envoyer (`None` = retirer la borne).
+
+    `--for` part de `--starts-on`, à défaut de `for_base` (date de début déjà
+    enregistrée, ou aujourd'hui dans le fuseau du planning)."""
+    _check_period_options(
+        starts_on=starts_on, ends_on=ends_on, for_=for_, no_start=no_start, no_end=no_end,
+    )
     body: dict[str, Any] = {}
     start = _parse_date(starts_on, "--starts-on") if starts_on else None
     end = _parse_date(ends_on, "--ends-on") if ends_on else None
     if for_:
-        end = _parse_for(for_, start or date.today())
+        base = start or for_base
+        if base is None:
+            raise typer.BadParameter("--for : date de départ inconnue.")
+        end = _parse_for(for_, base)
     if start and end and end < start:
         raise typer.BadParameter("La date de fin doit suivre la date de début.")
     if start:
@@ -393,6 +431,9 @@ def list_schedules() -> None:
             "enabled": "oui" if s.get("enabled", True) else "non",
             "windows": _fmt_windows(s.get("windows")),
             "period": _fmt_period(s),
+            "starts_on": s.get("starts_on"),
+            "ends_on": s.get("ends_on"),
+            "ended_at": s.get("ended_at"),
             "fee": _fee(s.get("estimated_monthly_fee_cents")),
         }
         for s in items
@@ -503,7 +544,9 @@ def create(
         db_instance=db_instance,
     )
     windows = _parse_off_windows(off)
-    period = _period_body(starts_on=starts_on, ends_on=ends_on, for_=for_)
+    period = _period_body(
+        starts_on=starts_on, ends_on=ends_on, for_=for_, for_base=_today_in(timezone),
+    )
 
     body: dict[str, Any] = {
         "name": name,
@@ -535,6 +578,8 @@ def create(
         f"[green]✓[/green] Planning créé : [bold]{s.get('name', name)}[/bold] "
         f"([dim]{s['id']}[/dim]) — cible {resource_type} {resource_id}"
     )
+    if period:
+        rprint(f"  Période : {_fmt_period(s)}")
 
 
 @app.command()
@@ -570,7 +615,23 @@ def update(
     relancer un planning terminé : repoussez sa fin (--ends-on, --for ou
     --no-end) puis `cetic schedule enable`.
     """
+    _check_period_options(
+        starts_on=starts_on, ends_on=ends_on, for_=for_, no_start=no_start, no_end=no_end,
+    )
     sid = _resolve_schedule(id_or_name)
+    for_base: date | None = None
+    if for_ and not starts_on:
+        # Même règle que la console : la durée part de la date de début déjà
+        # enregistrée, sinon d'aujourd'hui dans le fuseau du planning.
+        try:
+            current = client.get(f"{SCHEDULE_PATH}/{sid}")
+        except client.APIError as e:
+            raise _bail(e) from e
+        stored = current.get("starts_on") if isinstance(current, dict) else None
+        tz_name = timezone or (current.get("timezone") if isinstance(current, dict) else None)
+        for_base = (
+            _parse_date(stored, "starts_on") if stored and not no_start else _today_in(tz_name)
+        )
     body: dict[str, Any] = {}
     if name is not None:
         body["name"] = name
@@ -580,6 +641,7 @@ def update(
         body["timezone"] = timezone
     period = _period_body(
         starts_on=starts_on, ends_on=ends_on, for_=for_, no_start=no_start, no_end=no_end,
+        for_base=for_base,
     )
     body.update(period)
     if not body:
@@ -597,6 +659,8 @@ def update(
         rprint(f"[red]Erreur : {_PERIOD_UNSUPPORTED} {others}[/red]")
         raise typer.Exit(1)
     rprint(f"[green]✓[/green] Planning [bold]{s.get('name', sid)}[/bold] mis à jour.")
+    if period and isinstance(s, dict):
+        rprint(f"  Période : {_fmt_period(s)}")
 
 
 @app.command()

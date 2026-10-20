@@ -245,7 +245,8 @@ cetic schedule enable lundis                        # relance un planning termin
 ```
 
 `--for` accepte une durée en semaines (`6w`) ou en mois (`4m`), comptée à partir
-de `--starts-on` (ou d'aujourd'hui). Si la plateforme ne prend pas encore en
+de `--starts-on`, à défaut de la date de début déjà enregistrée, sinon d'aujourd'hui
+dans le fuseau du planning. Si la plateforme ne prend pas encore en
 charge la période, la commande échoue sans créer de planning illimité.
 
 ## DNS privé (depuis v1.6.0)

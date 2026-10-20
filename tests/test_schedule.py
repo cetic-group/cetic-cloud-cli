@@ -361,3 +361,104 @@ def test_list_shows_period_and_ended(runner, mock_api) -> None:
     rows = json.loads(r.output)
     assert rows[0]["period"] == "terminé (2027-02-19)"
     assert rows[1]["period"] == "à partir du 2026-10-20"
+
+
+def test_update_for_starts_from_stored_start(runner, mock_api) -> None:
+    """Comme la console : la durée part de la date de début enregistrée."""
+    mock_api.get(f"/v1/schedules/{SID}").mock(return_value=httpx.Response(
+        200, json={"id": SID, "name": "p", "timezone": "Europe/Paris", "starts_on": "2026-12-01"}))
+    route = mock_api.patch(f"/v1/schedules/{SID}").mock(side_effect=_echo(200))
+    r = runner.invoke(app, ["schedule", "update", SID, "--for", "4m"])
+    assert r.exit_code == 0, r.output
+    assert json.loads(route.calls.last.request.content) == {"ends_on": "2027-03-31"}
+    assert "2027-03-31" in r.output
+
+
+def test_create_for_without_start_uses_today_in_tz(runner, mock_api, monkeypatch) -> None:
+    import cetic.commands.schedule as sched
+
+    seen: list[str | None] = []
+    monkeypatch.setattr(sched, "_today_in", lambda tz: seen.append(tz) or date(2030, 1, 31))
+    route = mock_api.post("/v1/schedules").mock(side_effect=_echo())
+    r = runner.invoke(app, ["schedule", "create", "x", "--vm", VM, "--off", "fri:20-mon:08",
+                            "--for", "1m", "--tz", "Africa/Abidjan"])
+    assert r.exit_code == 0, r.output
+    assert seen == ["Africa/Abidjan"]
+    sent = json.loads(route.calls.last.request.content)
+    assert sent["ends_on"] == "2030-02-27" and "starts_on" not in sent
+
+
+def test_create_for_counts_from_given_start(runner, mock_api) -> None:
+    route = mock_api.post("/v1/schedules").mock(side_effect=_echo())
+    r = runner.invoke(app, ["schedule", "create", "x", "--vm", VM, "--off", "fri:20-mon:08",
+                            "--starts-on", "2027-01-10", "--for", "2w"])
+    assert r.exit_code == 0, r.output
+    assert json.loads(route.calls.last.request.content)["ends_on"] == "2027-01-23"
+
+
+def test_today_in_reads_the_schedule_timezone() -> None:
+    from cetic.commands.schedule import _today_in
+
+    # Kiritimati (UTC+14) et Pago Pago (UTC-11) n'ont jamais la même date.
+    assert _today_in("Pacific/Kiritimati") > _today_in("Pacific/Pago_Pago")
+
+
+@pytest.mark.parametrize(
+    "resp_extra",
+    [
+        {"starts_on": None},                               # ends_on absent
+        {"starts_on": None, "ends_on": "2027-12-31"},       # valeur différente
+    ],
+)
+def test_update_period_not_recorded_fails(runner, mock_api, resp_extra) -> None:
+    mock_api.patch(f"/v1/schedules/{SID}").mock(
+        return_value=httpx.Response(200, json={"id": SID, "name": "p", **resp_extra}))
+    r = runner.invoke(app, ["schedule", "update", SID, "--ends-on", "2027-02-19"])
+    assert r.exit_code == 1
+
+
+def test_update_no_start_sends_null(runner, mock_api) -> None:
+    route = mock_api.patch(f"/v1/schedules/{SID}").mock(side_effect=_echo(200))
+    r = runner.invoke(app, ["schedule", "update", SID, "--no-start"])
+    assert r.exit_code == 0, r.output
+    assert json.loads(route.calls.last.request.content) == {"starts_on": None}
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["--no-start", "--starts-on", "2027-01-01"],
+        ["--no-end", "--ends-on", "2027-01-01"],
+        ["--no-end", "--for", "4m"],
+    ],
+)
+def test_update_invalid_period_options_no_call(runner, mock_api, args) -> None:
+    route = mock_api.patch(f"/v1/schedules/{SID}").mock(side_effect=_echo(200))
+    r = runner.invoke(app, ["schedule", "update", SID, *args])
+    assert r.exit_code != 0
+    assert not route.called
+
+
+def test_get_shows_period(runner, mock_api) -> None:
+    mock_api.get(f"/v1/schedules/{SID}").mock(return_value=httpx.Response(200, json={
+        "id": SID, "name": "p", "windows": [], "starts_on": "2026-10-20", "ends_on": "2027-02-19"}))
+    r = runner.invoke(app, ["schedule", "get", SID], env={"CCP_OUTPUT": "json"})
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.output)["period"] == "2026-10-20 → 2027-02-19"
+
+
+def test_list_json_exposes_raw_period_fields(runner, mock_api) -> None:
+    mock_api.get("/v1/schedules").mock(return_value=httpx.Response(200, json=[
+        {"id": SID, "name": "a", "windows": [], "starts_on": "2026-10-20", "ends_on": "2027-02-19",
+         "ended_at": None}]))
+    r = runner.invoke(app, ["schedule", "list"], env={"CCP_OUTPUT": "json"})
+    row = json.loads(r.output)[0]
+    assert (row["starts_on"], row["ends_on"], row["ended_at"]) == ("2026-10-20", "2027-02-19", None)
+
+
+@pytest.mark.parametrize("dur", ["0m", "0w"])
+def test_create_for_zero_refused(runner, mock_api, dur) -> None:
+    route = mock_api.post("/v1/schedules").mock(side_effect=_echo())
+    r = runner.invoke(app, ["schedule", "create", "x", "--vm", VM, "--off", "fri:20-mon:08", "--for", dur])
+    assert r.exit_code != 0
+    assert not route.called
