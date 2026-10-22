@@ -522,6 +522,77 @@ def test_tags_list(runner, mock_api):
     assert "v1.0.0" in result.stdout
 
 
+def test_repos_affiche_tags_taille_et_dernier_push(runner, mock_api):
+    """L'API renvoie `tags_count`, `size` (octets) et `last_pushed`."""
+    mock_api.get(f"/v1/registries/{REG_ID}/repositories").mock(
+        return_value=httpx.Response(200, json={
+            "repositories": [
+                {"name": "demo/app", "tags_count": 3, "size": 123456789,
+                 "last_pushed": "2030-01-02T03:04:05Z"},
+            ],
+            "syncing": False,
+        })
+    )
+    result = runner.invoke(app, ["registry", "repos", REG_ID])
+    assert result.exit_code == 0, result.stdout
+    assert "demo/app" in result.stdout
+    assert " 3 " in result.stdout
+    assert "123.5 MB" in result.stdout
+    assert "2030-01-02 03:04 UTC" in result.stdout
+    assert "Indexation" not in result.stderr
+
+
+def test_repos_reste_compatible_avec_l_ancienne_api(runner, mock_api):
+    """Ancienne réponse : `tag_count` seul, sans `size` ni `last_pushed`."""
+    mock_api.get(f"/v1/registries/{REG_ID}/repositories").mock(
+        return_value=httpx.Response(200, json=[{"name": "demo/legacy", "tag_count": 7}])
+    )
+    result = runner.invoke(app, ["registry", "repos", REG_ID])
+    assert result.exit_code == 0, result.stdout
+    ligne = next(line for line in result.stdout.splitlines() if "demo/legacy" in line)
+    assert " 7 " in ligne
+    assert ligne.count("—") == 2  # taille et dernier push absents
+
+
+def test_repos_signale_une_indexation_en_cours_sur_stderr(runner, mock_api):
+    mock_api.get(f"/v1/registries/{REG_ID}/repositories").mock(
+        return_value=httpx.Response(200, json={"repositories": [], "syncing": True})
+    )
+    result = runner.invoke(app, ["registry", "repos", REG_ID])
+    assert result.exit_code == 0
+    assert "Indexation du registre en cours" in result.stderr
+    assert "Indexation" not in result.stdout
+
+
+def test_tags_affiche_la_date_de_push_et_la_taille(runner, mock_api):
+    mock_api.get(f"/v1/registries/{REG_ID}/repositories/demo/app/tags").mock(
+        return_value=httpx.Response(200, json={
+            "name": "demo/app",
+            "tags": [{"name": "v1.2.3", "digest": "sha256:" + "ab" * 32,
+                      "size": 4200000, "pushed_at": "2030-01-02T03:04:05+00:00"}],
+            "syncing": False,
+        })
+    )
+    result = runner.invoke(app, ["registry", "tags", REG_ID, "demo/app"])
+    assert result.exit_code == 0, result.stdout
+    assert "2030-01-02 03:04 UTC" in result.stdout
+    assert "4.2 MB" in result.stdout
+
+
+def test_tags_signale_une_indexation_en_cours_sur_stderr(runner, mock_api):
+    """Une liste vide avec `syncing=true` n'est pas un dépôt vide ; le
+    message part sur stderr seul pour ne pas polluer une sortie redirigée."""
+    mock_api.get(f"/v1/registries/{REG_ID}/repositories/demo/vide/tags").mock(
+        return_value=httpx.Response(200, json={
+            "name": "demo/vide", "tags": [], "syncing": True,
+        })
+    )
+    result = runner.invoke(app, ["registry", "tags", REG_ID, "demo/vide"])
+    assert result.exit_code == 0
+    assert "Indexation du registre en cours" in result.stderr
+    assert "Indexation" not in result.stdout
+
+
 def test_tag_delete(runner, mock_api):
     mock_api.delete(
         f"/v1/registries/{REG_ID}/repositories/myapp/api/tags/v1.0.0"

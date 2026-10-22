@@ -664,8 +664,14 @@ def acl_remove(
 # ---------------------------------------------------------------------------
 
 
-def _fetch_repos_page(rid: str, params: dict[str, Any]) -> tuple[list[dict[str, Any]], str | None]:
-    """Récupère une page de repos. Renvoie (items, next_url_path)."""
+def _fetch_repos_page(
+    rid: str, params: dict[str, Any],
+) -> tuple[list[dict[str, Any]], str | None, bool]:
+    """Récupère une page de repos. Renvoie (items, next_url_path, syncing).
+
+    `syncing` = l'API construit encore l'index des dépôts : une liste vide
+    n'est alors PAS un registre vide.
+    """
     # On utilise httpx directement pour récupérer le header `Link`.
     import httpx
 
@@ -686,8 +692,50 @@ def _fetch_repos_page(rid: str, params: dict[str, Any]) -> tuple[list[dict[str, 
     client._raise_for_status(resp)
     payload = resp.json()
     items = payload if isinstance(payload, list) else payload.get("repositories", [])
+    syncing = isinstance(payload, dict) and bool(payload.get("syncing"))
     next_url = _parse_link_header(resp.headers.get("Link"))
-    return items, next_url
+    return items, next_url, syncing
+
+
+def _human_size(value: Any) -> str:
+    """Taille en octets → texte lisible (unités décimales, comme docker)."""
+    if value is None or value == "":
+        return "—"
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    for unit in ("B", "kB", "MB", "GB", "TB"):
+        if n < 1000 or unit == "TB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1000
+    return f"{n:.1f} TB"
+
+
+def _short_dt(value: Any) -> str:
+    """ISO 8601 → `AAAA-MM-JJ HH:MM UTC`, fuseau toujours affiché.
+
+    Une date sans fuseau est supposée UTC (format des réponses de l'API).
+    """
+    if not value:
+        return "—"
+    from datetime import datetime, timezone
+
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return str(value)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def _syncing_notice() -> None:
+    typer.echo(
+        "Indexation du registre en cours : la liste peut être incomplète, "
+        "relancez la commande dans quelques secondes.",
+        err=True,
+    )
 
 
 @app.command()
@@ -699,10 +747,12 @@ def repos(
     """Liste les dépôts d'images de la registry (paginé Distribution v2)."""
     rid = _resolve_registry(id_or_name)
     collected: list[dict[str, Any]] = []
+    syncing = False
     params: dict[str, Any] = {"n": limit}
     try:
         while True:
-            items, next_url = _fetch_repos_page(rid, params)
+            items, next_url, page_syncing = _fetch_repos_page(rid, params)
+            syncing = syncing or page_syncing
             collected.extend(items)
             if not all_pages or not next_url:
                 break
@@ -720,17 +770,24 @@ def repos(
     rows: list[dict[str, Any]] = []
     for it in collected:
         if isinstance(it, str):
-            rows.append({"name": it, "tags": "—", "size": "—"})
+            rows.append({"name": it, "tags": "—", "size": "—", "pushed": "—"})
         else:
+            # `tags_count` est le nom renvoyé par l'API ; `tag_count` reste lu
+            # pour les versions antérieures.
+            count = it.get("tags_count", it.get("tag_count"))
             rows.append({
                 "name": it.get("name", "—"),
-                "tags": str(it.get("tag_count", "—")),
-                "size": it.get("size_human") or it.get("size", "—"),
+                "tags": "—" if count is None else str(count),
+                "size": it.get("size_human") or _human_size(it.get("size")),
+                "pushed": _short_dt(it.get("last_pushed")),
             })
+    if syncing:
+        _syncing_notice()
     render_list(
         rows,
         title=f"Repositories ({len(rows)})",
-        columns=[("name", "Repo"), ("tags", "Tags"), ("size", "Taille")],
+        columns=[("name", "Repo"), ("tags", "Tags"), ("size", "Taille"),
+                 ("pushed", "Dernier push")],
     )
 
 
@@ -746,6 +803,9 @@ def tags(
     except client.APIError as e:
         raise _bail(e) from e
     items = data if isinstance(data, list) else data.get("tags", [])
+    if isinstance(data, dict) and data.get("syncing"):
+        # Index du dépôt en construction : « 0 tag » serait faux.
+        _syncing_notice()
     rows: list[dict[str, Any]] = []
     for t in items:
         if isinstance(t, str):
@@ -754,8 +814,8 @@ def tags(
             rows.append({
                 "tag": t.get("name", "—"),
                 "digest": (t.get("digest") or "—")[:19],
-                "pushed": (t.get("pushed_at") or "—")[:10],
-                "size": t.get("size_human") or t.get("size", "—"),
+                "pushed": _short_dt(t.get("pushed_at")),
+                "size": t.get("size_human") or _human_size(t.get("size")),
             })
     render_list(
         rows,
