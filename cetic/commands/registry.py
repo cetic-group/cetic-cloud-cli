@@ -664,8 +664,14 @@ def acl_remove(
 # ---------------------------------------------------------------------------
 
 
-def _fetch_repos_page(rid: str, params: dict[str, Any]) -> tuple[list[dict[str, Any]], str | None]:
-    """Récupère une page de repos. Renvoie (items, next_url_path)."""
+def _fetch_repos_page(
+    rid: str, params: dict[str, Any],
+) -> tuple[list[dict[str, Any]], str | None, bool]:
+    """Récupère une page de repos. Renvoie (items, next_url_path, syncing).
+
+    `syncing` = l'API construit encore l'index des dépôts : une liste vide
+    n'est alors PAS un registre vide.
+    """
     # On utilise httpx directement pour récupérer le header `Link`.
     import httpx
 
@@ -686,15 +692,9 @@ def _fetch_repos_page(rid: str, params: dict[str, Any]) -> tuple[list[dict[str, 
     client._raise_for_status(resp)
     payload = resp.json()
     items = payload if isinstance(payload, list) else payload.get("repositories", [])
-    if isinstance(payload, dict) and payload.get("syncing"):
-        _syncing_flags.add(rid)
+    syncing = isinstance(payload, dict) and bool(payload.get("syncing"))
     next_url = _parse_link_header(resp.headers.get("Link"))
-    return items, next_url
-
-
-# Registries dont l'API a répondu `syncing=true` : l'index des dépôts est en
-# cours de construction, une liste vide n'est PAS un registre vide.
-_syncing_flags: set[str] = set()
+    return items, next_url, syncing
 
 
 def _human_size(value: Any) -> str:
@@ -713,11 +713,21 @@ def _human_size(value: Any) -> str:
 
 
 def _short_dt(value: Any) -> str:
-    """ISO 8601 → `AAAA-MM-JJ HH:MM` (UTC tel que renvoyé par l'API)."""
+    """ISO 8601 → `AAAA-MM-JJ HH:MM UTC`, fuseau toujours affiché.
+
+    Une date sans fuseau est supposée UTC (format des réponses de l'API).
+    """
     if not value:
         return "—"
-    text = str(value).replace("T", " ")
-    return text[:16]
+    from datetime import datetime, timezone
+
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return str(value)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
 
 def _syncing_notice() -> None:
@@ -737,10 +747,12 @@ def repos(
     """Liste les dépôts d'images de la registry (paginé Distribution v2)."""
     rid = _resolve_registry(id_or_name)
     collected: list[dict[str, Any]] = []
+    syncing = False
     params: dict[str, Any] = {"n": limit}
     try:
         while True:
-            items, next_url = _fetch_repos_page(rid, params)
+            items, next_url, page_syncing = _fetch_repos_page(rid, params)
+            syncing = syncing or page_syncing
             collected.extend(items)
             if not all_pages or not next_url:
                 break
@@ -769,7 +781,7 @@ def repos(
                 "size": it.get("size_human") or _human_size(it.get("size")),
                 "pushed": _short_dt(it.get("last_pushed")),
             })
-    if rid in _syncing_flags:
+    if syncing:
         _syncing_notice()
     render_list(
         rows,
