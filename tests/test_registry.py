@@ -605,28 +605,72 @@ def test_tag_delete(runner, mock_api):
 
 def test_gc_no_wait(runner, mock_api):
     mock_api.post(f"/v1/registries/{REG_ID}/garbage-collect").mock(
-        return_value=httpx.Response(202, json={"job_id": "job-1"})
+        return_value=httpx.Response(202, json={
+            "message": "Nettoyage demandé.", "registry_id": REG_ID, "gc_status": "pending",
+        })
     )
     result = runner.invoke(app, ["registry", "gc", REG_ID])
     assert result.exit_code == 0, result.stdout
-    assert "job-1" in result.stdout
+    assert "Nettoyage demandé" in result.stdout
 
 
-def test_gc_with_wait(runner, mock_api, monkeypatch):
+def _reg_gc(statut, erreur=None):
+    return {"id": REG_ID, "name": "demo", "gc_last_status": statut,
+            "gc_last_error": erreur, "gc_last_status_at": "2030-01-02T03:04:05+00:00"}
+
+
+def test_gc_with_wait_suit_le_statut_de_la_registry(runner, mock_api, monkeypatch):
+    """`--wait` lit `gc_last_status` de la registry jusqu'à un statut terminal."""
     monkeypatch.setattr("cetic.commands.registry.time.sleep", lambda _: None)
     mock_api.post(f"/v1/registries/{REG_ID}/garbage-collect").mock(
-        return_value=httpx.Response(202, json={"job_id": "job-1"})
+        return_value=httpx.Response(202, json={"gc_status": "pending"})
     )
-    states = iter([
-        httpx.Response(200, json={"status": "running"}),
-        httpx.Response(200, json={"status": "succeeded", "duration_seconds": 42}),
-    ])
-    mock_api.get(f"/v1/registries/{REG_ID}/garbage-collect/job-1").mock(
-        side_effect=lambda req: next(states)
+    etats = iter([_reg_gc("pending"), _reg_gc("running"), _reg_gc("succeeded")])
+    mock_api.get(f"/v1/registries/{REG_ID}").mock(
+        side_effect=lambda req: httpx.Response(200, json=next(etats))
     )
     result = runner.invoke(app, ["registry", "gc", REG_ID, "--wait"])
     assert result.exit_code == 0, result.stdout
-    assert "succeeded" in result.stdout
+    assert "réussi" in result.stdout
+
+
+def test_gc_refuse_est_signale_et_sort_en_erreur(runner, mock_api, monkeypatch):
+    monkeypatch.setattr("cetic.commands.registry.time.sleep", lambda _: None)
+    mock_api.post(f"/v1/registries/{REG_ID}/garbage-collect").mock(
+        return_value=httpx.Response(202, json={"gc_status": "pending"})
+    )
+    mock_api.get(f"/v1/registries/{REG_ID}").mock(
+        return_value=httpx.Response(200, json=_reg_gc(
+            "refused", "Nettoyage non lancé : contenu non lu entièrement."))
+    )
+    result = runner.invoke(app, ["registry", "gc", REG_ID, "--wait"])
+    assert result.exit_code == 1
+    assert "refusé" in result.stdout
+    assert "contenu non lu entièrement" in result.stdout
+
+
+def test_gc_status_affiche_l_issue_et_le_message(runner, mock_api):
+    mock_api.get(f"/v1/registries/{REG_ID}").mock(
+        return_value=httpx.Response(200, json=_reg_gc("failed", "Le nettoyage a échoué."))
+    )
+    result = runner.invoke(app, ["registry", "gc-status", REG_ID])
+    assert result.exit_code == 0, result.stdout
+    assert "échoué" in result.stdout
+    assert "Le nettoyage a échoué." in result.stdout
+    assert "2030-01-02 03:04 UTC" in result.stdout
+
+
+def test_gc_status_en_json_rend_les_valeurs_brutes(runner, mock_api, monkeypatch):
+    import json
+
+    monkeypatch.setenv("CCP_OUTPUT", "json")
+    mock_api.get(f"/v1/registries/{REG_ID}").mock(
+        return_value=httpx.Response(200, json=_reg_gc("refused", "x"))
+    )
+    result = runner.invoke(app, ["registry", "gc-status", REG_ID])
+    data = json.loads(result.stdout)
+    assert data["gc_last_status"] == "refused"
+    assert data["gc_last_status_at"] == "2030-01-02T03:04:05+00:00"
 
 
 # ---------------------------------------------------------------------------
@@ -656,12 +700,13 @@ def test_no_legacy_brand_terminology():
 
 
 def test_registry_app_command_count():
-    """v0.41.0 : 12 top-level (8 originales + update + 2 stubs dépréciés + resize-disk) + 4 user + 3 acl + 1 tag delete = 20."""
+    """13 top-level (8 originales + update + 2 stubs dépréciés + resize-disk + gc-status) + 4 user + 3 acl + 1 tag delete = 21."""
     from cetic.commands import registry
 
     top_level = [c.name for c in registry.app.registered_commands]
-    # create, list, get, delete, login, gc, repos, tags, update, attach-ip, detach-ip, resize-disk
-    assert len(top_level) == 12
+    # create, list, get, delete, login, gc, gc-status, repos, tags, update, attach-ip, detach-ip, resize-disk
+    assert len(top_level) == 13
+    assert "gc-status" in top_level
     assert "update" in top_level or any(c.name is None and c.callback.__name__ == "update" for c in registry.app.registered_commands)
 
     user_cmds = [c.name for c in registry.user_app.registered_commands]
@@ -674,7 +719,7 @@ def test_registry_app_command_count():
     assert len(tag_cmds) == 1  # delete
 
     total = len(top_level) + len(user_cmds) + len(acl_cmds) + len(tag_cmds)
-    assert total == 20
+    assert total == 21
 
 
 def test_redact_helper():
@@ -716,3 +761,39 @@ def test_resolve_id_passthrough_uuid(mock_api):
 
     # Aucun appel API attendu si déjà UUID.
     assert resolve_id("/v1/registries", REG_ID) == REG_ID
+
+
+def test_les_dates_sont_converties_en_utc(runner, mock_api):
+    """Un offset non nul est converti, pas recopié : 05:04+02:00 = 03:04 UTC."""
+    mock_api.get(f"/v1/registries/{REG_ID}/repositories/demo/app/tags").mock(
+        return_value=httpx.Response(200, json={
+            "name": "demo/app", "syncing": False,
+            "tags": [{"name": "v1", "digest": "sha256:" + "cd" * 32, "size": 1,
+                      "pushed_at": "2030-01-02T05:04:05+02:00"}],
+        })
+    )
+    result = runner.invoke(app, ["registry", "tags", REG_ID, "demo/app"])
+    assert result.exit_code == 0, result.stdout
+    assert "2030-01-02 03:04 UTC" in result.stdout
+    assert "05:04" not in result.stdout
+
+
+def test_repos_et_tags_en_json_rendent_les_valeurs_brutes(runner, mock_api, monkeypatch):
+    import json
+
+    monkeypatch.setenv("CCP_OUTPUT", "json")
+    mock_api.get(f"/v1/registries/{REG_ID}/repositories").mock(
+        return_value=httpx.Response(200, json={"repositories": [
+            {"name": "demo/app", "tags_count": 2, "size": 123456789,
+             "last_pushed": "2030-01-02T03:04:05Z"}], "syncing": False})
+    )
+    mock_api.get(f"/v1/registries/{REG_ID}/repositories/demo/app/tags").mock(
+        return_value=httpx.Response(200, json={"name": "demo/app", "syncing": False, "tags": [
+            {"name": "v1", "digest": "sha256:" + "ef" * 32, "size": 4200000,
+             "pushed_at": "2030-01-02T03:04:05Z"}]})
+    )
+    repos = json.loads(runner.invoke(app, ["registry", "repos", REG_ID]).stdout)
+    tags = json.loads(runner.invoke(app, ["registry", "tags", REG_ID, "demo/app"]).stdout)
+    assert repos[0]["size"] == 123456789 and repos[0]["tags_count"] == 2
+    assert repos[0]["last_pushed"] == "2030-01-02T03:04:05Z"
+    assert tags[0]["size"] == 4200000 and tags[0]["pushed_at"] == "2030-01-02T03:04:05Z"

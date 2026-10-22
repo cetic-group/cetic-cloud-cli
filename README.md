@@ -595,7 +595,8 @@ cetic registry acl set myreg --user ci --repo "myapp/*" --actions pull,push
 cetic registry repos myreg --all
 cetic registry tags myreg myapp/api
 cetic registry tag delete myreg myapp/api v1.0.0 --yes
-cetic registry gc myreg --wait
+cetic registry gc myreg --wait                           # exit 1 if refused or failed
+cetic registry gc-status myreg                           # last cleanup outcome
 
 # Templates (custom)
 cetic template list

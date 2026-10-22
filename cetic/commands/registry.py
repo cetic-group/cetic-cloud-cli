@@ -20,7 +20,7 @@ from urllib.parse import unquote
 import typer
 from rich import print as rprint
 
-from cetic import client
+from cetic import client, config
 from cetic._resolve import resolve_id
 from cetic._secrets import (
     delete_admin_password,
@@ -443,36 +443,77 @@ def login(
 # ---------------------------------------------------------------------------
 
 
+_GC_TERMINAUX = ("succeeded", "failed", "refused")
+_GC_LIBELLES = {
+    "pending": "en attente", "running": "en cours", "succeeded": "réussi",
+    "failed": "échoué", "refused": "refusé",
+}
+
+
+def _afficher_statut_gc(reg: dict[str, Any]) -> None:
+    """Issue du dernier nettoyage, telle que renvoyée par l'API."""
+    statut = reg.get("gc_last_status")
+    if not statut:
+        rprint("Aucun nettoyage demandé pour cette registry.")
+        return
+    couleur = {"succeeded": "green", "failed": "red", "refused": "yellow"}.get(statut, "white")
+    quand = _short_dt(reg.get("gc_last_status_at"))
+    rprint(f"Dernier nettoyage : [{couleur}]{_GC_LIBELLES.get(statut, statut)}[/] ({quand})")
+    if reg.get("gc_last_error"):
+        rprint(f"  {reg['gc_last_error']}")
+
+
 @app.command()
 def gc(
     id_or_name: str = typer.Argument(..., metavar="ID|NAME"),
-    wait: bool = typer.Option(False, "--wait", help="Attend la fin du GC"),
-    poll_interval: float = typer.Option(3.0, "--poll-interval", help="Seconde entre 2 polls"),
-    timeout: float = typer.Option(600.0, "--timeout", help="Timeout total (secondes)"),
+    wait: bool = typer.Option(False, "--wait", help="Attend l'issue du nettoyage"),
+    poll_interval: float = typer.Option(5.0, "--poll-interval", help="Secondes entre 2 lectures"),
+    timeout: float = typer.Option(3600.0, "--timeout", help="Attente maximale (secondes)"),
 ) -> None:
-    """Déclenche un garbage collection manuel (downtime 30-60s typique)."""
+    """Demande un nettoyage (garbage collection) de la registry.
+
+    Le nettoyage n'est lancé que si le contenu de la registry est lu
+    entièrement ; sinon il est refusé et rien n'est supprimé. Son issue se
+    suit avec `--wait` ou `cetic registry gc-status`.
+    """
     rid = _resolve_registry(id_or_name)
     try:
-        job = client.post(f"{REGISTRIES_PATH}/{rid}/garbage-collect")
+        client.post(f"{REGISTRIES_PATH}/{rid}/garbage-collect")
     except client.APIError as e:
         raise _bail(e) from e
-    rprint(f"[green]✓[/green] GC déclenché : [bold]{job.get('job_id', '—')}[/bold]")
+    rprint("[green]✓[/green] Nettoyage demandé.")
     if not wait:
         return
     deadline = time.monotonic() + timeout
-    job_id = job.get("job_id")
     while time.monotonic() < deadline:
         try:
-            status = client.get(f"{REGISTRIES_PATH}/{rid}/garbage-collect/{job_id}")
+            reg = client.get(f"{REGISTRIES_PATH}/{rid}")
         except client.APIError as e:
             raise _bail(e) from e
-        state = status.get("status", "running")
-        if state in ("succeeded", "failed", "completed"):
-            color = "green" if state in ("succeeded", "completed") else "red"
-            rprint(f"[{color}]GC {state}[/]. Durée: {status.get('duration_seconds', '—')}s")
+        if reg.get("gc_last_status") in _GC_TERMINAUX:
+            _afficher_statut_gc(reg)
+            if reg.get("gc_last_status") != "succeeded":
+                raise typer.Exit(code=1)
             return
         time.sleep(poll_interval)
-    rprint("[yellow]Timeout — le GC est peut-être encore en cours.[/yellow]")
+    rprint("[yellow]Délai dépassé : le nettoyage est peut-être encore en cours.[/yellow]")
+    raise typer.Exit(code=1)
+
+
+@app.command(name="gc-status")
+def gc_status(id_or_name: str = typer.Argument(..., metavar="ID|NAME")) -> None:
+    """Issue du dernier nettoyage (statut, date, message)."""
+    rid = _resolve_registry(id_or_name)
+    try:
+        reg = client.get(f"{REGISTRIES_PATH}/{rid}")
+    except client.APIError as e:
+        raise _bail(e) from e
+    if config.get_output() in ("json", "yaml"):
+        render_one({k: reg.get(k) for k in
+                    ("gc_last_status", "gc_last_error", "gc_last_status_at", "gc_last_run_at")},
+                   title="Nettoyage")
+        return
+    _afficher_statut_gc(reg)
 
 
 # ---------------------------------------------------------------------------
@@ -783,6 +824,10 @@ def repos(
             })
     if syncing:
         _syncing_notice()
+    if config.get_output() in ("json", "yaml"):
+        # Valeurs brutes de l'API (octets, ISO 8601), pas le rendu de table.
+        render_list(collected, title="Repositories", columns=[])
+        return
     render_list(
         rows,
         title=f"Repositories ({len(rows)})",
@@ -806,6 +851,9 @@ def tags(
     if isinstance(data, dict) and data.get("syncing"):
         # Index du dépôt en construction : « 0 tag » serait faux.
         _syncing_notice()
+    if config.get_output() in ("json", "yaml"):
+        render_list(list(items), title="Tags", columns=[])
+        return
     rows: list[dict[str, Any]] = []
     for t in items:
         if isinstance(t, str):
