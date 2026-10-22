@@ -522,6 +522,52 @@ def test_tags_list(runner, mock_api):
     assert "v1.0.0" in result.stdout
 
 
+def test_repos_affiche_tags_taille_et_dernier_push(runner, mock_api):
+    """L'API renvoie `tags_count`, `size` (octets) et `last_pushed`."""
+    mock_api.get(f"/v1/registries/{REG_ID}/repositories").mock(
+        return_value=httpx.Response(200, json={
+            "repositories": [
+                {"name": "equipe/backoffice", "tags_count": 3, "size": 169762087,
+                 "last_pushed": "2026-10-21T11:42:43Z"},
+            ],
+            "syncing": False,
+        })
+    )
+    result = runner.invoke(app, ["registry", "repos", REG_ID])
+    assert result.exit_code == 0, result.stdout
+    assert "equipe/backoffice" in result.stdout
+    assert " 3 " in result.stdout
+    assert "169.8 MB" in result.stdout
+    assert "2026-10-21 11:42" in result.stdout
+
+
+def test_tags_affiche_la_date_de_push_et_la_taille(runner, mock_api):
+    mock_api.get(f"/v1/registries/{REG_ID}/repositories/equipe/client/tags").mock(
+        return_value=httpx.Response(200, json={
+            "name": "equipe/client",
+            "tags": [{"name": "dev-20261021-4ce71ed", "digest": "sha256:5c0c83182614aa",
+                      "size": 57071233, "pushed_at": "2026-10-21T11:42:46Z"}],
+            "syncing": False,
+        })
+    )
+    result = runner.invoke(app, ["registry", "tags", REG_ID, "equipe/client"])
+    assert result.exit_code == 0, result.stdout
+    assert "2026-10-21 11:42" in result.stdout
+    assert "57.1 MB" in result.stdout
+
+
+def test_tags_signale_une_indexation_en_cours(runner, mock_api):
+    """Une liste vide avec `syncing=true` n'est pas un dépôt vide."""
+    mock_api.get(f"/v1/registries/{REG_ID}/repositories/equipe/backoffice/tags").mock(
+        return_value=httpx.Response(200, json={
+            "name": "equipe/backoffice", "tags": [], "syncing": True,
+        })
+    )
+    result = runner.invoke(app, ["registry", "tags", REG_ID, "equipe/backoffice"])
+    assert result.exit_code == 0
+    assert "Indexation du registre en cours" in result.output
+
+
 def test_tag_delete(runner, mock_api):
     mock_api.delete(
         f"/v1/registries/{REG_ID}/repositories/myapp/api/tags/v1.0.0"
