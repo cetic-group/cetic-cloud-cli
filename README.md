@@ -653,3 +653,17 @@ git tag -a v1.6.0 -m "…" && git push origin v1.6.0
 - [Console](https://console.cloud.cetic-group.com)
 - [Terraform Provider](https://github.com/cetic-group/terraform-provider-cetic-cloud-platform)
 - [Issues](https://github.com/cetic-group/cetic-cloud-cli/issues)
+
+### Cache HTTP AppGW
+
+Nécessite l’API avec le support de cetic-cloud-platform#1733. Le cache est désactivé par défaut.
+
+```bash
+cetic appgw update web-edge --cache-enabled --cache-size-mb 64
+cetic appgw route update web-edge --route-id UUID --cache-mode respect --cache-debug-headers
+cetic appgw cache show web-edge
+cetic appgw cache purge web-edge
+cetic appgw cache show web-edge
+```
+
+`--cache-ttl` définit le repli du mode `force` ; `--cache-max-ttl` borne la durée. `--cache-bypass-cookie session` est répétable. Une liste vide (`--cache-bypass-cookie ""`) exclut toute requête portant un cookie. Authorization, Set-Cookie et les réponses privées ne sont jamais cachés. `Vary: Accept-Language` contourne le cache. Suivre la purge jusqu’au succès des deux instances ; un résultat partiel demande une nouvelle tentative.
