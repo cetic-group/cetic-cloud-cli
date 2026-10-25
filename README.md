@@ -577,6 +577,8 @@ cetic db pg extensions-set <id> --allow postgis --allow postgis_topology --wait
 cetic db pg extensions-set <id> --allow pg_cron --preload pg_cron \
     --cron-database jobs --yes                           # préchargement : redémarre l'instance
 cetic db pg extensions-set <id> --clear-allowed          # refusé tant qu'une extension est installée
+cetic db pg extensions-set <id> --clear-cron-database    # base de pg_cron par défaut
+CCP_OUTPUT=json cetic db pg extensions-set <id> --allow vector --wait   # sortie scriptable
 # puis, propriétaire de la base : CREATE EXTENSION postgis;
 # pgcrypto, pg_trgm… se créent directement, sans autorisation
 

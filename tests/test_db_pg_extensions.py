@@ -47,6 +47,7 @@ def test_catalog_table(runner, mock_api) -> None:
     assert route.calls.last.request.url.params["version"] == "16"
     assert "postgis_topology" in r.output and "pg_cron" in r.output
     assert "pgcrypto, pg_trgm" in r.output
+    assert "pg_cron, pg_stat_statements" in r.output  # bibliothèques préchargeables
 
 
 def test_catalog_json_keeps_the_whole_catalog(runner, mock_api, monkeypatch) -> None:
@@ -153,3 +154,55 @@ def test_get_shows_lists_readably(runner, mock_api) -> None:
     r = runner.invoke(app, ["db", "pg", "get", DB])
     assert r.exit_code == 0, r.output
     assert "postgis, vector" in r.output and "['postgis'" not in r.output
+
+
+def test_set_clear_cron_database_sends_null(runner, mock_api) -> None:
+    cap: dict = {}
+    mock_api.patch(f"/v1/db/pg/{DB}/extensions").mock(side_effect=_capture(cap))
+    r = runner.invoke(app, ["db", "pg", "extensions-set", DB, "--clear-cron-database"])
+    assert r.exit_code == 0, r.output
+    assert cap == {"cron_database": None}
+
+
+def test_set_cron_database_options_exclusive(runner, mock_api) -> None:
+    route = mock_api.patch(f"/v1/db/pg/{DB}/extensions")
+    r = runner.invoke(app, ["db", "pg", "extensions-set", DB, "--cron-database", "jobs",
+                            "--clear-cron-database"])
+    assert r.exit_code == 2
+    assert not route.called
+
+
+def test_set_wait_retries_transient_errors(runner, mock_api, monkeypatch) -> None:
+    monkeypatch.setattr(db_cmd, "_EXT_WAIT_INTERVAL_S", 0)
+    mock_api.patch(f"/v1/db/pg/{DB}/extensions").mock(
+        side_effect=_capture({}, body=_instance("pending")))
+    route = mock_api.get(f"/v1/db/pg/{DB}").mock(side_effect=[
+        httpx.Response(503, json={"detail": "indisponible"}),
+        httpx.ConnectError("coupure"),
+        httpx.Response(200, json=_instance("applied", allowed_extensions=["postgis"])),
+    ])
+    r = runner.invoke(app, ["db", "pg", "extensions-set", DB, "--allow", "postgis", "--wait"])
+    assert r.exit_code == 0, r.output
+    assert route.call_count == 3
+
+
+def test_set_wait_stops_on_client_error(runner, mock_api, monkeypatch) -> None:
+    monkeypatch.setattr(db_cmd, "_EXT_WAIT_INTERVAL_S", 0)
+    mock_api.patch(f"/v1/db/pg/{DB}/extensions").mock(
+        side_effect=_capture({}, body=_instance("pending")))
+    route = mock_api.get(f"/v1/db/pg/{DB}").mock(
+        return_value=httpx.Response(404, json={"detail": "Instance introuvable"}))
+    r = runner.invoke(app, ["db", "pg", "extensions-set", DB, "--allow", "postgis", "--wait"])
+    assert r.exit_code == 1
+    assert route.call_count == 1
+    assert "introuvable" in r.output
+
+
+def test_set_json_output(runner, mock_api, monkeypatch) -> None:
+    monkeypatch.setenv("CCP_OUTPUT", "json")
+    mock_api.patch(f"/v1/db/pg/{DB}/extensions").mock(
+        side_effect=_capture({}, body=_instance("applied", allowed_extensions=["postgis"])))
+    r = runner.invoke(app, ["db", "pg", "extensions-set", DB, "--allow", "postgis"])
+    assert r.exit_code == 0, r.output
+    out = json.loads(r.output)
+    assert out["allowed_extensions"] == ["postgis"] and out["extensions_status"] == "applied"

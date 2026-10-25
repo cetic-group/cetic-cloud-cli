@@ -1,5 +1,6 @@
 """cetic db — bases de données managées CETIC Cloud (DBaaS)."""
 
+import httpx
 import typer
 from rich import print as rprint
 
@@ -241,19 +242,35 @@ def pg_extensions(
                 columns=[("name", "Extension"), ("description", "Description"),
                          ("requires", "Dépend de"), ("preload", "À précharger"),
                          ("single", "Une seule base")])
+    rprint(f"Bibliothèques préchargeables (--preload) : {_join(cat.get('preload_libraries'))}")
     rprint(f"Créables directement, sans autorisation : {_join(cat.get('direct_extensions'))}")
 
 
+def _is_transient(e: Exception) -> bool:
+    """Erreur passagère qui ne doit pas interrompre l'attente."""
+    if isinstance(e, client.APIError):
+        return e.status_code == 429 or e.status_code >= 500
+    return isinstance(e, httpx.TransportError)
+
+
 def _wait_extensions_applied(db_id: str, timeout_s: int) -> dict:
+    """Interroge l'instance jusqu'à `applied`. Une erreur passagère (5xx, 429,
+    réseau) est retentée jusqu'au délai ; une erreur client (404, 403) arrête."""
     import time
 
     deadline = time.monotonic() + timeout_s
+    d: dict = {}
     while True:
-        d = client.get(f"/v1/db/pg/{db_id}")
-        if d.get("extensions_status") == "applied":
-            return d
-        if time.monotonic() > deadline:
-            raise TimeoutError(d.get("error_message") or "toujours en cours d'application")
+        try:
+            d = client.get(f"/v1/db/pg/{db_id}")
+        except (client.APIError, httpx.TransportError) as e:
+            if not _is_transient(e) or time.monotonic() > deadline:
+                raise
+        else:
+            if d.get("extensions_status") == "applied":
+                return d
+            if time.monotonic() > deadline:
+                raise TimeoutError(d.get("error_message") or "toujours en cours d'application")
         time.sleep(_EXT_WAIT_INTERVAL_S)
 
 
@@ -277,6 +294,9 @@ def pg_extensions_set(
     cron_database: str | None = typer.Option(
         None, "--cron-database", help="Base où pg_cron exécute ses tâches (pg_cron doit être préchargé).",
     ),
+    clear_cron_database: bool = typer.Option(
+        False, "--clear-cron-database", help="Retire la base de pg_cron (valeur par défaut de la plateforme).",
+    ),
     wait: bool = typer.Option(False, "--wait", help="Attend que les réglages soient appliqués."),
     timeout: int = typer.Option(1200, "--timeout", help="Délai d'attente de --wait, en secondes."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Ne pas demander confirmation du redémarrage."),
@@ -287,19 +307,25 @@ def pg_extensions_set(
     dans une base ne peut pas être retirée : supprimez-la d'abord
     (DROP EXTENSION).
     """
+    from cetic import config
+
+    structured = config.get_output() in ("json", "yaml")
     if allow and clear_allowed:
         rprint("[red]Erreur : --allow et --clear-allowed s'excluent.[/red]")
         raise typer.Exit(2)
     if preload and clear_preload:
         rprint("[red]Erreur : --preload et --clear-preload s'excluent.[/red]")
         raise typer.Exit(2)
+    if cron_database is not None and clear_cron_database:
+        rprint("[red]Erreur : --cron-database et --clear-cron-database s'excluent.[/red]")
+        raise typer.Exit(2)
     body: dict = {}
     if allow or clear_allowed:
         body["allowed_extensions"] = [] if clear_allowed else list(dict.fromkeys(allow or []))
     if preload or clear_preload:
         body["preload_libraries"] = [] if clear_preload else list(dict.fromkeys(preload or []))
-    if cron_database is not None:
-        body["cron_database"] = cron_database
+    if cron_database is not None or clear_cron_database:
+        body["cron_database"] = None if clear_cron_database else cron_database
     if not body:
         rprint("Rien à modifier : précisez --allow, --preload ou --cron-database.")
         return
@@ -314,7 +340,8 @@ def pg_extensions_set(
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
     if wait and d.get("extensions_status") != "applied":
-        rprint("Application des réglages en cours…")
+        if not structured:
+            rprint("Application des réglages en cours…")
         try:
             d = _wait_extensions_applied(db_id, timeout)
         except TimeoutError as e:
@@ -323,6 +350,12 @@ def pg_extensions_set(
         except client.APIError as e:
             rprint(f"[red]Erreur : {e.detail}[/red]")
             raise typer.Exit(1)
+        except httpx.TransportError as e:
+            rprint(f"[red]Erreur : API injoignable ({e}).[/red]")
+            raise typer.Exit(1)
+    if structured:
+        render_one(d, title=f"Instance {db_id}")
+        return
     rprint(
         f"[green]✓[/green] Extensions autorisées : {_join(d.get('allowed_extensions'))} · "
         f"préchargées : {_join(d.get('preload_libraries'))} · "
