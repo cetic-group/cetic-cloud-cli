@@ -9,7 +9,7 @@ Service distinct du Load Balancer L4 (`cetic lb`) :
 - AppGW L7 : routage HTTP avec règles host/path et policies
 
 Fonctionnement :
-- Une gateway expose 1 IP publique flottante (haute disponibilité) partagée par plusieurs
+- Une gateway expose 1 IP publique flottante partagée par plusieurs
   hostnames via SNI.
 - Hostnames sous-domaine auto (`<slug>-<id8>.app.cloud.cetic-group.com`) ou
   custom domain (CNAME vers CETIC + validation DNS-01).
@@ -35,6 +35,7 @@ from cetic.commands._gateway import (
     read_error_page,
     table_view,
     target_label,
+    validate_created_replica_count,
 )
 from cetic.commands._render import render_list, render_one
 
@@ -112,7 +113,7 @@ def cache_show(id_or_name: str = typer.Argument(..., metavar="ID|NAME")) -> None
 
 @cache_app.command(name="purge")
 def cache_purge(id_or_name: str = typer.Argument(..., metavar="ID|NAME")) -> None:
-    """Programme une purge des deux instances. Suivre son résultat avec cache show."""
+    """Programme une purge des instances provisionnées. Suivre son résultat avec cache show."""
     gid = _resolve_appgw(id_or_name)
     try:
         result = client.post(f"{APPGW_PATH}/{gid}/cache/purge", json={})
@@ -211,6 +212,7 @@ def list_gateways(
             "name": gw["name"],
             "region": gw.get("region", "—"),
             "plan": gw.get("plan", "—"),
+            "replica_count": gw.get("replica_count", 2),
             "status": gw.get("status", "—"),
             "public_ip": gw.get("public_ip_address") or "—",
             "listeners": str(gw.get("listener_count", "—")),
@@ -226,6 +228,7 @@ def list_gateways(
             ("name", "Nom"),
             ("region", "Région"),
             ("plan", "Plan"),
+            ("replica_count", "Instances"),
             ("status", "Statut"),
             ("public_ip", "IP publique"),
             ("listeners", "Listeners"),
@@ -311,6 +314,10 @@ def update(
 def create(
     name: str = typer.Option(..., "--name", "-n", help="Nom de la gateway (slug)"),
     region: str = typer.Option(..., "--region", "-r", help="Région (RNN/PAR/ABJ)"),
+    replica_count: int = typer.Option(
+        2, "--replica-count", min=1, max=2,
+        help="1 instance sans redondance, ou 2 en haute disponibilité (défaut). Immuable après création.",
+    ),
     plan: str = typer.Option(
         "small", "--plan", "-p",
         help="Plan tarifaire : small / medium / large",
@@ -338,6 +345,7 @@ def create(
         "name": name,
         "region": region,
         "plan": plan,
+        "replica_count": replica_count,
         "vpc_id": vpc,
         "vnet_id": vnet,
     }
@@ -349,6 +357,11 @@ def create(
         gw = client.post(APPGW_PATH, json=body)
     except client.APIError as e:
         raise _bail(e) from e
+    try:
+        validate_created_replica_count(gw, replica_count)
+    except ValueError as exc:
+        rprint(f"[red]Erreur : {exc}[/red]")
+        raise typer.Exit(1) from exc
     rprint(
         f"[green]✓[/green] Application Gateway créée : "
         f"[bold]{gw['id']}[/bold] (provisioning en cours)"

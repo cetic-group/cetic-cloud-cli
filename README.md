@@ -687,3 +687,17 @@ cetic appgw cache show web-edge
 Les anciennes options expérimentales `--cache-size-mb` et `--cache-max-object-kb`
 ne sont pas disponibles : retirez-les de vos scripts. L’activation de la
 passerelle et les politiques des routes restent indépendantes du gabarit.
+
+### Instance unique ou haute disponibilité
+
+`cetic appgw create` et `cetic lb create` acceptent `--replica-count 1`
+pour un environnement sans besoin de redondance. La valeur par défaut reste
+`2` (haute disponibilité). Le nombre d'instances est indépendant du plan et
+immuable après création : le changer nécessite de recréer la ressource.
+Une instance unique implique une interruption pendant une panne ou une
+maintenance de cette instance. Les capacités et le cache par instance restent
+ceux du plan ; aucun tarif réduit n'est déduit par la CLI.
+
+Mettre la plateforme à jour avant de demander le mode unique. La CLI peut
+être installée auparavant en conservant la valeur historique `2`. Si un ancien serveur ignore le mode demandé, la CLI affiche
+l'ID créé et une erreur : vérifier cette ressource avant de réessayer.
