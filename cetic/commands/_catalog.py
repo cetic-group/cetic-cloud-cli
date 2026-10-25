@@ -46,30 +46,54 @@ def render_compute_plans(
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
-    rows = [
-        {
-            "key": p["key"],
-            "label": p.get("name") or "—",
-            "family": p.get("family", "—"),
-            "vcpu": p.get("cores", "—"),
-            "ram_mb": p.get("memory_mb", "—"),
-            "disk_gb": p.get("disk_gb", "—"),
-            "min_disk_gb": p.get("min_disk_gb") if p.get("min_disk_gb") is not None else "—",
-            "prix_mois": p.get("price_eur_month") if p.get("price_eur_month") is not None else "—",
-            "défaut": "✓" if p.get("is_default") else "",
+    rows = []
+    appliance = kind in ("appgw", "lb")
+    for plan in data:
+        row = {
+            "key": plan["key"],
+            "label": plan.get("name") or "—",
+            "family": plan.get("family", "—"),
+            "vcpu": plan.get("cores", "—"),
+            "ram_mb": plan.get("memory_mb", "—"),
+            "disk_gb": plan.get("disk_gb", "—"),
+            "min_disk_gb": plan.get("min_disk_gb") if plan.get("min_disk_gb") is not None else "—",
+            "prix_mois": plan.get("price_eur_month") if plan.get("price_eur_month") is not None else "—",
+            "défaut": "✓" if plan.get("is_default") else "",
         }
-        for p in data
+        if appliance and "appliance_pricing" in plan:
+            # Les montants sont les totaux du mode retenu, calculés par le
+            # serveur. Une composante absente ne vaut ni zéro ni l'ancien prix.
+            for variant in plan.get("appliance_pricing") or [{}]:
+                base = variant.get("base") or {}
+                cache = variant.get("cache") or {}
+                rows.append({
+                    **row,
+                    "replica_count": variant.get("replica_count"),
+                    "prix_mois": base.get("monthly_price_eur"),
+                    "cache_prix_mois": cache.get("monthly_price_eur"),
+                    "base_is_free": base.get("is_free"),
+                    "cache_is_free": cache.get("is_free"),
+                    "currency": base.get("currency") or cache.get("currency"),
+                })
+        else:
+            # Ancienne API : garder le prix indicatif sans inventer de variante.
+            if appliance:
+                row.update(replica_count=None, cache_prix_mois=None)
+            rows.append(row)
+    columns = [
+        ("key", "Plan"), ("label", "Libellé"), ("family", "Famille"),
+        ("vcpu", "vCPU"), ("ram_mb", "RAM (Mo)"), ("disk_gb", "Disque (Go)"),
+        ("min_disk_gb", "Disque min (Go)"),
     ]
-    render_list(
-        rows,
-        title=f"{title} ({len(rows)})",
-        columns=[
-            ("key", "Plan"), ("label", "Libellé"), ("family", "Famille"),
-            ("vcpu", "vCPU"), ("ram_mb", "RAM (Mo)"), ("disk_gb", "Disque (Go)"),
-            ("min_disk_gb", "Disque min (Go)"),
-            ("prix_mois", "€/mois"), ("défaut", "Défaut"),
-        ],
-    )
+    if appliance:
+        columns += [("replica_count", "Instances"), ("prix_mois", "Base €/mois")]
+        if kind == "appgw":
+            columns += [("cache_prix_mois", "Option cache €/mois")]
+    else:
+        columns += [("prix_mois", "€/mois")]
+    columns += [("défaut", "Défaut")]
+    render_list(rows, title=f"{title} ({len(rows)})", columns=columns)
+
 
 
 def render_lxc_templates() -> None:

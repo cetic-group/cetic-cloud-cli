@@ -6,7 +6,7 @@ import typer
 from rich import print as rprint
 
 from cetic import client
-from cetic.commands._render import render_list, render_one
+from cetic.commands._render import render_list
 
 app = typer.Typer(help="Crédits, consommation, tarification, budgets, engagements, promos")
 
@@ -134,6 +134,7 @@ def pricing(
             {
                 "type": p["resource_type"],
                 "plan": p.get("plan") or "—",
+                "replica_count": p.get("replica_count"),
                 "horaire": "Gratuit" if p.get("is_free") else f"{p['hourly_price_cents']} cts/h",
                 "mensuel": "—" if p.get("is_free") else _price_or_unit(p, "monthly_price_eur"),
                 "annuel": "—" if p.get("is_free") else _price_or_unit(p, "yearly_price_eur"),
@@ -143,7 +144,7 @@ def pricing(
             for p in items
         ]
         render_list(rows, title=f"Tarification v2 ({len(rows)} entrées)",
-                    columns=[("type", "Type"), ("plan", "Plan"), ("dimension", "Dim"),
+                    columns=[("type", "Type"), ("plan", "Plan"), ("replica_count", "Instances"), ("dimension", "Dim"),
                              ("horaire", "Horaire"), ("mensuel", "≈ Mois"),
                              ("annuel", "≈ An"), ("stopped_disk", "Stopped/GB/h")])
     else:
@@ -151,6 +152,7 @@ def pricing(
             {
                 "type": p["resource_type"],
                 "plan": p.get("plan") or "—",
+                "replica_count": p.get("replica_count"),
                 "horaire": f"{p['hourly_price_cents']} cts/h",
                 "mensuel": _price_or_unit(p, "monthly_price_eur"),
                 "description": (p.get("description") or "—"),
@@ -158,7 +160,7 @@ def pricing(
             for p in items
         ]
         render_list(rows, title=f"Tarification CETIC Cloud ({len(rows)} entrées)",
-                    columns=[("type", "Type"), ("plan", "Plan"), ("horaire", "Horaire"),
+                    columns=[("type", "Type"), ("plan", "Plan"), ("replica_count", "Instances"), ("horaire", "Horaire"),
                              ("mensuel", "≈ Mois"), ("description", "Description")])
 
 
@@ -375,18 +377,49 @@ def estimate(
     resource_type: str = typer.Argument(..., help="ex: container, vm, k8s_node, db_instance"),
     plan: Optional[str] = typer.Option(None, "--plan", "-p",
                                        help="Plan (ex: small, dev:nano)"),
+    replica_count: int | None = typer.Option(
+        None, "--replica-count", min=1, max=2,
+        help="Nombre d'instances AppGW/LB : 1 ou 2 (défaut serveur : 2).",
+    ),
+    cache_enabled: bool | None = typer.Option(
+        None, "--cache-enabled/--no-cache-enabled",
+        help="Inclure ou exclure l'option cache payante AppGW (défaut : désactivée).",
+    ),
 ) -> None:
     """Estime le prix d'une ressource avec discount commit/promo + free-tier restant."""
-    q = f"?resource_type={resource_type}"
+    params: dict[str, str | int] = {"resource_type": resource_type}
     if plan:
-        q += f"&plan={plan}"
+        params["plan"] = plan
+    if replica_count is not None:
+        params["replica_count"] = replica_count
+    if cache_enabled is not None:
+        params["cache_enabled"] = str(cache_enabled).lower()
     try:
-        e = client.get(f"/v1/billing/estimate{q}")
+        e = client.get("/v1/billing/estimate", params=params)
     except client.APIError as exc:
         rprint(f"[red]Erreur : {exc.detail}[/red]")
         raise typer.Exit(1)
 
+    if resource_type in ("appgw", "load_balancer"):
+        wanted_count = 2 if replica_count is None else replica_count
+        wanted_cache = bool(cache_enabled)
+        # Une ancienne API ignore les nouvelles query params : ne jamais
+        # présenter son prix historique HA comme un devis single/cache ON.
+        observed_count = e.get("replica_count", 2)
+        observed_cache = e.get("cache_enabled", False)
+        if observed_count != wanted_count or observed_cache != wanted_cache:
+            rprint("[red]Le serveur n'a pas confirmé le mode demandé. "
+                   "Mettez la plateforme à jour avant d'utiliser cette estimation.[/red]")
+            raise typer.Exit(1)
     rprint(f"[bold]{e['resource_type']}[/bold]" + (f" · {e['plan']}" if e.get("plan") else ""))
+    if resource_type in ("appgw", "load_balancer"):
+        rprint(f"  Instances : {observed_count}")
+        if resource_type == "appgw":
+            rprint(f"  Option cache : {'activée' if observed_cache else 'désactivée'}")
+    for key, label in (("base_monthly_price_eur", "Base"), ("cache_monthly_price_eur", "Option cache")):
+        if key in e and e[key] is not None:
+            rprint(f"  {label} : {e[key]:.2f} €/mois")
+
     if e["is_free"]:
         rprint("[green]Cette ressource est gratuite.[/green]")
         return

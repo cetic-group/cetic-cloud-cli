@@ -696,8 +696,31 @@ pour un environnement sans besoin de redondance. La valeur par défaut reste
 immuable après création : le changer nécessite de recréer la ressource.
 Une instance unique implique une interruption pendant une panne ou une
 maintenance de cette instance. Les capacités et le cache par instance restent
-ceux du plan ; aucun tarif réduit n'est déduit par la CLI.
+ceux du plan. Les tarifs Single et haute disponibilité sont distincts dans
+le catalogue ; la CLI affiche les montants renvoyés par la plateforme.
 
 Mettre la plateforme à jour avant de demander le mode unique. La CLI peut
 être installée auparavant en conservant la valeur historique `2`. Si un ancien serveur ignore le mode demandé, la CLI affiche
 l'ID créé et une erreur : vérifier cette ressource avant de réessayer.
+
+### Tarifs AppGW/LB et option cache HTTP
+
+`cetic appgw plans` et `cetic lb plans` affichent les tarifs du catalogue pour
+chaque nombre d'instances. Les montants couvrent déjà toutes les instances du
+mode choisi. La colonne « Option cache » est un supplément au tarif de base,
+applicable uniquement aux Application Gateways lorsque `cache_enabled` est
+activé. Le cache reste activable et désactivable ; ses dimensions viennent du
+plan. Un tarif absent est indisponible, il ne vaut pas zéro.
+
+```bash
+cetic billing pricing --v2
+cetic billing estimate appgw --plan small --replica-count 1 --cache-enabled
+cetic billing estimate appgw --plan small --replica-count 2 --no-cache-enabled
+cetic billing estimate load_balancer --plan small --replica-count 1
+```
+
+L'estimation affiche le total et les composantes renvoyés par le serveur.
+Aucune multiplication par le nombre d'instances ni remise n'est calculée par
+la CLI. `appgw_cache` identifie la ligne du supplément dans la grille v2.
+Une plateforme ancienne qui ne confirme pas le mode demandé est signalée
+avant d'afficher un devis single ou avec cache.

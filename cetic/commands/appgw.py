@@ -273,7 +273,7 @@ def update(
     reset_error_page: bool = typer.Option(
         False, "--reset-error-page", help="Rétablit la page d'indisponibilité par défaut.",
     ),
-    cache_enabled: bool | None = typer.Option(None, "--cache-enabled/--no-cache-enabled", help="Activer ou désactiver le cache HTTP, dimensionné automatiquement par le plan"),
+    cache_enabled: bool | None = typer.Option(None, "--cache-enabled/--no-cache-enabled", help="Activer ou désactiver l’option cache HTTP payante, dimensionnée par le plan"),
 ) -> None:
     """Modifie le plan, le cache ou la page d'indisponibilité d'une Application Gateway.
 
@@ -328,7 +328,7 @@ def create(
         None, "--public-ip",
         help="UUID d'une IP publique pré-allouée à attacher (optionnel)",
     ),
-    cache_enabled: bool | None = typer.Option(None, "--cache-enabled/--no-cache-enabled", help="Activer ou désactiver le cache HTTP, dimensionné automatiquement par le plan"),
+    cache_enabled: bool | None = typer.Option(None, "--cache-enabled/--no-cache-enabled", help="Activer ou désactiver l’option cache HTTP payante, dimensionnée par le plan"),
 ) -> None:
     """Crée une nouvelle Application Gateway.
 
