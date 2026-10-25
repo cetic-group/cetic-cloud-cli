@@ -14,6 +14,7 @@ from cetic.commands._gateway import (
     read_error_page,
     table_view,
     target_label,
+    validate_created_replica_count,
 )
 from cetic.commands._render import render_list, render_one
 
@@ -177,6 +178,7 @@ def list_lbs(region: str | None = typer.Option(None, "--region", "-r")) -> None:
     rows = [
         {"id": lb["id"], "name": lb["name"], "region": lb["region"],
          "plan": lb.get("plan") or "—",
+         "replica_count": lb.get("replica_count", 2),
          "status": lb["status"],
          "vip": lb.get("vip_address") or "—",
          "public_ip": lb.get("public_ip_address") or "—"}
@@ -184,7 +186,7 @@ def list_lbs(region: str | None = typer.Option(None, "--region", "-r")) -> None:
     ]
     render_list(rows, title=f"Load Balancers ({len(rows)})",
                 columns=[("id", "ID"), ("name", "Nom"), ("region", "Région"),
-                         ("plan", "Plan"), ("status", "Statut"),
+                         ("plan", "Plan"), ("replica_count", "Instances"), ("status", "Statut"),
                          ("vip", "VIP privée"), ("public_ip", "IP publique")])
 
 
@@ -238,11 +240,15 @@ def create(
     name: str = typer.Option(..., "--name", "-n", help="Nom du load balancer (1-100 chars)."),
     region: str = typer.Option(..., "--region", "-r", help="Région : RNN, PAR ou ABJ."),
     vnet_id: str = typer.Option(..., "--vnet", help="UUID du VNet hébergeant la VIP."),
+    replica_count: int = typer.Option(
+        2, "--replica-count", min=1, max=2,
+        help="1 instance sans redondance, ou 2 en haute disponibilité (défaut). Immuable après création.",
+    ),
     plan: str = typer.Option(
         "small", "--plan", "-p",
         help=(
-            "Plan de capacité du LB. Choix : small (1 vCPU / 512 Mo, 4,99 €/mois, défaut), "
-            "medium (2 vCPU / 1 Go, 11,99 €/mois), large (4 vCPU / 2 Go, 27,99 €/mois). "
+            "Plan de capacité du LB : small (défaut), medium ou large. "
+            "Consulter cetic lb plans pour les capacités et tarifs du catalogue. "
             "Plan immuable : changer de plan plus tard implique de recréer le LB."
         ),
     ),
@@ -282,7 +288,8 @@ def create(
 ) -> None:
     """Crée un load balancer, avec optionnellement un listener HTTPS + Let's Encrypt.
 
-    Le plan détermine la taille de la paire d'instances LB (HA active/passive).
+    Le plan détermine la capacité de chaque instance. Le nombre d'instances
+    se choisit à la création : 1 sans redondance ou 2 en haute disponibilité.
 
     Un listener unique peut être défini directement à la création via
     `--listener-protocol` + `--listener-port` (les deux sont requis ensemble),
@@ -345,6 +352,7 @@ def create(
         "name": name,
         "region": region,
         "plan": plan,
+        "replica_count": replica_count,
         "vnet_id": vnet_id,
     }
     if public_ip_id:
@@ -358,6 +366,11 @@ def create(
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
+    try:
+        validate_created_replica_count(lb, replica_count)
+    except ValueError as exc:
+        rprint(f"[red]Erreur : {exc}[/red]")
+        raise typer.Exit(1) from exc
     rprint(
         f"[green]✓[/green] LB créé : [bold]{lb['id']}[/bold] "
         f"(plan: {lb.get('plan', plan)}, statut: {lb.get('status', 'provisioning')})"

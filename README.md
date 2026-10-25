@@ -664,3 +664,63 @@ git tag -a v1.6.0 -m "…" && git push origin v1.6.0
 - [Console](https://console.cloud.cetic-group.com)
 - [Terraform Provider](https://github.com/cetic-group/terraform-provider-cetic-cloud-platform)
 - [Issues](https://github.com/cetic-group/cetic-cloud-cli/issues)
+
+### Cache HTTP AppGW
+
+Le cache est désactivé par défaut. Le plan sélectionné détermine automatiquement
+le budget de cache et la taille maximale des objets, y compris pour une passerelle
+existante et après un changement de plan. Ces deux dimensions se consultent avec
+`cetic appgw cache show` ; elles ne sont pas modifiables séparément.
+Nécessite une API avec le dimensionnement du cache par plan.
+
+```bash
+cetic appgw update web-edge --cache-enabled
+cetic appgw update web-edge --plan appgw-medium
+cetic appgw route update web-edge --route-id UUID --cache-mode respect --cache-debug-headers
+cetic appgw cache show web-edge
+cetic appgw cache purge web-edge
+cetic appgw cache show web-edge
+```
+
+`--cache-ttl` définit le repli du mode `force` ; `--cache-max-ttl` borne la durée. `--cache-bypass-cookie session` est répétable. Une liste vide (`--cache-bypass-cookie ""`) exclut toute requête portant un cookie. Authorization, Set-Cookie et les réponses privées ne sont jamais cachés. `Vary: Accept-Language` contourne le cache. Suivre la purge jusqu’au succès des deux instances ; un résultat partiel demande une nouvelle tentative.
+
+Les anciennes options expérimentales `--cache-size-mb` et `--cache-max-object-kb`
+ne sont pas disponibles : retirez-les de vos scripts. L’activation de la
+passerelle et les politiques des routes restent indépendantes du gabarit.
+
+### Instance unique ou haute disponibilité
+
+`cetic appgw create` et `cetic lb create` acceptent `--replica-count 1`
+pour un environnement sans besoin de redondance. La valeur par défaut reste
+`2` (haute disponibilité). Le nombre d'instances est indépendant du plan et
+immuable après création : le changer nécessite de recréer la ressource.
+Une instance unique implique une interruption pendant une panne ou une
+maintenance de cette instance. Les capacités et le cache par instance restent
+ceux du plan. Les tarifs Single et haute disponibilité sont distincts dans
+le catalogue ; la CLI affiche les montants renvoyés par la plateforme.
+
+Mettre la plateforme à jour avant de demander le mode unique. La CLI peut
+être installée auparavant en conservant la valeur historique `2`. Si un ancien serveur ignore le mode demandé, la CLI affiche
+l'ID créé et une erreur : vérifier cette ressource avant de réessayer.
+
+### Tarifs AppGW/LB et option cache HTTP
+
+`cetic appgw plans` et `cetic lb plans` affichent les tarifs du catalogue pour
+chaque nombre d'instances. Les montants couvrent déjà toutes les instances du
+mode choisi. La colonne « Option cache » est un supplément au tarif de base,
+applicable uniquement aux Application Gateways lorsque `cache_enabled` est
+activé. Le cache reste activable et désactivable ; ses dimensions viennent du
+plan. Un tarif absent est indisponible, il ne vaut pas zéro.
+
+```bash
+cetic billing pricing --v2
+cetic billing estimate appgw --plan small --replica-count 1 --cache-enabled
+cetic billing estimate appgw --plan small --replica-count 2 --no-cache-enabled
+cetic billing estimate load_balancer --plan small --replica-count 1
+```
+
+L'estimation affiche le total et les composantes renvoyés par le serveur.
+Aucune multiplication par le nombre d'instances ni remise n'est calculée par
+la CLI. `appgw_cache` identifie la ligne du supplément dans la grille v2.
+Une plateforme ancienne qui ne confirme pas le mode demandé est signalée
+avant d'afficher un devis single ou avec cache.
