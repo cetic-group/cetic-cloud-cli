@@ -18,6 +18,7 @@ Fonctionnement :
 
 from __future__ import annotations
 
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -69,6 +70,56 @@ app.add_typer(listener_app, name="listener")
 app.add_typer(tg_app, name="tg")
 tg_app.add_typer(tg_member_app, name="member")
 app.add_typer(route_app, name="route")
+cache_app = typer.Typer(help="Cache HTTP public de la passerelle")
+app.add_typer(cache_app, name="cache")
+
+
+class CacheMode(str, Enum):
+    off = "off"
+    respect = "respect"
+    force = "force"
+
+
+def _cache_route_payload(
+    mode: CacheMode | None, ttl: int | None, maximum: int | None,
+    cookies: list[str] | None, debug: bool | None,
+) -> dict[str, Any]:
+    """Ne transmet que les politiques explicitement fournies pour la route."""
+    payload: dict[str, Any] = {}
+    if mode is not None:
+        payload["cache_mode"] = mode.value
+    if ttl is not None:
+        payload["cache_default_ttl_s"] = ttl
+    if maximum is not None:
+        payload["cache_max_ttl_s"] = maximum
+    if cookies is not None:
+        payload["cache_bypass_cookies"] = [value.strip() for value in cookies if value.strip()]
+    if debug is not None:
+        payload["cache_debug_headers"] = debug
+    return payload
+
+
+@cache_app.command(name="show")
+def cache_show(id_or_name: str = typer.Argument(..., metavar="ID|NAME")) -> None:
+    """Affiche le gabarit du plan, les statistiques et la dernière purge."""
+    gid = _resolve_appgw(id_or_name)
+    try:
+        result = client.get(f"{APPGW_PATH}/{gid}/cache")
+    except client.APIError as exc:
+        raise _bail(exc) from exc
+    render_one(result, title="Cache HTTP")
+
+
+@cache_app.command(name="purge")
+def cache_purge(id_or_name: str = typer.Argument(..., metavar="ID|NAME")) -> None:
+    """Programme une purge des deux instances. Suivre son résultat avec cache show."""
+    gid = _resolve_appgw(id_or_name)
+    try:
+        result = client.post(f"{APPGW_PATH}/{gid}/cache/purge", json={})
+    except client.APIError as exc:
+        raise _bail(exc) from exc
+    render_one(result, title="Purge du cache")
+
 
 
 @app.command()
@@ -208,6 +259,9 @@ def get(
 @app.command()
 def update(
     id_or_name: str = typer.Argument(..., metavar="ID|NAME"),
+    plan: str | None = typer.Option(
+        None, "--plan", "-p", help="Plan de la passerelle ; ajuste aussi le gabarit de cache.",
+    ),
     error_page_file: Path | None = typer.Option(  # noqa: B008
         None, "--error-page-file", exists=True, dir_okay=False,
         help="Page HTML d'indisponibilité, servie quand aucun backend ne répond "
@@ -216,12 +270,14 @@ def update(
     reset_error_page: bool = typer.Option(
         False, "--reset-error-page", help="Rétablit la page d'indisponibilité par défaut.",
     ),
+    cache_enabled: bool | None = typer.Option(None, "--cache-enabled/--no-cache-enabled", help="Activer ou désactiver le cache HTTP, dimensionné automatiquement par le plan"),
 ) -> None:
-    """Modifie la page d'indisponibilité d'une Application Gateway.
+    """Modifie le plan, le cache ou la page d'indisponibilité d'une Application Gateway.
 
     Exemples :
       cetic appgw update web-edge --error-page-file maintenance.html
       cetic appgw update web-edge --reset-error-page
+      cetic appgw update web-edge --plan appgw-medium --cache-enabled
     """
     if error_page_file and reset_error_page:
         rprint("[red]Erreur : --error-page-file et --reset-error-page s'excluent.[/red]")
@@ -236,7 +292,12 @@ def update(
         # Présence du champ à null = retour à la page par défaut.
         body = {"custom_error_page_html": None}
     else:
-        rprint("[red]Erreur : préciser --error-page-file ou --reset-error-page.[/red]")
+        body = {}
+    for key, value in {"plan": plan, "cache_enabled": cache_enabled}.items():
+        if value is not None:
+            body[key] = value
+    if not body:
+        rprint("[red]Erreur : préciser --plan, --cache-enabled, --no-cache-enabled, --error-page-file ou --reset-error-page.[/red]")
         raise typer.Exit(1)
     gid = _resolve_appgw(id_or_name)
     try:
@@ -260,6 +321,7 @@ def create(
         None, "--public-ip",
         help="UUID d'une IP publique pré-allouée à attacher (optionnel)",
     ),
+    cache_enabled: bool | None = typer.Option(None, "--cache-enabled/--no-cache-enabled", help="Activer ou désactiver le cache HTTP, dimensionné automatiquement par le plan"),
 ) -> None:
     """Crée une nouvelle Application Gateway.
 
@@ -279,6 +341,8 @@ def create(
         "vpc_id": vpc,
         "vnet_id": vnet,
     }
+    if cache_enabled is not None:
+        body["cache_enabled"] = cache_enabled
     if public_ip:
         body["public_ip_id"] = public_ip
     try:
@@ -1130,6 +1194,11 @@ def route_create(
             "préfixe avant forward au backend. Ex: `/web-app/foo` devient `/foo`."
         ),
     ),
+    cache_mode: CacheMode | None = typer.Option(None, "--cache-mode", help="off, respect ou force"),
+    cache_ttl: int | None = typer.Option(None, "--cache-ttl", min=1, max=3600, help="Durée par défaut en mode force (secondes)"),
+    cache_max_ttl: int | None = typer.Option(None, "--cache-max-ttl", min=1, max=3600, help="Durée maximale (secondes)"),
+    cache_bypass_cookie: list[str] | None = typer.Option(None, "--cache-bypass-cookie", help="Cookie de session exclu, répétable. Chaîne vide = exclure tout cookie."),
+    cache_debug_headers: bool | None = typer.Option(None, "--cache-debug-headers/--no-cache-debug-headers", help="Afficher X-Cache: HIT ou MISS"),
 ) -> None:
     """Crée une route (condition host+path → target group + policies L7).
 
@@ -1170,6 +1239,7 @@ def route_create(
         "waf_preset": waf_preset,
         "strip_prefix": strip_prefix,
     }
+    body.update(_cache_route_payload(cache_mode, cache_ttl, cache_max_ttl, cache_bypass_cookie, cache_debug_headers))
     if path:
         body["path_match"] = path
     if rate_limit is not None:
@@ -1327,6 +1397,11 @@ def route_update(
             "au backend (ex: `/web-app/foo` → `/foo`). Omis = inchangé."
         ),
     ),
+    cache_mode: CacheMode | None = typer.Option(None, "--cache-mode", help="off, respect ou force"),
+    cache_ttl: int | None = typer.Option(None, "--cache-ttl", min=1, max=3600, help="Durée par défaut en mode force (secondes)"),
+    cache_max_ttl: int | None = typer.Option(None, "--cache-max-ttl", min=1, max=3600, help="Durée maximale (secondes)"),
+    cache_bypass_cookie: list[str] | None = typer.Option(None, "--cache-bypass-cookie", help="Cookie de session exclu, répétable. Chaîne vide = exclure tout cookie."),
+    cache_debug_headers: bool | None = typer.Option(None, "--cache-debug-headers/--no-cache-debug-headers", help="Afficher X-Cache: HIT ou MISS"),
 ) -> None:
     """Met à jour une route (PATCH partiel — seuls les champs fournis sont modifiés).
 
@@ -1372,6 +1447,7 @@ def route_update(
         raise typer.Exit(1)
 
     body: dict[str, Any] = {}
+    body.update(_cache_route_payload(cache_mode, cache_ttl, cache_max_ttl, cache_bypass_cookie, cache_debug_headers))
     if priority is not None:
         body["priority"] = priority
     if path is not None:

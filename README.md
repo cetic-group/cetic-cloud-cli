@@ -664,3 +664,26 @@ git tag -a v1.6.0 -m "…" && git push origin v1.6.0
 - [Console](https://console.cloud.cetic-group.com)
 - [Terraform Provider](https://github.com/cetic-group/terraform-provider-cetic-cloud-platform)
 - [Issues](https://github.com/cetic-group/cetic-cloud-cli/issues)
+
+### Cache HTTP AppGW
+
+Le cache est désactivé par défaut. Le plan sélectionné détermine automatiquement
+le budget de cache et la taille maximale des objets, y compris pour une passerelle
+existante et après un changement de plan. Ces deux dimensions se consultent avec
+`cetic appgw cache show` ; elles ne sont pas modifiables séparément.
+Nécessite une API avec le dimensionnement du cache par plan.
+
+```bash
+cetic appgw update web-edge --cache-enabled
+cetic appgw update web-edge --plan appgw-medium
+cetic appgw route update web-edge --route-id UUID --cache-mode respect --cache-debug-headers
+cetic appgw cache show web-edge
+cetic appgw cache purge web-edge
+cetic appgw cache show web-edge
+```
+
+`--cache-ttl` définit le repli du mode `force` ; `--cache-max-ttl` borne la durée. `--cache-bypass-cookie session` est répétable. Une liste vide (`--cache-bypass-cookie ""`) exclut toute requête portant un cookie. Authorization, Set-Cookie et les réponses privées ne sont jamais cachés. `Vary: Accept-Language` contourne le cache. Suivre la purge jusqu’au succès des deux instances ; un résultat partiel demande une nouvelle tentative.
+
+Les anciennes options expérimentales `--cache-size-mb` et `--cache-max-object-kb`
+ne sont pas disponibles : retirez-les de vos scripts. L’activation de la
+passerelle et les politiques des routes restent indépendantes du gabarit.
