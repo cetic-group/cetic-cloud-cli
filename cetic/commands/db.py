@@ -1,5 +1,6 @@
 """cetic db — bases de données managées CETIC Cloud (DBaaS)."""
 
+import httpx
 import typer
 from rich import print as rprint
 
@@ -200,3 +201,165 @@ _bind_engine(pg_app, "pg")
 _bind_engine(my_app, "mysql")
 _bind_engine(rd_app, "valkey")
 _bind_engine(mg_app, "ferretdb")
+
+
+# ── Extensions PostgreSQL ──────────────────────────────────────────────────
+# Un client autorise des extensions du catalogue sur son instance, puis le
+# propriétaire d'une base les crée avec `CREATE EXTENSION`. L'API valide les
+# réglages (dépendances, préchargement) et refuse avec un message explicite :
+# la CLI ne reproduit pas ces règles, qui divergeraient.
+
+_EXT_WAIT_INTERVAL_S = 5
+
+
+def _join(values: list[str] | None) -> str:
+    return ", ".join(values) if values else "—"
+
+
+@pg_app.command(name="extensions")
+def pg_extensions(
+    version: int = typer.Option(16, "--version", "-v", help="Version majeure de PostgreSQL"),
+) -> None:
+    """Catalogue des extensions autorisables pour une version majeure."""
+    from cetic import config
+
+    try:
+        cat = client.get("/v1/db/pg/extensions", params={"version": version})
+    except client.APIError as e:
+        rprint(f"[red]Erreur : {e.detail}[/red]")
+        raise typer.Exit(1)
+    if config.get_output() in ("json", "yaml"):
+        render_one(cat, title=f"Extensions PostgreSQL {version}")
+        return
+    rows = [
+        {"name": e["name"], "description": e.get("description", ""),
+         "requires": _join(e.get("requires")),
+         "preload": "oui" if e.get("requires_preload") else "—",
+         "single": "oui" if e.get("single_database") else "—"}
+        for e in cat.get("extensions", [])
+    ]
+    render_list(rows, title=f"Extensions autorisables — PostgreSQL {version} ({len(rows)})",
+                columns=[("name", "Extension"), ("description", "Description"),
+                         ("requires", "Dépend de"), ("preload", "À précharger"),
+                         ("single", "Une seule base")])
+    rprint(f"Bibliothèques préchargeables (--preload) : {_join(cat.get('preload_libraries'))}")
+    rprint(f"Créables directement, sans autorisation : {_join(cat.get('direct_extensions'))}")
+
+
+def _is_transient(e: Exception) -> bool:
+    """Erreur passagère qui ne doit pas interrompre l'attente."""
+    if isinstance(e, client.APIError):
+        return e.status_code == 429 or e.status_code >= 500
+    return isinstance(e, httpx.TransportError)
+
+
+def _wait_extensions_applied(db_id: str, timeout_s: int) -> dict:
+    """Interroge l'instance jusqu'à `applied`. Une erreur passagère (5xx, 429,
+    réseau) est retentée jusqu'au délai ; une erreur client (404, 403) arrête."""
+    import time
+
+    deadline = time.monotonic() + timeout_s
+    d: dict = {}
+    while True:
+        try:
+            d = client.get(f"/v1/db/pg/{db_id}")
+        except (client.APIError, httpx.TransportError) as e:
+            if not _is_transient(e) or time.monotonic() > deadline:
+                raise
+        else:
+            if d.get("extensions_status") == "applied":
+                return d
+            if time.monotonic() > deadline:
+                raise TimeoutError(d.get("error_message") or "toujours en cours d'application")
+        time.sleep(_EXT_WAIT_INTERVAL_S)
+
+
+@pg_app.command(name="extensions-set")
+def pg_extensions_set(
+    db_id: str = typer.Argument(...),
+    allow: list[str] | None = typer.Option(
+        None, "--allow",
+        help="Extension autorisée (répétable). Remplace la liste ; listez aussi ses dépendances.",
+    ),
+    clear_allowed: bool = typer.Option(
+        False, "--clear-allowed", help="Retire toutes les extensions autorisées.",
+    ),
+    preload: list[str] | None = typer.Option(
+        None, "--preload",
+        help="Bibliothèque préchargée (répétable, ex. pg_cron). Remplace la liste ; redémarre l'instance.",
+    ),
+    clear_preload: bool = typer.Option(
+        False, "--clear-preload", help="Retire toutes les bibliothèques préchargées.",
+    ),
+    cron_database: str | None = typer.Option(
+        None, "--cron-database", help="Base où pg_cron exécute ses tâches (pg_cron doit être préchargé).",
+    ),
+    clear_cron_database: bool = typer.Option(
+        False, "--clear-cron-database", help="Retire la base de pg_cron (valeur par défaut de la plateforme).",
+    ),
+    wait: bool = typer.Option(False, "--wait", help="Attend que les réglages soient appliqués."),
+    timeout: int = typer.Option(1200, "--timeout", help="Délai d'attente de --wait, en secondes."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Ne pas demander confirmation du redémarrage."),
+) -> None:
+    """Autorise des extensions sur une instance PostgreSQL.
+
+    Une option omise laisse le réglage inchangé. Une extension encore installée
+    dans une base ne peut pas être retirée : supprimez-la d'abord
+    (DROP EXTENSION).
+    """
+    from cetic import config
+
+    structured = config.get_output() in ("json", "yaml")
+    if allow and clear_allowed:
+        rprint("[red]Erreur : --allow et --clear-allowed s'excluent.[/red]")
+        raise typer.Exit(2)
+    if preload and clear_preload:
+        rprint("[red]Erreur : --preload et --clear-preload s'excluent.[/red]")
+        raise typer.Exit(2)
+    if cron_database is not None and clear_cron_database:
+        rprint("[red]Erreur : --cron-database et --clear-cron-database s'excluent.[/red]")
+        raise typer.Exit(2)
+    body: dict = {}
+    if allow or clear_allowed:
+        body["allowed_extensions"] = [] if clear_allowed else list(dict.fromkeys(allow or []))
+    if preload or clear_preload:
+        body["preload_libraries"] = [] if clear_preload else list(dict.fromkeys(preload or []))
+    if cron_database is not None or clear_cron_database:
+        body["cron_database"] = None if clear_cron_database else cron_database
+    if not body:
+        rprint("Rien à modifier : précisez --allow, --preload ou --cron-database.")
+        return
+    if "preload_libraries" in body and not yes and not typer.confirm(
+        "Changer les bibliothèques préchargées redémarre l'instance (une réplique à la fois ; "
+        "courte interruption sans réplique). Continuer ?"
+    ):
+        raise typer.Abort()
+    try:
+        d = client.patch(f"/v1/db/pg/{db_id}/extensions", json=body)
+    except client.APIError as e:
+        rprint(f"[red]Erreur : {e.detail}[/red]")
+        raise typer.Exit(1)
+    if wait and d.get("extensions_status") != "applied":
+        if not structured:
+            rprint("Application des réglages en cours…")
+        try:
+            d = _wait_extensions_applied(db_id, timeout)
+        except TimeoutError as e:
+            rprint(f"[yellow]Réglages acceptés mais pas encore appliqués : {e}[/yellow]")
+            raise typer.Exit(1)
+        except client.APIError as e:
+            rprint(f"[red]Erreur : {e.detail}[/red]")
+            raise typer.Exit(1)
+        except httpx.TransportError as e:
+            rprint(f"[red]Erreur : API injoignable ({e}).[/red]")
+            raise typer.Exit(1)
+    if structured:
+        render_one(d, title=f"Instance {db_id}")
+        return
+    rprint(
+        f"[green]✓[/green] Extensions autorisées : {_join(d.get('allowed_extensions'))} · "
+        f"préchargées : {_join(d.get('preload_libraries'))} · "
+        f"état : {d.get('extensions_status', '—')}"
+    )
+    if d.get("extensions_status") == "applied" and d.get("allowed_extensions"):
+        rprint("Le propriétaire d'une base peut maintenant exécuter CREATE EXTENSION.")

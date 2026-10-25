@@ -9,7 +9,7 @@ Official command-line interface for [CETIC Cloud Platform](https://docs.cloud.ce
 cetic auth login
 cetic vm create --name web-01 --region RNN --plan small
 cetic k8s kubeconfig <cluster-id> > ~/.kube/config
-cetic db pg create --name app-db --plan dev
+cetic db pg create --name app-db --region RNN --vnet <VNET> --plan small
 ```
 
 ## Installation
@@ -568,8 +568,19 @@ cetic email account create contact@exemple.com          # mot de passe demandé,
 cetic email alias create info@exemple.com --to contact@exemple.com
 
 # Databases
-cetic db pg create --name app-db --plan dev
+cetic db pg create --name app-db --region RNN --vnet <VNET> --plan small
 cetic db pg credentials <id>
+
+# Extensions PostgreSQL — à activer d'abord sur l'instance par le support
+cetic db pg extensions                                   # catalogue PostgreSQL 16 (--version pour une autre)
+cetic db pg extensions-set <id> --allow postgis --allow postgis_topology --wait
+cetic db pg extensions-set <id> --allow pg_cron --preload pg_cron \
+    --cron-database jobs --yes                           # préchargement : redémarre l'instance
+cetic db pg extensions-set <id> --clear-allowed          # refusé tant qu'une extension est installée
+cetic db pg extensions-set <id> --clear-cron-database    # base de pg_cron par défaut
+CCP_OUTPUT=json cetic db pg extensions-set <id> --allow vector --wait   # sortie scriptable
+# puis, propriétaire de la base : CREATE EXTENSION postgis;
+# pgcrypto, pg_trgm… se créent directement, sans autorisation
 
 # IAM Roles v1 (AWS-style, depuis v0.8.0)
 cetic iam roles list                                     # custom + built-ins

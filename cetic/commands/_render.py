@@ -78,7 +78,9 @@ def render_one(item: dict[str, Any], *, title: str) -> None:
     table.add_column("Champ", style="cyan", overflow="fold", no_wrap=False)
     table.add_column("Valeur", style="white", overflow="fold", no_wrap=False)
     for k, v in item.items():
-        if isinstance(v, list | dict):
+        if isinstance(v, list) and all(isinstance(x, str | int | float) for x in v):
+            v = ", ".join(str(x) for x in v) if v else "—"
+        elif isinstance(v, list | dict):
             v = str(v)
         table.add_row(k, "—" if v is None else str(v))
     _console().print(table)
