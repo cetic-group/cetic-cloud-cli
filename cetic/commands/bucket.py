@@ -5,8 +5,10 @@ from rich import print as rprint
 
 from cetic import client
 from cetic.commands._render import render_list, render_one
+from cetic.commands.bucket_cors import cors_app
 
 app = typer.Typer(help="Buckets S3 CETIC Cloud")
+app.add_typer(cors_app, name="cors")
 
 
 @app.command(name="list")
