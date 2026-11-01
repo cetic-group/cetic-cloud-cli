@@ -165,3 +165,52 @@ def update(
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
     rprint(f"[green]✓[/green] Bucket désormais [bold]{'public' if public else 'privé'}[/bold].")
+
+
+@app.command()
+def presign(
+    bucket_id: str = typer.Argument(..., help="UUID du bucket"),
+    key: str = typer.Argument(..., help="Clé de l'objet (chemin complet)"),
+    method: str = typer.Option("GET", "--method", "-m", help="GET (lecture) ou PUT (envoi)"),
+    expires: int = typer.Option(3600, "--expires", "-e", help="Durée de validité en secondes (60 à 604800)"),
+    content_length: int | None = typer.Option(
+        None, "--content-length", help="PUT : taille exacte du fichier en octets, signée dans le lien"),
+    content_type: str | None = typer.Option(
+        None, "--content-type", help="PUT : type du fichier (ex. image/png), signé dans le lien"),
+    password: str | None = typer.Option(
+        None, "--password", help="Protège le lien par un mot de passe (4 caractères minimum)"),
+) -> None:
+    """Génère une URL signée pour lire (GET) ou envoyer (PUT) un objet.
+
+    Avec --content-length et --content-type, le stockage refuse tout envoi dont la
+    taille ou le type diffère. Le lien reste utilisable jusqu'à son expiration."""
+    method = method.upper()
+    if method not in {"GET", "PUT"}:
+        rprint("[red]La méthode doit être GET ou PUT.[/red]")
+        raise typer.Exit(1)
+    if method != "PUT" and (content_length is not None or content_type is not None):
+        rprint("[red]--content-length et --content-type ne s'appliquent qu'à un envoi (--method PUT).[/red]")
+        raise typer.Exit(1)
+    if content_length is not None and content_length < 1:
+        rprint("[red]--content-length doit être un nombre d'octets supérieur à 0.[/red]")
+        raise typer.Exit(1)
+    body: dict = {"key": key, "method": method, "expires_in": expires}
+    if content_length is not None:
+        body["content_length"] = content_length
+    if content_type is not None:
+        body["content_type"] = content_type
+    if password:
+        body["password"] = password
+    try:
+        r = client.post(f"/v1/buckets/{bucket_id}/presign", json=body)
+    except client.APIError as e:
+        rprint(f"[red]Erreur : {e.detail}[/red]")
+        raise typer.Exit(1)
+    render_one(
+        {"url": r["url"], "method": r["method"], "expires_at": r["expires_at"],
+         "password_protected": r.get("password_protected", False),
+         **({"required_headers": r["required_headers"]} if r.get("required_headers") else {})},
+        title="URL signée",
+    )
+    if r.get("required_headers"):
+        rprint("[yellow]L'envoi doit reprendre ces en-têtes à l'identique, sinon le stockage le refuse.[/yellow]")
