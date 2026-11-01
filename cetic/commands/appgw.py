@@ -13,7 +13,8 @@ Fonctionnement :
   hostnames via SNI.
 - Hostnames sous-domaine auto (`<slug>-<id8>.app.cloud.cetic-group.com`) ou
   custom domain (CNAME vers CETIC + validation DNS-01).
-- Mutations propagées en zéro-downtime (reload sans coupure).
+- Les politiques ont un état d’application distinct du statut de la gateway.
+- Leur révocation peut fermer les connexions persistantes.
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ import typer
 from rich import print as rprint
 
 from cetic import client, config
+from cetic.commands._appgw_security import policy_bail, policy_payload, prepare_policy_write, verify_policy_response
 from cetic._resolve import resolve_id
 from cetic.commands._catalog import render_compute_plans
 from cetic.commands._gateway import (
@@ -274,6 +276,12 @@ def update(
         False, "--reset-error-page", help="Rétablit la page d'indisponibilité par défaut.",
     ),
     cache_enabled: bool | None = typer.Option(None, "--cache-enabled/--no-cache-enabled", help="Activer ou désactiver l’option cache HTTP payante, dimensionnée par le plan"),
+    l4_policy_file: Path | None = typer.Option(None, "--l4-policy-file", help="Fichier JSON de politique d’accès ; omis = conserver."),
+    clear_l4_policy: bool = typer.Option(False, "--clear-l4-policy", help="Supprimer explicitement cette politique."),
+    l7_policy_file: Path | None = typer.Option(None, "--l7-policy-file", help="Fichier JSON de politique d’accès ; omis = conserver."),
+    clear_l7_policy: bool = typer.Option(False, "--clear-l7-policy", help="Supprimer explicitement cette politique."),
+    client_ip_policy_file: Path | None = typer.Option(None, "--client-ip-policy-file", help="Fichier JSON de politique d’accès ; omis = conserver."),
+    clear_client_ip_policy: bool = typer.Option(False, "--clear-client-ip-policy", help="Supprimer explicitement cette politique."),
 ) -> None:
     """Modifie le plan, le cache ou la page d'indisponibilité d'une Application Gateway.
 
@@ -282,6 +290,7 @@ def update(
       cetic appgw update web-edge --reset-error-page
       cetic appgw update web-edge --plan appgw-medium --cache-enabled
     """
+    security_policies = policy_payload(l4_policy=(l4_policy_file, clear_l4_policy), l7_policy=(l7_policy_file, clear_l7_policy), client_ip_policy=(client_ip_policy_file, clear_client_ip_policy))
     if error_page_file and reset_error_page:
         rprint("[red]Erreur : --error-page-file et --reset-error-page s'excluent.[/red]")
         raise typer.Exit(1)
@@ -299,14 +308,17 @@ def update(
     for key, value in {"plan": plan, "cache_enabled": cache_enabled}.items():
         if value is not None:
             body[key] = value
+    body.update(security_policies)
     if not body:
-        rprint("[red]Erreur : préciser --plan, --cache-enabled, --no-cache-enabled, --error-page-file ou --reset-error-page.[/red]")
+        rprint("[red]Erreur : préciser --plan, --cache-enabled, --no-cache-enabled, --error-page-file --reset-error-page ou une option de politique.[/red]")
         raise typer.Exit(1)
     gid = _resolve_appgw(id_or_name)
     try:
-        client.patch(f"{APPGW_PATH}/{gid}", json=body)
+        prepare_policy_write(body, gid, updating=True)
+        security_response = client.patch(f"{APPGW_PATH}/{gid}", json=body)
+        verify_policy_response(body, security_response)
     except client.APIError as e:
-        raise _bail(e) from e
+        raise (policy_bail(e) if security_policies else _bail(e)) from None
     rprint("[green]✓[/green] Application Gateway mise à jour.")
 
 
@@ -329,6 +341,9 @@ def create(
         help="UUID d'une IP publique pré-allouée à attacher (optionnel)",
     ),
     cache_enabled: bool | None = typer.Option(None, "--cache-enabled/--no-cache-enabled", help="Activer ou désactiver l’option cache HTTP payante, dimensionnée par le plan"),
+    l4_policy_file: Path | None = typer.Option(None, "--l4-policy-file", help="Fichier JSON de politique d’accès ; omis = conserver."),
+    l7_policy_file: Path | None = typer.Option(None, "--l7-policy-file", help="Fichier JSON de politique d’accès ; omis = conserver."),
+    client_ip_policy_file: Path | None = typer.Option(None, "--client-ip-policy-file", help="Fichier JSON de politique d’accès ; omis = conserver."),
 ) -> None:
     """Crée une nouvelle Application Gateway.
 
@@ -341,6 +356,7 @@ def create(
 
     Le provisioning prend ~3-5 minutes. L'état passe `creating` → `active`.
     """
+    security_policies = policy_payload(l4_policy=(l4_policy_file, False), l7_policy=(l7_policy_file, False), client_ip_policy=(client_ip_policy_file, False))
     body: dict[str, Any] = {
         "name": name,
         "region": region,
@@ -354,9 +370,12 @@ def create(
     if public_ip:
         body["public_ip_id"] = public_ip
     try:
+        body.update(security_policies)
+        prepare_policy_write(body, None, updating=False)
         gw = client.post(APPGW_PATH, json=body)
+        verify_policy_response(body, gw)
     except client.APIError as e:
-        raise _bail(e) from e
+        raise (policy_bail(e) if security_policies else _bail(e)) from None
     try:
         validate_created_replica_count(gw, replica_count)
     except ValueError as exc:
@@ -510,6 +529,7 @@ def listener_add(
         None, "--acme-dns-credential",
         help="Credential DNS, répétable. Format : KEY=VALUE (ex: api_token=xxx).",
     ),
+    l7_policy_file: Path | None = typer.Option(None, "--l7-policy-file", help="Fichier JSON de politique d’accès ; omis = conserver."),
 ) -> None:
     """Ajoute un listener (hostname + certificat Let's Encrypt optionnel).
 
@@ -538,6 +558,7 @@ def listener_add(
       cetic appgw listener add web-edge --hostname api.example.com \\
         --acme-challenge custom --cert-file fullchain.pem --key-file privkey.pem
     """
+    security_policies = policy_payload(l7_policy=(l7_policy_file, False))
     acme_dns_credential = acme_dns_credential or []
 
     body: dict[str, Any] = {"hostname": hostname}
@@ -583,9 +604,12 @@ def listener_add(
 
     gid = _resolve_appgw(id_or_name)
     try:
+        body.update(security_policies)
+        prepare_policy_write(body, gid, updating=False)
         listener = client.post(f"{APPGW_PATH}/{gid}/listeners", json=body)
+        verify_policy_response(body, listener)
     except client.APIError as e:
-        raise _bail(e) from e
+        raise (policy_bail(e) if security_policies else _bail(e)) from None
 
     name = listener.get("hostname", hostname)
     if acme_challenge == "custom":
@@ -1212,6 +1236,7 @@ def route_create(
     cache_max_ttl: int | None = typer.Option(None, "--cache-max-ttl", min=1, max=3600, help="Durée maximale (secondes)"),
     cache_bypass_cookie: list[str] | None = typer.Option(None, "--cache-bypass-cookie", help="Cookie de session exclu, répétable. Chaîne vide = exclure tout cookie."),
     cache_debug_headers: bool | None = typer.Option(None, "--cache-debug-headers/--no-cache-debug-headers", help="Afficher X-Cache: HIT ou MISS"),
+    l7_policy_file: Path | None = typer.Option(None, "--l7-policy-file", help="Fichier JSON de politique d’accès ; omis = conserver."),
 ) -> None:
     """Crée une route (condition host+path → target group + policies L7).
 
@@ -1237,6 +1262,7 @@ def route_create(
         --basic-auth-user alice:s3cret \\
         --basic-auth-user bob:hunter2
     """
+    security_policies = policy_payload(l7_policy=(l7_policy_file, False))
     if waf_preset not in _WAF_PRESETS:
         rprint(
             f"[red]Preset WAF invalide '{waf_preset}'. "
@@ -1264,9 +1290,12 @@ def route_create(
     if basic_auth_users:
         body["basic_auth_users"] = basic_auth_users
     try:
+        body.update(security_policies)
+        prepare_policy_write(body, gid, updating=False)
         route = client.post(f"{APPGW_PATH}/{gid}/routes", json=body)
+        verify_policy_response(body, route)
     except client.APIError as e:
-        raise _bail(e) from e
+        raise (policy_bail(e) if security_policies else _bail(e)) from None
     rprint(
         f"[green]✓[/green] Route créée : [bold]{route.get('id', '—')}[/bold] "
         f"(priorité {route.get('priority', priority)})"
@@ -1415,6 +1444,8 @@ def route_update(
     cache_max_ttl: int | None = typer.Option(None, "--cache-max-ttl", min=1, max=3600, help="Durée maximale (secondes)"),
     cache_bypass_cookie: list[str] | None = typer.Option(None, "--cache-bypass-cookie", help="Cookie de session exclu, répétable. Chaîne vide = exclure tout cookie."),
     cache_debug_headers: bool | None = typer.Option(None, "--cache-debug-headers/--no-cache-debug-headers", help="Afficher X-Cache: HIT ou MISS"),
+    l7_policy_file: Path | None = typer.Option(None, "--l7-policy-file", help="Fichier JSON de politique d’accès ; omis = conserver."),
+    clear_l7_policy: bool = typer.Option(False, "--clear-l7-policy", help="Supprimer explicitement cette politique."),
 ) -> None:
     """Met à jour une route (PATCH partiel — seuls les champs fournis sont modifiés).
 
@@ -1441,6 +1472,7 @@ def route_update(
       # Remplacer la deny list par une liste vide (= aucune restriction)
       cetic appgw route update web-edge --route-id <uuid> --deny-cidr ""
     """
+    security_policies = policy_payload(l7_policy=(l7_policy_file, clear_l7_policy))
     if basic_auth_user and no_basic_auth:
         rprint(
             "[red]Erreur : --basic-auth-user et --no-basic-auth sont "
@@ -1485,6 +1517,7 @@ def route_update(
         # désactiver (le payload AppgwRouteUpdate l'expose explicitement).
         body["basic_auth_secret_ref"] = None
 
+    body.update(security_policies)
     if not body:
         rprint(
             "[red]Erreur : aucun champ à modifier. Fournissez au moins une "
@@ -1496,11 +1529,13 @@ def route_update(
 
     gid = _resolve_appgw(id_or_name)
     try:
+        prepare_policy_write(body, gid, updating=True)
         route = client.patch(
             f"{APPGW_PATH}/{gid}/routes/{route_id}", json=body
         )
+        verify_policy_response(body, route)
     except client.APIError as e:
-        raise _bail(e) from e
+        raise (policy_bail(e) if security_policies else _bail(e)) from None
     rprint(
         f"[green]✓[/green] Route mise à jour : "
         f"[bold]{(route or {}).get('id', route_id)}[/bold]"
@@ -1578,3 +1613,24 @@ def acme_providers() -> None:
             ("credentials", "Credentials requis"),
         ],
     )
+
+
+@listener_app.command(name="update")
+def listener_update(
+    id_or_name: str = typer.Argument(..., metavar="GW_ID|GW_NAME"),
+    listener_id: str = typer.Option(..., "--listener-id"),
+    l7_policy_file: Path | None = typer.Option(None, "--l7-policy-file"),
+    clear_l7_policy: bool = typer.Option(False, "--clear-l7-policy"),
+) -> None:
+    """Modifie la politique HTTP d’un domaine sans recréer son certificat."""
+    body = policy_payload(l7_policy=(l7_policy_file, clear_l7_policy))
+    if not body:
+        rprint("[red]Précisez --l7-policy-file ou --clear-l7-policy.[/red]")
+        raise typer.Exit(1)
+    gid = _resolve_appgw(id_or_name)
+    try:
+        prepare_policy_write(body, gid, updating=True)
+        response = client.patch(f"{APPGW_PATH}/{gid}/listeners/{listener_id}", json=body)
+        verify_policy_response(body, response)
+    except client.APIError as exc:
+        raise policy_bail(exc) from None

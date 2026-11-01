@@ -724,3 +724,51 @@ Aucune multiplication par le nombre d'instances ni remise n'est calculée par
 la CLI. `appgw_cache` identifie la ligne du supplément dans la grille v2.
 Une plateforme ancienne qui ne confirme pas le mode demandé est signalée
 avant d'afficher un devis single ou avec cache.
+
+### Politiques d’accès Application Gateway
+
+L’API doit annoncer la version 1 dans `/v1/platform/capabilities`. La CLI vérifie
+cette capacité avant tout envoi, puis utilise la révision courante de la
+passerelle pour les modifications. Un conflit HTTP 409 n’est pas rejoué : relisez
+la configuration avant de réessayer. Un champ omis conserve sa valeur ; la
+suppression utilise une option `--clear-*`, jamais `null`.
+
+```sh
+cetic appgw update web-edge --l4-policy-file network-policy.json
+cetic appgw update web-edge --client-ip-policy-file trusted-proxies.json
+cetic appgw listener update web-edge --listener-id UUID --l7-policy-file http-policy.json
+cetic appgw route update web-edge --route-id UUID --l7-policy-file http-policy.json --cache-mode off
+cetic appgw route update web-edge --route-id UUID --clear-l7-policy
+CCP_OUTPUT=json cetic appgw get web-edge
+```
+
+`--l4-policy-file`, `--l7-policy-file` et `--client-ip-policy-file` sont aussi
+acceptés à la création d’une passerelle. Les créations de listener et de route
+acceptent `--l7-policy-file`. Les fichiers sont des objets JSON UTF-8 de 64 Kio
+maximum ; les clés dupliquées et les valeurs non JSON sont refusées.
+
+Exemple L4, qui filtre l’adresse du pair TCP avant la négociation TLS :
+
+```json
+{"enabled":true,"tcp_443":{"allow_cidrs":["192.0.2.0/24","2001:db8::/32"]}}
+```
+
+Exemple L7, qui exige un en-tête sur le chemin `/api` et ses descendants :
+
+```json
+{"enabled":true,"policies":[{"key":"partners","scope":{"path":{"op":"segment_prefix","value":"/api"}},"required_headers":[{"key":"partner-id","name":"X-Partner-ID","op":"in","values":["partner-a","partner-b"]}]}]}
+```
+
+Les refus priment sur les autorisations, les politiques héritées se cumulent,
+et chaque en-tête obligatoire doit être satisfait. Les valeurs d’en-têtes ne
+remplacent pas une authentification. Les domaines contenant une route regex
+ne peuvent pas activer L7 ; les politiques fondées sur les en-têtes demandent
+un cache désactivé sur les routes concernées. Un filtrage TCP/80 restrictif est
+incompatible avec les certificats HTTP-01 : utiliser DNS-01 ou un certificat
+fourni. Le mode `trusted_xff` exige une liste explicite de proxies de confiance.
+
+Une écriture acceptée est une intention enregistrée. Vérifiez
+`access_policy_status.state` et les observations des instances dans la réponse
+JSON de `appgw get` : le statut général `active` n’atteste pas l’application.
+La révocation peut fermer les connexions persistantes. Les CIDR historiques
+restent des filtres HTTP sur l’adresse du pair ; ils ne sont pas convertis en L4.

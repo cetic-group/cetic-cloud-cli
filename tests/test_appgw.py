@@ -1689,8 +1689,8 @@ def test_appgw_app_command_count():
 
     listener_cmds = _names(appgw.listener_app.registered_commands)
     # add, get, list, delete, renew-cert, rotate-cert (#53 : certificat client)
-    assert len(listener_cmds) == 6, listener_cmds
-    for expected in ("add", "get", "list", "delete", "renew-cert", "rotate-cert"):
+    assert len(listener_cmds) == 7, listener_cmds
+    for expected in ("add", "get", "list", "delete", "renew-cert", "rotate-cert", "update"):
         assert expected in listener_cmds, f"listener {expected} manquant"
 
     tg_cmds = _names(appgw.tg_app.registered_commands)
@@ -1716,7 +1716,7 @@ def test_appgw_app_command_count():
         + len(route_cmds)
         + len(cache_cmds)
     )
-    assert total == 30  # +2 : cache show et cache purge
+    assert total == 31  # #1828 : listener update, politiques d’accès
 
 
 def test_format_api_error_messages():
