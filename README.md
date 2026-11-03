@@ -250,6 +250,38 @@ de `--starts-on`, à défaut de la date de début déjà enregistrée, sinon d'a
 dans le fuseau du planning. Si la plateforme ne prend pas encore en
 charge la période, la commande échoue sans créer de planning illimité.
 
+## IP de sortie dédiée d'un VPC (depuis v2.3.0)
+
+Par défaut, un VPC sort sur internet par la **sortie partagée** de la
+plateforme : l'adresse vue par les tiers est commune à plusieurs clients et le
+**TCP 25 (SMTP) est bloqué**. L'option `--dedicated-egress-ip` attribue au VPC
+une **IP publique propre**, à communiquer aux partenaires qui filtrent par
+adresse. Elle est **facturée** et **hors quota** d'IP publiques, et conservée
+tant que l'option reste active.
+
+```bash
+cetic vpc create --name prod --region RNN --dedicated-egress-ip
+cetic vpc update prod-uuid --dedicated-egress-ip       # sur un VPC existant
+cetic vpc get prod-uuid                                # egress_ip, egress_ip_type, egress_ip_status
+cetic vpc update prod-uuid --no-dedicated-egress-ip    # confirmation demandée (--yes pour passer outre)
+```
+
+⚠️ **La désactivation rend l'IP au pool aussitôt, sans délai de grâce** : elle
+est perdue et ne peut pas être récupérée ; une réactivation attribue une autre
+adresse.
+
+- **409** : aucune IP libre dans la région (ou VPC pas encore exploitable) —
+  rien n'est modifié, réessayer plus tard ;
+- **422** : l'option n'est pas proposée sur cette installation, ou le VPC
+  n'est pas EVPN (créer un nouveau VPC pour en bénéficier).
+- Statuts de l'IP : `allocated` (réservée, pas encore en service — aucun VNet
+  avec sortie internet), `attaching`, `attached` (en service), `detaching`
+  (retour au pool en cours), `error`.
+- `CCP_OUTPUT=json` rend les champs bruts de l'API (`dedicated_egress_ip`,
+  `egress_ip`, `egress_ip_type`, `egress_ip_status`).
+- Une plateforme qui ne connaît pas encore l'option la laisse sans effet : la
+  commande échoue alors au lieu d'annoncer une IP dédiée qui n'existe pas.
+
 ## DNS privé (depuis v1.6.0)
 
 `cetic dns` déclare des zones DNS servies **uniquement dans votre réseau privé**
@@ -513,6 +545,11 @@ cetic bucket create --name backups --region RNN
 # Networking
 cetic vpc list                                              # colonne CIDR (— si non assigné)
 cetic vpc create --name prod --region RNN --cidr 10.10.0.0/16   # --cidr optionnel (RFC1918, /16-/24), auto-alloué si omis
+# IP de sortie dédiée (depuis v2.3.0) — sans l'option, sortie internet partagée (TCP 25 bloqué)
+cetic vpc create --name prod --region RNN --dedicated-egress-ip   # IP publique propre au VPC, facturée, hors quota d'IP
+cetic vpc update <vpc-uuid> --dedicated-egress-ip                 # activer sur un VPC existant (EVPN)
+cetic vpc update <vpc-uuid> --no-dedicated-egress-ip [--yes]      # l'IP retourne au pool AUSSITÔT : elle est perdue
+cetic vpc list                                                    # colonne « Sortie internet » : Partagée | Dédiée <IP> (statut)
 cetic vpc-peering list
 cetic vnet-peering create --name web-to-db --vnet-a <id> --vnet-b <id>   # relie 2 VNets de VPC différents
 cetic vpc-peering create --name prod-to-staging --vpc-a <vpc-a-uuid> --vpc-b <vpc-b-uuid>
