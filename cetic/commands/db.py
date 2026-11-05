@@ -1,5 +1,7 @@
 """cetic db — bases de données managées CETIC Cloud (DBaaS)."""
 
+from typing import Any
+
 import httpx
 import typer
 from rich import print as rprint
@@ -35,13 +37,43 @@ def _list_engine(engine: str, region: str | None) -> None:
                          ("tier", "Tier"), ("plan", "Plan"), ("status", "Statut"), ("endpoint", "Endpoint")])
 
 
-def _create_engine(engine: str, name: str, region: str, tier: str, plan: str,
+def _create_engine(engine: str, name: str, region: str, tier: str | None, plan: str,
                    vnet_id: str, vpc_id: str | None,
-                   storage_gb: int, engine_version: str | None) -> None:
-    body = {"name": name, "region": region, "tier": tier, "plan": plan,
-            "vnet_id": vnet_id, "storage_gb": storage_gb}
-    if vpc_id: body["vpc_id"] = vpc_id
-    if engine_version: body["engine_version"] = engine_version
+                   storage_gb: int, engine_version: str | None,
+                   replicas: int | None = None, tags: list[str] | None = None,
+                   database: str | None = None, pgbouncer: bool = False) -> None:
+    if replicas is not None and replicas not in (1, 3):
+        rprint("[red]Erreur : --replicas vaut 1 (sans redondance) ou 3 (haute disponibilité).[/red]")
+        raise typer.Exit(2)
+    if tier is not None and tier not in ("dev", "prod"):
+        rprint("[red]Erreur : --tier vaut dev ou prod.[/red]")
+        raise typer.Exit(2)
+    if replicas is not None and tier is not None and replicas != (3 if tier == "prod" else 1):
+        rprint(f"[red]Erreur : --tier {tier} contredit --replicas {replicas} "
+               "(dev = 1 réplique, prod = 3). Utilisez --replicas seul.[/red]")
+        raise typer.Exit(2)
+    effective_replicas = replicas if replicas is not None else (3 if tier == "prod" else 1)
+    if pgbouncer and effective_replicas != 3:
+        rprint("[red]Erreur : PgBouncer exige la haute disponibilité (--replicas 3).[/red]")
+        raise typer.Exit(2)
+    body: dict[str, Any] = {"name": name, "region": region, "plan": plan,
+                            "vnet_id": vnet_id, "storage_gb": storage_gb}
+    # `replicas` est le champ canonique de l'API ; `tier` n'est envoyé que
+    # s'il est donné explicitement (sinon l'API retient 1 réplique).
+    if replicas is not None:
+        body["replicas"] = replicas
+    elif tier is not None:
+        body["tier"] = tier
+    if vpc_id:
+        body["vpc_id"] = vpc_id
+    if engine_version:
+        body["engine_version"] = engine_version
+    if tags:
+        body["tags"] = list(dict.fromkeys(tags))
+    if database:
+        body["database"] = database
+    if pgbouncer:
+        body["pgbouncer_enabled"] = True
     try:
         d = client.post(f"/v1/db/{engine}", json=body)
     except client.APIError as e:
@@ -109,18 +141,37 @@ def _bind_engine(typer_app: typer.Typer, engine: str) -> None:
     def _create(
         name: str = typer.Option(..., "--name", "-n"),
         region: str = typer.Option(..., "--region", "-r"),
-        tier: str = typer.Option("dev", "--tier", help="dev | prod"),
+        tier: str | None = typer.Option(
+            None, "--tier", help="Ancienne forme de --replicas : dev = 1 réplique, prod = 3."),
+        replicas: int | None = typer.Option(
+            None, "--replicas",
+            help="1 (sans redondance, défaut de la plateforme) ou 3 (haute disponibilité)."),
         plan: str = typer.Option("nano", "--plan", "-p"),
         vnet_id: str = typer.Option(..., "--vnet"),
         vpc_id: str | None = typer.Option(None, "--vpc"),
         storage_gb: int = typer.Option(20, "--storage-gb", help="Taille du volume persistant (Go)"),
         engine_version: str | None = typer.Option(
             None, "--engine-version",
-            help="Version DB (ex: 16 pour PG, 8 pour Valkey). Listez les versions dispo : `cetic db versions --engine pg`",
+            help="Version du moteur (ex : 17 pour PG). Omise : version par défaut du "
+                 "catalogue, choisie par la plateforme. Versions disponibles : "
+                 "`cetic db <moteur> versions` (ex : `cetic db pg versions`).",
         ),
+        tags: list[str] | None = typer.Option(None, "--tag", help="Tag (répétable)"),
+        # Options propres à PostgreSQL : masquées dans l'aide des autres moteurs.
+        database: str | None = typer.Option(
+            None, "--database", hidden=engine != "pg",
+            help="Nom de la base initiale. Omis : dérivé du nom de l'instance (- devient _)."),
+        pgbouncer: bool = typer.Option(
+            False, "--pgbouncer", hidden=engine != "pg",
+            help="Active le pooler PgBouncer (mode transaction). Exige --replicas 3, "
+                 "non modifiable après la création."),
     ) -> None:
         """Crée une instance."""
-        _create_engine(engine, name, region, tier, plan, vnet_id, vpc_id, storage_gb, engine_version)
+        if engine != "pg" and (database or pgbouncer):
+            rprint("[red]Erreur : --database et --pgbouncer sont propres à PostgreSQL.[/red]")
+            raise typer.Exit(2)
+        _create_engine(engine, name, region, tier, plan, vnet_id, vpc_id, storage_gb, engine_version,
+                       replicas=replicas, tags=tags, database=database, pgbouncer=pgbouncer)
 
     @typer_app.command(name="plans")
     def _plans() -> None:
@@ -216,18 +267,44 @@ def _join(values: list[str] | None) -> str:
     return ", ".join(values) if values else "—"
 
 
+def _default_pg_major() -> int | None:
+    """Majeure par défaut du catalogue « Versions DB », celle d'une création sans version.
+
+    Aucune version figée côté CLI (cetic-cloud-platform#1809) : la version par
+    défaut se choisit au back-office. Catalogue illisible ou sans majeure
+    entière : `None`, et l'API retient alors sa propre valeur.
+    """
+    try:
+        versions = client.get("/v1/db/engine-versions", params={"engine": "pg"})
+    except (client.APIError, httpx.TransportError):
+        return None
+    if not isinstance(versions, list) or not versions:
+        return None
+    default = next((v for v in versions if v.get("is_default")), versions[0])
+    major = str(default.get("version", "")).split(".", 1)[0]
+    return int(major) if major.isdigit() else None
+
+
 @pg_app.command(name="extensions")
 def pg_extensions(
-    version: int = typer.Option(16, "--version", "-v", help="Version majeure de PostgreSQL"),
+    version: int | None = typer.Option(
+        None, "--version", "-v",
+        help="Version majeure de PostgreSQL. Omise : version par défaut du catalogue "
+             "(`cetic db pg versions`).",
+    ),
 ) -> None:
     """Catalogue des extensions autorisables pour une version majeure."""
     from cetic import config
 
+    if version is None:
+        version = _default_pg_major()
+    params = {"version": version} if version is not None else None
     try:
-        cat = client.get("/v1/db/pg/extensions", params={"version": version})
+        cat = client.get("/v1/db/pg/extensions", params=params)
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
+    version = cat.get("version", version)
     if config.get_output() in ("json", "yaml"):
         render_one(cat, title=f"Extensions PostgreSQL {version}")
         return
