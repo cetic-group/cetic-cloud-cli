@@ -116,7 +116,9 @@ def _bind_engine(typer_app: typer.Typer, engine: str) -> None:
         storage_gb: int = typer.Option(20, "--storage-gb", help="Taille du volume persistant (Go)"),
         engine_version: str | None = typer.Option(
             None, "--engine-version",
-            help="Version DB (ex: 16 pour PG, 8 pour Valkey). Listez les versions dispo : `cetic db versions --engine pg`",
+            help="Version du moteur (ex : 17 pour PG). Omise : version par défaut du "
+                 "catalogue, choisie par la plateforme. Versions disponibles : "
+                 "`cetic db <moteur> versions` (ex : `cetic db pg versions`).",
         ),
     ) -> None:
         """Crée une instance."""
@@ -216,18 +218,44 @@ def _join(values: list[str] | None) -> str:
     return ", ".join(values) if values else "—"
 
 
+def _default_pg_major() -> int | None:
+    """Majeure par défaut du catalogue « Versions DB », celle d'une création sans version.
+
+    Aucune version figée côté CLI (cetic-cloud-platform#1809) : la version par
+    défaut se choisit au back-office. Catalogue illisible ou sans majeure
+    entière : `None`, et l'API retient alors sa propre valeur.
+    """
+    try:
+        versions = client.get("/v1/db/engine-versions", params={"engine": "pg"})
+    except (client.APIError, httpx.TransportError):
+        return None
+    if not isinstance(versions, list) or not versions:
+        return None
+    default = next((v for v in versions if v.get("is_default")), versions[0])
+    major = str(default.get("version", "")).split(".", 1)[0]
+    return int(major) if major.isdigit() else None
+
+
 @pg_app.command(name="extensions")
 def pg_extensions(
-    version: int = typer.Option(16, "--version", "-v", help="Version majeure de PostgreSQL"),
+    version: int | None = typer.Option(
+        None, "--version", "-v",
+        help="Version majeure de PostgreSQL. Omise : version par défaut du catalogue "
+             "(`cetic db pg versions`).",
+    ),
 ) -> None:
     """Catalogue des extensions autorisables pour une version majeure."""
     from cetic import config
 
+    if version is None:
+        version = _default_pg_major()
+    params = {"version": version} if version is not None else None
     try:
-        cat = client.get("/v1/db/pg/extensions", params={"version": version})
+        cat = client.get("/v1/db/pg/extensions", params=params)
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
+    version = cat.get("version", version)
     if config.get_output() in ("json", "yaml"):
         render_one(cat, title=f"Extensions PostgreSQL {version}")
         return

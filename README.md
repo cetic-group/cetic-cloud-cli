@@ -568,11 +568,13 @@ cetic email account create contact@exemple.com          # mot de passe demandé,
 cetic email alias create info@exemple.com --to contact@exemple.com
 
 # Databases
-cetic db pg create --name app-db --region RNN --vnet <VNET> --plan small
+cetic db pg create --name app-db --region RNN --vnet <VNET> --plan small   # sans --engine-version : version par défaut du catalogue
+cetic db pg versions                                     # versions proposées (PostgreSQL 15 à 18) et version par défaut
+cetic db pg create --name app-db --region RNN --vnet <VNET> --engine-version 17
 cetic db pg credentials <id>
 
 # Extensions PostgreSQL — à activer d'abord sur l'instance par le support
-cetic db pg extensions                                   # catalogue PostgreSQL 16 (--version pour une autre)
+cetic db pg extensions                                   # catalogue de la version par défaut (--version 17 pour une autre)
 cetic db pg extensions-set <id> --allow postgis --allow postgis_topology --wait
 cetic db pg extensions-set <id> --allow pg_cron --preload pg_cron \
     --cron-database jobs --yes                           # préchargement : redémarre l'instance

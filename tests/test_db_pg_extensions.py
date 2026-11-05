@@ -40,7 +40,14 @@ def _capture(captured: dict, status: int = 200, body: dict | None = None):
     return _h
 
 
+def _versions(*versions: tuple[str, bool]) -> list[dict[str, Any]]:
+    return [{"engine": "pg", "version": v, "label": f"PostgreSQL {v}", "is_default": d}
+            for v, d in versions]
+
+
 def test_catalog_table(runner, mock_api) -> None:
+    mock_api.get("/v1/db/engine-versions").mock(
+        return_value=httpx.Response(200, json=_versions(("16", True), ("15", False))))
     route = mock_api.get("/v1/db/pg/extensions").mock(return_value=httpx.Response(200, json=CATALOG))
     r = runner.invoke(app, ["db", "pg", "extensions"])
     assert r.exit_code == 0, r.output
@@ -56,6 +63,49 @@ def test_catalog_json_keeps_the_whole_catalog(runner, mock_api, monkeypatch) -> 
     r = runner.invoke(app, ["db", "pg", "extensions", "--version", "16"])
     assert r.exit_code == 0, r.output
     assert json.loads(r.output)["direct_extensions"] == ["pgcrypto", "pg_trgm"]
+
+
+def test_catalog_defaults_to_the_catalog_default_version(runner, mock_api) -> None:
+    """Sans --version : la majeure par défaut de « Versions DB », pas 16 figé (#1809)."""
+    versions = mock_api.get("/v1/db/engine-versions").mock(
+        return_value=httpx.Response(200, json=_versions(("18", False), ("17", True), ("16", False))))
+    route = mock_api.get("/v1/db/pg/extensions").mock(
+        return_value=httpx.Response(200, json={**CATALOG, "version": 17}))
+    r = runner.invoke(app, ["db", "pg", "extensions"])
+    assert r.exit_code == 0, r.output
+    assert versions.calls.last.request.url.params["engine"] == "pg"
+    assert route.calls.last.request.url.params["version"] == "17"
+    assert "PostgreSQL 17" in r.output
+
+
+def test_catalog_without_versions_lets_the_api_choose(runner, mock_api) -> None:
+    """Catalogue des versions illisible : aucune version envoyée, l'API retient la sienne."""
+    mock_api.get("/v1/db/engine-versions").mock(return_value=httpx.Response(503, json={}))
+    route = mock_api.get("/v1/db/pg/extensions").mock(return_value=httpx.Response(200, json=CATALOG))
+    r = runner.invoke(app, ["db", "pg", "extensions"])
+    assert r.exit_code == 0, r.output
+    assert "version" not in route.calls.last.request.url.params
+    assert "PostgreSQL 16" in r.output
+
+
+def test_explicit_version_skips_the_versions_catalog(runner, mock_api) -> None:
+    versions = mock_api.get("/v1/db/engine-versions").mock(
+        return_value=httpx.Response(200, json=_versions(("17", True))))
+    route = mock_api.get("/v1/db/pg/extensions").mock(return_value=httpx.Response(200, json=CATALOG))
+    r = runner.invoke(app, ["db", "pg", "extensions", "--version", "16"])
+    assert r.exit_code == 0, r.output
+    assert not versions.called
+    assert route.calls.last.request.url.params["version"] == "16"
+
+
+def test_create_without_engine_version_sends_none(runner, mock_api) -> None:
+    """Création sans --engine-version : champ absent, la plateforme choisit (#1809)."""
+    cap: dict[str, Any] = {}
+    mock_api.post("/v1/db/pg").mock(side_effect=_capture(cap, 201, {"id": DB}))
+    r = runner.invoke(app, ["db", "pg", "create", "--name", "app", "--region", "RNN",
+                            "--vnet", "vnet-1"])
+    assert r.exit_code == 0, r.output
+    assert "engine_version" not in cap
 
 
 def test_catalog_unknown_version(runner, mock_api) -> None:
