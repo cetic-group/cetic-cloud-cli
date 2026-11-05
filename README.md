@@ -250,6 +250,38 @@ de `--starts-on`, à défaut de la date de début déjà enregistrée, sinon d'a
 dans le fuseau du planning. Si la plateforme ne prend pas encore en
 charge la période, la commande échoue sans créer de planning illimité.
 
+## IP de sortie dédiée d'un VPC (depuis v2.3.0)
+
+Par défaut, un VPC sort sur internet par la **sortie partagée** de la
+plateforme : l'adresse vue par les tiers est commune à plusieurs clients et le
+**TCP 25 (SMTP) est bloqué**. L'option `--dedicated-egress-ip` attribue au VPC
+une **IP publique propre**, à communiquer aux partenaires qui filtrent par
+adresse. Elle est **facturée** et **hors quota** d'IP publiques, et conservée
+tant que l'option reste active.
+
+```bash
+cetic vpc create --name prod --region RNN --dedicated-egress-ip
+cetic vpc update prod-uuid --dedicated-egress-ip       # sur un VPC existant
+cetic vpc get prod-uuid                                # egress_ip, egress_ip_type, egress_ip_status
+cetic vpc update prod-uuid --no-dedicated-egress-ip    # confirmation demandée (--yes pour passer outre)
+```
+
+⚠️ **La désactivation rend l'IP au pool aussitôt, sans délai de grâce** : elle
+est perdue et ne peut pas être récupérée ; une réactivation attribue une autre
+adresse.
+
+- **409** : aucune IP libre dans la région (ou VPC pas encore exploitable) —
+  rien n'est modifié, réessayer plus tard ;
+- **422** : l'option n'est pas proposée sur cette installation, ou le VPC
+  n'est pas EVPN (créer un nouveau VPC pour en bénéficier).
+- Statuts de l'IP : `allocated` (réservée, pas encore en service — aucun VNet
+  avec sortie internet), `attaching`, `attached` (en service), `detaching`
+  (retour au pool en cours), `error`.
+- `CCP_OUTPUT=json` rend les champs bruts de l'API (`dedicated_egress_ip`,
+  `egress_ip`, `egress_ip_type`, `egress_ip_status`).
+- Une plateforme qui ne connaît pas encore l'option la laisse sans effet : la
+  commande échoue alors au lieu d'annoncer une IP dédiée qui n'existe pas.
+
 ## DNS privé (depuis v1.6.0)
 
 `cetic dns` déclare des zones DNS servies **uniquement dans votre réseau privé**
@@ -513,6 +545,11 @@ cetic bucket create --name backups --region RNN
 # Networking
 cetic vpc list                                              # colonne CIDR (— si non assigné)
 cetic vpc create --name prod --region RNN --cidr 10.10.0.0/16   # --cidr optionnel (RFC1918, /16-/24), auto-alloué si omis
+# IP de sortie dédiée (depuis v2.3.0) — sans l'option, sortie internet partagée (TCP 25 bloqué)
+cetic vpc create --name prod --region RNN --dedicated-egress-ip   # IP publique propre au VPC, facturée, hors quota d'IP
+cetic vpc update <vpc-uuid> --dedicated-egress-ip                 # activer sur un VPC existant (EVPN)
+cetic vpc update <vpc-uuid> --no-dedicated-egress-ip [--yes]      # l'IP retourne au pool AUSSITÔT : elle est perdue
+cetic vpc list                                                    # colonne « Sortie internet » : Partagée | Dédiée <IP> (statut)
 cetic vpc-peering list
 cetic vnet-peering create --name web-to-db --vnet-a <id> --vnet-b <id>   # relie 2 VNets de VPC différents
 cetic vpc-peering create --name prod-to-staging --vpc-a <vpc-a-uuid> --vpc-b <vpc-b-uuid>
@@ -611,7 +648,8 @@ cetic registry acl set myreg --user ci --repo "myapp/*" --actions pull,push
 cetic registry repos myreg --all
 cetic registry tags myreg myapp/api
 cetic registry tag delete myreg myapp/api v1.0.0 --yes
-cetic registry gc myreg --wait
+cetic registry gc myreg --wait                           # exit 1 if refused or failed
+cetic registry gc-status myreg                           # last cleanup outcome
 
 # Templates (custom)
 cetic template list
@@ -669,3 +707,111 @@ git tag -a v1.6.0 -m "…" && git push origin v1.6.0
 - [Console](https://console.cloud.cetic-group.com)
 - [Terraform Provider](https://github.com/cetic-group/terraform-provider-cetic-cloud-platform)
 - [Issues](https://github.com/cetic-group/cetic-cloud-cli/issues)
+
+### Cache HTTP AppGW
+
+Le cache est désactivé par défaut. Le plan sélectionné détermine automatiquement
+le budget de cache et la taille maximale des objets, y compris pour une passerelle
+existante et après un changement de plan. Ces deux dimensions se consultent avec
+`cetic appgw cache show` ; elles ne sont pas modifiables séparément.
+Nécessite une API avec le dimensionnement du cache par plan.
+
+```bash
+cetic appgw update web-edge --cache-enabled
+cetic appgw update web-edge --plan appgw-medium
+cetic appgw route update web-edge --route-id UUID --cache-mode respect --cache-debug-headers
+cetic appgw cache show web-edge
+cetic appgw cache purge web-edge
+cetic appgw cache show web-edge
+```
+
+`--cache-ttl` définit le repli du mode `force` ; `--cache-max-ttl` borne la durée. `--cache-bypass-cookie session` est répétable. Une liste vide (`--cache-bypass-cookie ""`) exclut toute requête portant un cookie. Authorization, Set-Cookie et les réponses privées ne sont jamais cachés. `Vary: Accept-Language` contourne le cache. Suivre la purge jusqu’au succès des deux instances ; un résultat partiel demande une nouvelle tentative.
+
+Les anciennes options expérimentales `--cache-size-mb` et `--cache-max-object-kb`
+ne sont pas disponibles : retirez-les de vos scripts. L’activation de la
+passerelle et les politiques des routes restent indépendantes du gabarit.
+
+### Instance unique ou haute disponibilité
+
+`cetic appgw create` et `cetic lb create` acceptent `--replica-count 1`
+pour un environnement sans besoin de redondance. La valeur par défaut reste
+`2` (haute disponibilité). Le nombre d'instances est indépendant du plan et
+immuable après création : le changer nécessite de recréer la ressource.
+Une instance unique implique une interruption pendant une panne ou une
+maintenance de cette instance. Les capacités et le cache par instance restent
+ceux du plan. Les tarifs Single et haute disponibilité sont distincts dans
+le catalogue ; la CLI affiche les montants renvoyés par la plateforme.
+
+Mettre la plateforme à jour avant de demander le mode unique. La CLI peut
+être installée auparavant en conservant la valeur historique `2`. Si un ancien serveur ignore le mode demandé, la CLI affiche
+l'ID créé et une erreur : vérifier cette ressource avant de réessayer.
+
+### Tarifs AppGW/LB et option cache HTTP
+
+`cetic appgw plans` et `cetic lb plans` affichent les tarifs du catalogue pour
+chaque nombre d'instances. Les montants couvrent déjà toutes les instances du
+mode choisi. La colonne « Option cache » est un supplément au tarif de base,
+applicable uniquement aux Application Gateways lorsque `cache_enabled` est
+activé. Le cache reste activable et désactivable ; ses dimensions viennent du
+plan. Un tarif absent est indisponible, il ne vaut pas zéro.
+
+```bash
+cetic billing pricing --v2
+cetic billing estimate appgw --plan small --replica-count 1 --cache-enabled
+cetic billing estimate appgw --plan small --replica-count 2 --no-cache-enabled
+cetic billing estimate load_balancer --plan small --replica-count 1
+```
+
+L'estimation affiche le total et les composantes renvoyés par le serveur.
+Aucune multiplication par le nombre d'instances ni remise n'est calculée par
+la CLI. `appgw_cache` identifie la ligne du supplément dans la grille v2.
+Une plateforme ancienne qui ne confirme pas le mode demandé est signalée
+avant d'afficher un devis single ou avec cache.
+
+### Politiques d’accès Application Gateway
+
+L’API doit annoncer la version 1 dans `/v1/platform/capabilities`. La CLI vérifie
+cette capacité avant tout envoi, puis utilise la révision courante de la
+passerelle pour les modifications. Un conflit HTTP 409 n’est pas rejoué : relisez
+la configuration avant de réessayer. Un champ omis conserve sa valeur ; la
+suppression utilise une option `--clear-*`, jamais `null`.
+
+```sh
+cetic appgw update web-edge --l4-policy-file network-policy.json
+cetic appgw update web-edge --client-ip-policy-file trusted-proxies.json
+cetic appgw listener update web-edge --listener-id UUID --l7-policy-file http-policy.json
+cetic appgw route update web-edge --route-id UUID --l7-policy-file http-policy.json --cache-mode off
+cetic appgw route update web-edge --route-id UUID --clear-l7-policy
+CCP_OUTPUT=json cetic appgw get web-edge
+```
+
+`--l4-policy-file`, `--l7-policy-file` et `--client-ip-policy-file` sont aussi
+acceptés à la création d’une passerelle. Les créations de listener et de route
+acceptent `--l7-policy-file`. Les fichiers sont des objets JSON UTF-8 de 64 Kio
+maximum ; les clés dupliquées et les valeurs non JSON sont refusées.
+
+Exemple L4, qui filtre l’adresse du pair TCP avant la négociation TLS :
+
+```json
+{"enabled":true,"tcp_443":{"allow_cidrs":["192.0.2.0/24","2001:db8::/32"]}}
+```
+
+Exemple L7, qui exige un en-tête sur le chemin `/api` et ses descendants :
+
+```json
+{"enabled":true,"policies":[{"key":"partners","scope":{"path":{"op":"segment_prefix","value":"/api"}},"required_headers":[{"key":"partner-id","name":"X-Partner-ID","op":"in","values":["partner-a","partner-b"]}]}]}
+```
+
+Les refus priment sur les autorisations, les politiques héritées se cumulent,
+et chaque en-tête obligatoire doit être satisfait. Les valeurs d’en-têtes ne
+remplacent pas une authentification. Les domaines contenant une route regex
+ne peuvent pas activer L7 ; les politiques fondées sur les en-têtes demandent
+un cache désactivé sur les routes concernées. Un filtrage TCP/80 restrictif est
+incompatible avec les certificats HTTP-01 : utiliser DNS-01 ou un certificat
+fourni. Le mode `trusted_xff` exige une liste explicite de proxies de confiance.
+
+Une écriture acceptée est une intention enregistrée. Vérifiez
+`access_policy_status.state` et les observations des instances dans la réponse
+JSON de `appgw get` : le statut général `active` n’atteste pas l’application.
+La révocation peut fermer les connexions persistantes. Les CIDR historiques
+restent des filtres HTTP sur l’adresse du pair ; ils ne sont pas convertis en L4.
