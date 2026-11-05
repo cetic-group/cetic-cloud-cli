@@ -127,3 +127,15 @@ def table_view(item: dict[str, Any]) -> dict[str, Any]:
     if "custom_error_page_html" in view:
         view["custom_error_page_html"] = error_page_label(view["custom_error_page_html"])
     return view
+
+
+def validate_created_replica_count(item: dict[str, Any], requested: int) -> None:
+    """Signale une ancienne API qui ignore le mode demandé, en conservant l'ID."""
+    actual = item.get("replica_count", 2)
+    if actual != requested:
+        raise ValueError(
+            f"Ressource créée : {item.get('id', 'ID non retourné')}. "
+            f"Le serveur n'a pas appliqué replica_count={requested} "
+            f"(valeur retournée : {actual}). Mettez la plateforme à jour avant "
+            "de recréer la ressource ; vérifiez celle déjà créée."
+        )

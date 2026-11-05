@@ -1706,14 +1706,17 @@ def test_appgw_app_command_count():
     for expected in ("create", "get", "list", "update", "delete"):
         assert expected in route_cmds, f"route {expected} manquant"
 
+    cache_cmds = _names(appgw.cache_app.registered_commands)
+    assert cache_cmds == {"show", "purge"}
     total = (
         len(top_level)
         + len(listener_cmds)
         + len(tg_cmds)
         + len(tg_member_cmds)
         + len(route_cmds)
+        + len(cache_cmds)
     )
-    assert total == 28  # +1 : `plans` (v0.23.0) ; +3 : update, rotate-cert, member list (#53)
+    assert total == 30  # +2 : cache show et cache purge
 
 
 def test_format_api_error_messages():
