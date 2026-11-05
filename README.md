@@ -250,7 +250,7 @@ de `--starts-on`, à défaut de la date de début déjà enregistrée, sinon d'a
 dans le fuseau du planning. Si la plateforme ne prend pas encore en
 charge la période, la commande échoue sans créer de planning illimité.
 
-## IP de sortie dédiée d'un VPC (depuis v2.3.0)
+## IP de sortie dédiée d'un VPC (depuis v2.2.1)
 
 Par défaut, un VPC sort sur internet par la **sortie partagée** de la
 plateforme : l'adresse vue par les tiers est commune à plusieurs clients et le
@@ -545,7 +545,7 @@ cetic bucket create --name backups --region RNN
 # Networking
 cetic vpc list                                              # colonne CIDR (— si non assigné)
 cetic vpc create --name prod --region RNN --cidr 10.10.0.0/16   # --cidr optionnel (RFC1918, /16-/24), auto-alloué si omis
-# IP de sortie dédiée (depuis v2.3.0) — sans l'option, sortie internet partagée (TCP 25 bloqué)
+# IP de sortie dédiée (depuis v2.2.1) — sans l'option, sortie internet partagée (TCP 25 bloqué)
 cetic vpc create --name prod --region RNN --dedicated-egress-ip   # IP publique propre au VPC, facturée, hors quota d'IP
 cetic vpc update <vpc-uuid> --dedicated-egress-ip                 # activer sur un VPC existant (EVPN)
 cetic vpc update <vpc-uuid> --no-dedicated-egress-ip [--yes]      # l'IP retourne au pool AUSSITÔT : elle est perdue
@@ -606,7 +606,7 @@ cetic email alias create info@exemple.com --to contact@exemple.com
 
 # Databases
 cetic db pg create --name app-db --region RNN --vnet <VNET> --plan small   # sans --engine-version : version par défaut du catalogue
-cetic db pg versions                                     # versions proposées (PostgreSQL 15 à 18) et version par défaut
+cetic db pg versions                                     # versions proposées et version par défaut
 cetic db pg create --name app-db --region RNN --vnet <VNET> --engine-version 17
 cetic db pg create --name app-db --region RNN --vnet <VNET> --replicas 3 \
     --database app --pgbouncer --tag prod                # HA (3 réplicas), base initiale, PgBouncer (HA seule, non modifiable)

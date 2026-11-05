@@ -52,7 +52,8 @@ def _create_engine(engine: str, name: str, region: str, tier: str | None, plan: 
         rprint(f"[red]Erreur : --tier {tier} contredit --replicas {replicas} "
                "(dev = 1 réplique, prod = 3). Utilisez --replicas seul.[/red]")
         raise typer.Exit(2)
-    if pgbouncer and (replicas or (3 if tier == "prod" else 1)) != 3:
+    effective_replicas = replicas if replicas is not None else (3 if tier == "prod" else 1)
+    if pgbouncer and effective_replicas != 3:
         rprint("[red]Erreur : PgBouncer exige la haute disponibilité (--replicas 3).[/red]")
         raise typer.Exit(2)
     body: dict[str, Any] = {"name": name, "region": region, "plan": plan,
