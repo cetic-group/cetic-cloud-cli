@@ -91,8 +91,21 @@ def test_pg_options_refused_on_other_engines(runner, mock_api, engine, args) -> 
     assert cap == {}
 
 
-def test_pg_options_hidden_from_other_engines_help(runner) -> None:
-    out = runner.invoke(app, ["db", "redis", "create", "--help"]).output
-    assert "--pgbouncer" not in out and "--database" not in out
-    out = runner.invoke(app, ["db", "pg", "create", "--help"]).output
-    assert "--pgbouncer" in out and "--database" in out
+def _hidden_options(group: str) -> dict[str, bool]:
+    """Options de `db <group> create` -> masquée ou non (sans dépendre du rendu de l'aide)."""
+    import typer.main
+
+    create = typer.main.get_command(app).commands["db"].commands[group].commands["create"]
+    return {opt: p.hidden for p in create.params for opt in p.opts}
+
+
+@pytest.mark.parametrize("group", ["redis", "mysql", "mongo"])
+def test_pg_options_hidden_from_other_engines_help(group) -> None:
+    hidden = _hidden_options(group)
+    assert hidden["--pgbouncer"] and hidden["--database"]
+    assert not hidden["--replicas"] and not hidden["--tag"]
+
+
+def test_pg_options_shown_for_pg() -> None:
+    hidden = _hidden_options("pg")
+    assert not hidden["--pgbouncer"] and not hidden["--database"]
