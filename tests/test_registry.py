@@ -649,6 +649,64 @@ def test_gc_refuse_est_signale_et_sort_en_erreur(runner, mock_api, monkeypatch):
     assert "contenu non lu entièrement" in result.stdout
 
 
+def _gc_wait(runner, mock_api, monkeypatch, reponses, *extra):
+    """`gc --wait` contre une suite de réponses GET de la registry."""
+    monkeypatch.setattr("cetic.commands.registry.time.sleep", lambda _: None)
+    mock_api.post(f"/v1/registries/{REG_ID}/garbage-collect").mock(
+        return_value=httpx.Response(202, json={"gc_status": "pending"})
+    )
+    suite = iter(reponses)
+    route = mock_api.get(f"/v1/registries/{REG_ID}").mock(
+        side_effect=lambda req: httpx.Response(200, json=next(suite))
+    )
+    return runner.invoke(app, ["registry", "gc", REG_ID, "--wait", *extra]), route
+
+
+def test_gc_echoue_sort_en_erreur_avec_le_message(runner, mock_api, monkeypatch):
+    result, _ = _gc_wait(runner, mock_api, monkeypatch,
+                         [_reg_gc("running"), _reg_gc("failed", "Le nettoyage a échoué.")])
+    assert result.exit_code == 1
+    assert "échoué" in result.stdout
+    assert "Le nettoyage a échoué." in result.stdout
+
+
+def test_gc_delai_depasse_sort_en_erreur(runner, mock_api, monkeypatch):
+    horloge = iter([0.0, 0.0, 10.0, 10.0])
+    monkeypatch.setattr("cetic.commands.registry.time.monotonic", lambda: next(horloge))
+    result, route = _gc_wait(runner, mock_api, monkeypatch,
+                             [_reg_gc("running")] * 5, "--timeout", "5")
+    assert result.exit_code == 1
+    assert "Délai dépassé" in result.stdout
+    assert route.call_count == 1
+
+
+def test_gc_api_sans_statut_ne_patiente_pas(runner, mock_api, monkeypatch):
+    """API antérieure (clé absente) : sortie immédiate, sans attendre le délai."""
+    result, route = _gc_wait(runner, mock_api, monkeypatch,
+                             [{"id": REG_ID, "name": "demo"}] * 5)
+    assert result.exit_code == 2
+    assert "ne publie pas le statut" in " ".join(result.stdout.split())
+    assert route.call_count == 1
+
+
+def test_gc_statut_inconnu_est_une_erreur_explicite(runner, mock_api, monkeypatch):
+    result, route = _gc_wait(runner, mock_api, monkeypatch, [_reg_gc("cancelled")] * 5)
+    assert result.exit_code == 1
+    assert "inconnu : cancelled" in result.stdout
+    assert route.call_count == 1
+
+
+def test_gc_status_distingue_cle_absente_et_null(runner, mock_api):
+    reponses = iter([{"id": REG_ID, "name": "demo"}, _reg_gc(None)])
+    mock_api.get(f"/v1/registries/{REG_ID}").mock(
+        side_effect=lambda req: httpx.Response(200, json=next(reponses))
+    )
+    absente = runner.invoke(app, ["registry", "gc-status", REG_ID])
+    assert "ne publie pas le statut" in " ".join(absente.stdout.split())
+    nulle = runner.invoke(app, ["registry", "gc-status", REG_ID])
+    assert "Aucun nettoyage demandé" in nulle.stdout
+
+
 def test_gc_status_affiche_l_issue_et_le_message(runner, mock_api):
     mock_api.get(f"/v1/registries/{REG_ID}").mock(
         return_value=httpx.Response(200, json=_reg_gc("failed", "Le nettoyage a échoué."))

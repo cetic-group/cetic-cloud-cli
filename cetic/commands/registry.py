@@ -450,8 +450,19 @@ _GC_LIBELLES = {
 }
 
 
+_GC_CONNUS = ("pending", "running", *_GC_TERMINAUX)
+_GC_SANS_SUIVI = (
+    "L'API ne publie pas le statut du nettoyage (plateforme antérieure) : "
+    "son issue ne peut pas être suivie ici."
+)
+
+
 def _afficher_statut_gc(reg: dict[str, Any]) -> None:
     """Issue du dernier nettoyage, telle que renvoyée par l'API."""
+    if "gc_last_status" not in reg:
+        # Clé absente (API antérieure) ≠ `null` (aucun nettoyage demandé).
+        rprint(f"[yellow]{_GC_SANS_SUIVI}[/yellow]")
+        return
     statut = reg.get("gc_last_status")
     if not statut:
         rprint("Aucun nettoyage demandé pour cette registry.")
@@ -490,11 +501,20 @@ def gc(
             reg = client.get(f"{REGISTRIES_PATH}/{rid}")
         except client.APIError as e:
             raise _bail(e) from e
-        if reg.get("gc_last_status") in _GC_TERMINAUX:
+        if "gc_last_status" not in reg:
+            # API antérieure : la clé n'apparaîtra jamais, inutile d'attendre
+            # jusqu'au délai (1 h par défaut) pour conclure « peut-être en cours ».
+            rprint(f"[yellow]{_GC_SANS_SUIVI}[/yellow]")
+            raise typer.Exit(code=2)
+        statut = reg.get("gc_last_status")
+        if statut in _GC_TERMINAUX:
             _afficher_statut_gc(reg)
-            if reg.get("gc_last_status") != "succeeded":
+            if statut != "succeeded":
                 raise typer.Exit(code=1)
             return
+        if statut is not None and statut not in _GC_CONNUS:
+            rprint(f"[red]Statut de nettoyage inconnu : {statut}.[/red]")
+            raise typer.Exit(code=1)
         time.sleep(poll_interval)
     rprint("[yellow]Délai dépassé : le nettoyage est peut-être encore en cours.[/yellow]")
     raise typer.Exit(code=1)
