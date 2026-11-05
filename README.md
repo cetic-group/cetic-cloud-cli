@@ -571,6 +571,9 @@ cetic email alias create info@exemple.com --to contact@exemple.com
 cetic db pg create --name app-db --region RNN --vnet <VNET> --plan small   # sans --engine-version : version par défaut du catalogue
 cetic db pg versions                                     # versions proposées (PostgreSQL 15 à 18) et version par défaut
 cetic db pg create --name app-db --region RNN --vnet <VNET> --engine-version 17
+cetic db pg create --name app-db --region RNN --vnet <VNET> --replicas 3 \
+    --database app --pgbouncer --tag prod                # HA (3 réplicas), base initiale, PgBouncer (HA seule, non modifiable)
+cetic db redis create --name cache --region RNN --vnet <VNET> --replicas 1  # --tier dev|prod reste accepté (dev = 1, prod = 3)
 cetic db pg credentials <id>
 
 # Extensions PostgreSQL — à activer d'abord sur l'instance par le support
