@@ -1688,14 +1688,15 @@ def test_appgw_app_command_count():
         assert expected in top_level, f"{expected} manquant dans {top_level}"
 
     listener_cmds = _names(appgw.listener_app.registered_commands)
-    # add, get, list, delete, renew-cert, rotate-cert (#53 : certificat client)
-    assert len(listener_cmds) == 7, listener_cmds
-    for expected in ("add", "get", "list", "delete", "renew-cert", "rotate-cert", "update"):
+    # add, get, list, delete, renew-cert, rotate-cert (#53 : certificat client),
+    # update, dns-check (#1849)
+    assert len(listener_cmds) == 8, listener_cmds
+    for expected in ("add", "get", "list", "delete", "renew-cert", "rotate-cert", "update", "dns-check"):
         assert expected in listener_cmds, f"listener {expected} manquant"
 
     tg_cmds = _names(appgw.tg_app.registered_commands)
-    assert len(tg_cmds) == 4, tg_cmds  # create, list, update, delete
-    for expected in ("create", "list", "update", "delete"):
+    assert len(tg_cmds) == 5, tg_cmds  # create, list, get, update, delete
+    for expected in ("create", "list", "get", "update", "delete"):
         assert expected in tg_cmds, f"tg {expected} manquant"
 
     tg_member_cmds = _names(appgw.tg_member_app.registered_commands)
@@ -1716,7 +1717,7 @@ def test_appgw_app_command_count():
         + len(route_cmds)
         + len(cache_cmds)
     )
-    assert total == 31  # #1828 : listener update, politiques d’accès
+    assert total == 33  # #1828 : listener update ; #1849 : tg get, listener dns-check
 
 
 def test_format_api_error_messages():
