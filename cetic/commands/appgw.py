@@ -1125,15 +1125,15 @@ def tg_update(
         help="Immuable : refusé avec un message explicite.",
     ),
     bucket: str | None = typer.Option(
-        None, "--bucket", hidden=True,
-        help="Immuable : refusé avec un message explicite.",
+        None, "--bucket",
+        help="Nouveau bucket servi (UUID ou nom), target group bucket uniquement.",
     ),
 ) -> None:
     """Met à jour un target group (PATCH partiel, seuls les champs fournis sont modifiés).
 
-    Le type (upstream / bucket) et le bucket sont définitifs : pour en changer,
-    créez un nouveau target group. `--prefix` change le dossier d'un target
-    group bucket.
+    Le type (upstream / bucket) est définitif. Sur un target group bucket,
+    `--bucket` change le bucket servi (public, même organisation et même
+    région) et `--prefix` change le dossier, ensemble ou séparément.
 
     Exemples :
       # Renommer + changer l'algorithme
@@ -1144,10 +1144,10 @@ def tg_update(
       cetic appgw tg update web-edge --tg-id <tg-uuid> \\
         --hc-path /health --hc-interval-sec 10 --hc-healthy-threshold 3
     """
-    if tg_type is not None or bucket is not None:
+    if tg_type is not None:
         rprint(
-            "[red]Erreur : le type et le bucket d'un target group ne peuvent pas "
-            "être modifiés. Créez un nouveau target group.[/red]"
+            "[red]Erreur : le type d'un target group ne peut pas être modifié. "
+            "Créez un nouveau target group.[/red]"
         )
         raise typer.Exit(1)
     if algorithm is not None and algorithm not in _TG_ALGORITHMS:
@@ -1211,10 +1211,27 @@ def tg_update(
     if prefix is not None:
         body["bucket_prefix"] = _normalize_prefix(prefix)
 
+    if prefix is not None or bucket is not None:
+        # Le bucket et le dossier ne valent que pour un target group bucket.
+        gid0 = _resolve_appgw(id_or_name)
+        try:
+            groups = client.get(f"{APPGW_PATH}/{gid0}/target-groups")
+        except client.APIError as e:
+            raise _bail(e) from e
+        current = next((g for g in groups if g.get("id") == tg_id), None)
+        if current is not None and (current.get("kind") or "upstream") != "bucket":
+            rprint(
+                "[red]Erreur : --bucket et --prefix ne s'appliquent qu'à un target "
+                "group de type bucket ; ce target group est de type serveurs.[/red]"
+            )
+            raise typer.Exit(1)
+    if bucket is not None:
+        body["bucket_id"] = resolve_id("/v1/buckets", bucket)
+
     if not body:
         rprint(
             "[red]Erreur : aucun champ à modifier. "
-            "Fournissez au moins une option (--name, --algorithm, --hc-*, --prefix).[/red]"
+            "Fournissez au moins une option (--name, --algorithm, --hc-*, --bucket, --prefix).[/red]"
         )
         raise typer.Exit(1)
 
@@ -1222,7 +1239,7 @@ def tg_update(
     try:
         tg = client.patch(f"{APPGW_PATH}/{gid}/target-groups/{tg_id}", json=body)
     except client.APIError as e:
-        raise _bail(e) from e
+        raise _tg_bail(e) from e
     rprint(
         f"[green]✓[/green] Target group mis à jour : "
         f"[bold]{(tg or {}).get('id', tg_id)}[/bold]"

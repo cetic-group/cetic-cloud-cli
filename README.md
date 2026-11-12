@@ -152,13 +152,14 @@ limit, IP allow/deny, WAF, CORS, basic auth) — tout en un seul produit.
    cetic appgw route create web-edge --listener-id <listener-uuid> --target-group-id <tg-uuid>
    cetic appgw listener dns-check web-edge <listener-uuid>   # enregistrement à créer + état
    cetic appgw tg update web-edge --tg-id <tg-uuid> --prefix site/v2
+   cetic appgw tg update web-edge --tg-id <tg-uuid> --bucket autre-bucket
    cetic appgw tg list web-edge        # Type, Bucket, Dossier, État de l'origine
    ```
 
    Le bucket doit être public (`cetic bucket update <bucket> --public`), de la
-   même organisation et de la même région que la passerelle. Le type et le
-   bucket d'un target group sont définitifs ; seul le dossier (`--prefix`) se
-   modifie. `cetic appgw target-group` est un alias de `cetic appgw tg`.
+   même organisation et de la même région que la passerelle. Le type d'un
+   target group est définitif ; le bucket (`--bucket`) et le dossier
+   (`--prefix`) se modifient en place, ensemble ou séparément. `cetic appgw target-group` est un alias de `cetic appgw tg`.
 
    Le cache se règle sur la **route**. Équivalents des préréglages de la console :
    contenu stable (images, fichiers) = `--cache-mode force --cache-ttl 3600

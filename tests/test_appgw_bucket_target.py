@@ -80,6 +80,7 @@ def test_private_bucket_refusal_is_explicit(runner, mock_api):
 
 
 def test_update_prefix_sends_only_prefix(runner, mock_api):
+    mock_api.get(TG_URL).mock(return_value=httpx.Response(200, json=[BUCKET_TG]))
     patch = mock_api.patch(f"{TG_URL}/{TG_ID}").mock(return_value=httpx.Response(200, json={"id": TG_ID}))
     result = runner.invoke(app, [*BASE, "update", GW_ID, "--tg-id", TG_ID, "--prefix", "/docs/"])
     assert result.exit_code == 0, result.output
@@ -89,17 +90,60 @@ def test_update_prefix_sends_only_prefix(runner, mock_api):
 
 
 def test_update_empty_prefix_means_whole_bucket(runner, mock_api):
+    mock_api.get(TG_URL).mock(return_value=httpx.Response(200, json=[BUCKET_TG]))
     patch = mock_api.patch(f"{TG_URL}/{TG_ID}").mock(return_value=httpx.Response(200, json={"id": TG_ID}))
     assert runner.invoke(app, [*BASE, "update", GW_ID, "--tg-id", TG_ID, "--prefix", ""]).exit_code == 0
     assert json.loads(patch.calls.last.request.content) == {"bucket_prefix": ""}
 
 
-@pytest.mark.parametrize("flag, value", [("--type", "upstream"), ("--bucket", BUCKET_ID)])
-def test_update_refuses_immutable_fields(runner, mock_api, flag, value):
-    result = runner.invoke(app, [*BASE, "update", GW_ID, "--tg-id", TG_ID, flag, value])
+BUCKET_TG = {"id": TG_ID, "name": "site", "kind": "bucket", "bucket_id": BUCKET_ID}
+SERVER_TG = {"id": TG_ID, "name": "api", "algorithm": "roundrobin", "members": []}
+
+
+def test_update_refuses_type_change(runner, mock_api):
+    result = runner.invoke(app, [*BASE, "update", GW_ID, "--tg-id", TG_ID, "--type", "upstream"])
     assert result.exit_code == 1
-    assert "ne peuvent pas être modifiés" in result.output.replace("\n", " ")
+    assert "type d'un target group ne peut pas être modifié" in result.output.replace("\n", " ")
     assert not mock_api.calls
+
+
+def test_update_bucket_sends_bucket_id_never_kind(runner, mock_api):
+    other = "dddddddd-1111-2222-3333-444444444444"
+    mock_api.get(TG_URL).mock(return_value=httpx.Response(200, json=[BUCKET_TG]))
+    patch = mock_api.patch(f"{TG_URL}/{TG_ID}").mock(return_value=httpx.Response(200, json={"id": TG_ID}))
+    result = runner.invoke(app, [*BASE, "update", GW_ID, "--tg-id", TG_ID, "--bucket", other])
+    assert result.exit_code == 0, result.output
+    assert json.loads(patch.calls.last.request.content) == {"bucket_id": other}
+
+
+def test_update_bucket_by_name_and_prefix_together(runner, mock_api):
+    mock_api.get("/v1/buckets").mock(return_value=httpx.Response(200, json=[{"id": BUCKET_ID, "name": "mon-bucket"}]))
+    mock_api.get(TG_URL).mock(return_value=httpx.Response(200, json=[BUCKET_TG]))
+    patch = mock_api.patch(f"{TG_URL}/{TG_ID}").mock(return_value=httpx.Response(200, json={"id": TG_ID}))
+    result = runner.invoke(app, [*BASE, "update", GW_ID, "--tg-id", TG_ID,
+                                 "--bucket", "mon-bucket", "--prefix", "a/b"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(patch.calls.last.request.content) == {"bucket_id": BUCKET_ID, "bucket_prefix": "a/b"}
+
+
+@pytest.mark.parametrize("args", [["--prefix", "x"], ["--bucket", BUCKET_ID]])
+def test_update_server_target_group_refuses_bucket_options(runner, mock_api, args):
+    mock_api.get(TG_URL).mock(return_value=httpx.Response(200, json=[SERVER_TG]))
+    patch = mock_api.patch(f"{TG_URL}/{TG_ID}").mock(return_value=httpx.Response(200, json={}))
+    result = runner.invoke(app, [*BASE, "update", GW_ID, "--tg-id", TG_ID, *args])
+    assert result.exit_code == 1
+    assert "ne s'appliquent qu'à un target group de type" in " ".join(result.output.split())
+    assert not patch.called
+
+
+def test_update_private_bucket_refusal_is_explicit(runner, mock_api):
+    mock_api.get(TG_URL).mock(return_value=httpx.Response(200, json=[BUCKET_TG]))
+    mock_api.patch(f"{TG_URL}/{TG_ID}").mock(return_value=httpx.Response(
+        422, json={"detail": "Ce bucket est privé. Pour l'instant..."}))
+    result = runner.invoke(app, [*BASE, "update", GW_ID, "--tg-id", TG_ID, "--bucket", BUCKET_ID])
+    assert result.exit_code == 1
+    out = result.output.replace("\n", " ")
+    assert "ce bucket est privé" in out and "--public" in out
 
 
 def test_update_server_target_group_body_unchanged(runner, mock_api):
