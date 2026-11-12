@@ -140,6 +140,32 @@ limit, IP allow/deny, WAF, CORS, basic auth) — tout en un seul produit.
    cetic appgw tg member list web-edge --tg-id <tg-uuid>
    ```
 
+   **Servir un bucket public sous votre domaine** (sans serveur, lecture seule
+   GET/HEAD, sans liste du contenu) : un target group de type `bucket`, une route
+   vers lui, un listener pour votre domaine, puis un enregistrement DNS chez
+   votre hébergeur.
+
+   ```bash
+   cetic appgw tg create web-edge --name site --type bucket \
+     --bucket mon-bucket --prefix site/v1        # --prefix est facultatif
+   cetic appgw listener add web-edge --hostname www.example.com --acme-challenge http01
+   cetic appgw route create web-edge --listener-id <listener-uuid> --target-group-id <tg-uuid>
+   cetic appgw listener dns-check web-edge <listener-uuid>   # enregistrement à créer + état
+   cetic appgw tg update web-edge --tg-id <tg-uuid> --prefix site/v2
+   cetic appgw tg update web-edge --tg-id <tg-uuid> --bucket autre-bucket
+   cetic appgw tg list web-edge        # Type, Bucket, Dossier, État de l'origine
+   ```
+
+   Le bucket doit être public (`cetic bucket update <bucket> --public`), de la
+   même organisation et de la même région que la passerelle. Le type d'un
+   target group est définitif ; le bucket (`--bucket`) et le dossier
+   (`--prefix`) se modifient en place, ensemble ou séparément. `cetic appgw target-group` est un alias de `cetic appgw tg`.
+
+   Le cache se règle sur la **route**. Équivalents des préréglages de la console :
+   contenu stable (images, fichiers) = `--cache-mode force --cache-ttl 3600
+   --cache-max-ttl 3600` ; contenu qui change souvent = `--cache-mode force
+   --cache-ttl 60 --cache-max-ttl 300` ; sans cache = `--cache-mode off`.
+
 4. **Créer une route** (host implicite via listener + path + policies) :
 
    ```bash
@@ -581,6 +607,8 @@ cetic lb health <lb-uuid>                                    # instances en serv
 cetic appgw create --name web-edge --region RNN --plan small --vpc prod --vnet web-tier
 cetic appgw listener add web-edge --hostname api.example.com --acme-challenge http01
 cetic appgw tg create web-edge --name api-pool
+cetic appgw tg create web-edge --name site --type bucket --bucket mon-bucket --prefix site/v1
+cetic appgw listener dns-check web-edge <lst-uuid>           # enregistrement DNS à créer + état
 cetic appgw tg member add web-edge --tg-id <tg-uuid> --container <ct-uuid> --port 8080
 cetic appgw route create web-edge --listener-id <lst-uuid> --target-group-id <tg-uuid> \
   --path /api --rate-limit 100 --waf-preset strict
