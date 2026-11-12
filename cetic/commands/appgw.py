@@ -19,18 +19,22 @@ Fonctionnement :
 
 from __future__ import annotations
 
+import re
 from enum import Enum
 from pathlib import Path
 from typing import Any
-
-import re
 
 import typer
 from rich import print as rprint
 
 from cetic import client, config
-from cetic.commands._appgw_security import policy_bail, policy_payload, prepare_policy_write, verify_policy_response
 from cetic._resolve import looks_like_uuid, resolve_id
+from cetic.commands._appgw_security import (
+    policy_bail,
+    policy_payload,
+    prepare_policy_write,
+    verify_policy_response,
+)
 from cetic.commands._catalog import render_compute_plans
 from cetic.commands._gateway import (
     cert_expiry_label,
@@ -156,6 +160,8 @@ def _format_api_error(e: client.APIError) -> str:
                 "Demandez une augmentation via `cetic quota request`."
             )
         return f"Conflit : {e.detail}"
+    if e.status_code == 429:
+        return "Trop de requêtes : patientez quelques instants puis réessayez."
     if e.status_code == 422:
         return f"Paramètres invalides : {e.detail}"
     if e.status_code >= 500:
@@ -734,9 +740,16 @@ def listener_dns_check(
             items = client.get(f"{APPGW_PATH}/{gid}/listeners")
         except client.APIError as e:
             raise _bail(e) from e
-        found = [i for i in items if i.get("hostname") == listener]
-        if len(found) != 1:
-            rprint(f"[red]Erreur : aucun listener unique pour « {listener} ».[/red]")
+        wanted = listener.strip().lower()
+        found = [i for i in items if (i.get("hostname") or "").lower() == wanted]
+        if not found:
+            rprint(f"[red]Erreur : aucun listener pour le domaine « {listener} ».[/red]")
+            raise typer.Exit(1)
+        if len(found) > 1:
+            rprint(
+                f"[red]Erreur : {len(found)} listeners correspondent à « {listener} ». "
+                "Précisez l'UUID du listener.[/red]"
+            )
             raise typer.Exit(1)
         listener_id = found[0]["id"]
     try:
@@ -874,7 +887,9 @@ def _normalize_prefix(raw: str) -> str:
     return "/".join(segments)
 
 
-_ORIGIN_LABELS = {"ok": "OK", "error": "Erreur", "drift": "Erreur"}
+# Valeurs écrites par l'API : "ok", "drift" (le stockage ne rend plus le bucket
+# lisible publiquement) ou absente (pas encore vérifiée).
+_ORIGIN_LABELS = {"ok": "OK", "drift": "Dérive"}
 
 
 def _origin_label(tg: dict[str, Any]) -> str:
@@ -889,10 +904,20 @@ def _origin_label(tg: dict[str, Any]) -> str:
     return f"{label} : {error}" if error else label
 
 
+_PRIVATE_BUCKET_FRAGMENT = "seuls les buckets publics"
+_NOT_A_BUCKET_TG_FRAGMENT = "ne s'appliquent qu'à un groupe de cibles de type bucket"
+
+
 def _tg_bail(e: client.APIError) -> typer.Exit:
-    """Comme `_bail`, mais dit clairement qu'un bucket privé est refusé."""
+    """Comme `_bail`, avec des messages dédiés aux refus propres aux buckets."""
     detail = (e.detail or "").lower()
-    if e.status_code == 422 and "privé" in detail:
+    if e.status_code == 422 and _NOT_A_BUCKET_TG_FRAGMENT in detail:
+        rprint(
+            "[red]Erreur : --bucket et --prefix ne s'appliquent qu'à un target group "
+            "de type bucket ; ce target group est de type serveurs.[/red]"
+        )
+        return typer.Exit(1)
+    if e.status_code == 422 and _PRIVATE_BUCKET_FRAGMENT in detail:
         rprint(
             "[red]Erreur : ce bucket est privé. Seuls les buckets publics peuvent "
             "être servis par la passerelle : rendez-le public "
@@ -1003,51 +1028,59 @@ _TG_COLUMNS = [
 ]
 
 
+_BUCKET_COLUMNS = {"bucket", "folder", "origin"}
+
+
+def _tg_columns(items: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    """Colonnes affichées : celles du bucket seulement s'il y en a un."""
+    if any((tg.get("kind") or "upstream") == "bucket" for tg in items):
+        return _TG_COLUMNS
+    return [c for c in _TG_COLUMNS if c[0] not in _BUCKET_COLUMNS]
+
+
 @tg_app.command(name="list")
 def tg_list(
     id_or_name: str = typer.Argument(..., metavar="GW_ID|GW_NAME"),
 ) -> None:
-    """Liste les target groups d'une gateway (serveurs et buckets)."""
+    """Liste les target groups d'une gateway (serveurs et buckets).
+
+    En json/yaml, chaque ligne contient : id, name, type (upstream|bucket),
+    bucket (UUID), folder, origin, algorithm, hc_path, members. Pour la ressource
+    brute de l'API, utilisez `tg get`.
+    """
     gid = _resolve_appgw(id_or_name)
     try:
         items = client.get(f"{APPGW_PATH}/{gid}/target-groups")
     except client.APIError as e:
         raise _bail(e) from e
     rows = [_tg_row(tg) for tg in items]
-    render_list(rows, title=f"Target groups ({len(rows)})", columns=_TG_COLUMNS)
+    render_list(rows, title=f"Target groups ({len(rows)})", columns=_tg_columns(items))
 
 
 @tg_app.command(name="get")
 def tg_get(
     id_or_name: str = typer.Argument(..., metavar="GW_ID|GW_NAME"),
-    tg_id: str = typer.Option(..., "--tg-id", help="UUID du target group (préfixe accepté)"),
+    tg_id: str = typer.Option(..., "--tg-id", help="UUID du target group"),
 ) -> None:
-    """Affiche un target group (recherche dans la liste de la gateway)."""
+    """Affiche un target group (recherche dans la liste de la gateway).
+
+    En json/yaml, la ressource est rendue telle que renvoyée par l'API.
+    """
     gid = _resolve_appgw(id_or_name)
     try:
         items = client.get(f"{APPGW_PATH}/{gid}/target-groups")
     except client.APIError as e:
         raise _bail(e) from e
-    matches = [
-        tg for tg in items
-        if tg.get("id") == tg_id or (tg.get("id") or "").startswith(tg_id)
-    ]
-    if not matches:
-        rprint(f"[red]Erreur : aucun target group {tg_id} sur cette gateway.[/red]")
+    tg = next((g for g in items if tg_id and g.get("id") == tg_id), None)
+    if tg is None:
+        rprint(f"[red]Erreur : aucun target group {tg_id!r} sur cette gateway.[/red]")
         raise typer.Exit(1)
-    if len(matches) > 1:
-        rprint(
-            f"[red]Erreur : préfixe {tg_id} ambigu "
-            f"({len(matches)} target groups correspondent).[/red]"
-        )
-        raise typer.Exit(1)
-    tg = matches[0]
     if config.get_output() in ("json", "yaml"):
         render_one(tg, title="")
         return
     row = _tg_row(tg)
     render_one(
-        {label: row[key] for key, label in _TG_COLUMNS},
+        {label: row[key] for key, label in _tg_columns([tg])},
         title=f"Target group {tg.get('name', tg['id'])}",
     )
 
@@ -1211,20 +1244,6 @@ def tg_update(
     if prefix is not None:
         body["bucket_prefix"] = _normalize_prefix(prefix)
 
-    if prefix is not None or bucket is not None:
-        # Le bucket et le dossier ne valent que pour un target group bucket.
-        gid0 = _resolve_appgw(id_or_name)
-        try:
-            groups = client.get(f"{APPGW_PATH}/{gid0}/target-groups")
-        except client.APIError as e:
-            raise _bail(e) from e
-        current = next((g for g in groups if g.get("id") == tg_id), None)
-        if current is not None and (current.get("kind") or "upstream") != "bucket":
-            rprint(
-                "[red]Erreur : --bucket et --prefix ne s'appliquent qu'à un target "
-                "group de type bucket ; ce target group est de type serveurs.[/red]"
-            )
-            raise typer.Exit(1)
     if bucket is not None:
         body["bucket_id"] = resolve_id("/v1/buckets", bucket)
 
