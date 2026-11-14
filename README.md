@@ -262,7 +262,7 @@ tant que l'option reste active.
 ```bash
 cetic vpc create --name prod --region RNN --dedicated-egress-ip
 cetic vpc update prod-uuid --dedicated-egress-ip       # sur un VPC existant
-cetic vpc get prod-uuid                                # egress_ip, egress_ip_type, egress_ip_status
+cetic vpc get prod-uuid                                # egress_ip, egress_ip_status
 cetic vpc update prod-uuid --no-dedicated-egress-ip    # confirmation demandée (--yes pour passer outre)
 ```
 
@@ -278,7 +278,7 @@ adresse.
   avec sortie internet), `attaching`, `attached` (en service), `detaching`
   (retour au pool en cours), `error`.
 - `CCP_OUTPUT=json` rend les champs bruts de l'API (`dedicated_egress_ip`,
-  `egress_ip`, `egress_ip_type`, `egress_ip_status`).
+  `egress_ip`, `egress_ip_status`).
 - Une plateforme qui ne connaît pas encore l'option la laisse sans effet : la
   commande échoue alors au lieu d'annoncer une IP dédiée qui n'existe pas.
 

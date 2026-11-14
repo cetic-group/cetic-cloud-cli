@@ -178,14 +178,14 @@ def _resolve_target(
     container: str | None,
     scale_set: str | None,
     vm_scale_set: str | None,
-    ccks_node_pool: tuple[str | None, str | None],
+    ccks_node_pool: tuple[str | None, str | None] | None,
     db_instance: str | None,
 ) -> tuple[str, str]:
     """Mappe les flags de cible exclusifs vers `(resource_type, resource_id)`.
 
     Exactement une cible doit être fournie.
     """
-    cluster, pool = ccks_node_pool
+    cluster, pool = ccks_node_pool or (None, None)
     candidates: list[tuple[str, str]] = []
     if vm is not None:
         candidates.append(("vm", resolve_id("/v1/vm-instances", vm)))
@@ -484,8 +484,11 @@ def create(
     vm_scale_set: str | None = typer.Option(
         None, "--vm-scale-set", help="Cible : VM scale set (ID ou nom)."
     ),
-    ccks_node_pool: tuple[str, str] = typer.Option(
-        (None, None),
+    # `None` (option absente) plutôt qu'un défaut `(None, None)` : typer 0.29
+    # valide le défaut contre `tuple[str, str]` et refusait toute commande
+    # sans `--ccks-node-pool` (« None is not a valid string »).
+    ccks_node_pool: tuple[str, str] | None = typer.Option(
+        None,
         "--ccks-node-pool",
         metavar="CLUSTER POOL",
         help="Cible : pool de nœuds Kubernetes (cluster puis pool, ID ou nom).",

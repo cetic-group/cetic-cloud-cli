@@ -120,7 +120,7 @@ def _vpc_egress(*, dedicated: bool, ip: str | None = None,
     v = _vpc(**kw)
     v.update({
         "dedicated_egress_ip": dedicated, "egress_ip": ip,
-        "egress_ip_type": "edge" if ip else None, "egress_ip_status": status,
+        "egress_ip_status": status,
     })
     return v
 
@@ -330,7 +330,9 @@ def test_list_json_keeps_raw_egress_fields(runner, monkeypatch, mock_api) -> Non
     data = json.loads(result.stdout)
     assert data[0]["dedicated_egress_ip"] is True
     assert data[0]["egress_ip"] == EGRESS_IP
-    assert data[0]["egress_ip_type"] == "edge"
+    # Type de l'IP de sortie : retiré de l'API (cetic-cloud-platform#1975),
+    # jamais montré au client (#1977).
+    assert "egress_ip_type" not in data[0]
     assert data[0]["egress_ip_status"] == "attached"
 
 

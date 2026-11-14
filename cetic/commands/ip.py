@@ -33,6 +33,15 @@ def _platform_knows_types(pools: list[dict]) -> bool:
     return not pools or any("type" in p for p in pools)
 
 
+def _attachee_a(p: dict) -> str:
+    """Ressource qui tient l'IP. La sortie internet d'un VPC (#1734) n'est
+    attachée à aucune instance : elle est nommée par son VPC."""
+    if p.get("egress_vpc_id"):
+        return f"Sortie VPC {p.get('egress_vpc_name') or p['egress_vpc_id']}"
+    return (p.get("container_id") or p.get("vm_instance_id")
+            or p.get("load_balancer_id") or "—")
+
+
 @app.command(name="list")
 def list_ips(region: str | None = typer.Option(None, "--region", "-r")) -> None:
     """Liste les IPs publiques du tenant."""
@@ -44,10 +53,10 @@ def list_ips(region: str | None = typer.Option(None, "--region", "-r")) -> None:
     rows = [
         {"id": p["id"], "address": p.get("ip_address") or "—",
          "label": p.get("label") or "—",
+         # L'IP de sortie d'un VPC arrive sans type (cetic-cloud-platform#1977).
          "type": p.get("type") or "—",
          "region": p["region"], "status": p["status"],
-         "attached_to": (p.get("container_id") or p.get("vm_instance_id")
-                         or p.get("load_balancer_id") or "—")}
+         "attached_to": _attachee_a(p)}
         for p in items
     ]
     render_list(rows, title=f"IPs publiques ({len(rows)})",
