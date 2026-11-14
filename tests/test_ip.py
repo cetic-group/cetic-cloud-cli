@@ -176,6 +176,25 @@ def test_list_shows_type_column(runner, mock_api, monkeypatch) -> None:
     assert json.loads(result.output)[0]["type"] == "edge"
 
 
+def test_list_ip_de_sortie_vpc_sans_type_nommee_par_son_vpc(runner, mock_api, monkeypatch) -> None:
+    """IP de sortie d'un VPC (cetic-cloud-platform#1977) : l'API la rend
+    sans type ; la CLI affiche « — » et la nomme par son VPC. L'IP allouée
+    par le client garde son type."""
+    monkeypatch.setenv("CCP_OUTPUT", "json")
+    mock_api.get("/v1/public-ips").mock(return_value=httpx.Response(200, json=[
+        {**_ip(), "id": "sortie", "type": None,
+         "egress_vpc_id": "vpc-1", "egress_vpc_name": "prod"},
+        {**_ip(), "id": "client", "type": "edge"},
+    ]))
+    result = runner.invoke(app, ["ip", "list"])
+    assert result.exit_code == 0, result.output
+    rows = {r["id"]: r for r in json.loads(result.output)}
+    assert rows["sortie"]["type"] == "—"
+    assert rows["sortie"]["attached_to"] == "Sortie VPC prod"
+    assert rows["client"]["type"] == "edge"
+    assert rows["client"]["attached_to"] != "Sortie VPC prod"
+
+
 def test_allocate_with_type_refused_before_allocating_on_older_platform(runner, mock_api) -> None:
     """Plateforme sans types : le champ serait ignoré et une IP d'un autre type
     allouée et facturée. On refuse AVANT d'allouer."""

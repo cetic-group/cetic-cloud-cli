@@ -94,7 +94,6 @@ def list_vpcs() -> None:
          # le libellé lisible, seul affiché en table.
          "dedicated_egress_ip": bool(v.get("dedicated_egress_ip")),
          "egress_ip": v.get("egress_ip"),
-         "egress_ip_type": v.get("egress_ip_type"),
          "egress_ip_status": v.get("egress_ip_status"),
          "egress": fmt_vpc_egress(v)}
         for v in items
