@@ -546,7 +546,10 @@ cetic bucket versioning show <bucket-uuid>                       # état, durée
 cetic bucket versioning enable <bucket-uuid> --noncurrent-days 90   # active ou reprend (sans -d : durée en place, sinon 30 j)
 cetic bucket versioning suspend <bucket-uuid>                    # plus de nouvelles versions ; la durée ne change pas
 cetic bucket versioning retention <bucket-uuid> --days 365       # change la durée sans changer l'état (1 à 3650 j)
-# Raccourcir la durée efface plus tôt les versions anciennes : confirmation demandée (--yes pour l'éviter)
+# Confirmation demandée (--yes pour l'éviter) quand des versions anciennes seraient effacées :
+#   - durée raccourcie ;
+#   - prise en charge d'un versionnage posé hors plateforme (souvent sans expiration) : il reçoit la durée demandée, 30 j sinon
+# -o json / -o yaml : réponse de l'API telle quelle, rien d'autre sur stdout
 
 # Networking
 cetic vpc list                                              # colonne CIDR (— si non assigné)
