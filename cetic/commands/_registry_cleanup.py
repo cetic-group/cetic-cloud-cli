@@ -24,7 +24,7 @@ import typer
 from rich import print as rprint
 
 from cetic import client, config
-from cetic._resolve import looks_like_uuid, resolve_id
+from cetic._resolve import resolve_id
 from cetic.commands._render import render_list, render_one
 
 REGISTRIES_PATH = "/v1/registries"
@@ -71,17 +71,19 @@ def _list_schedules(rid: str) -> list[dict[str, Any]]:
 
 
 def _find_schedule(rid: str, ref: str) -> dict[str, Any]:
-    """Planification désignée par son UUID ou son nom (lecture de la liste)."""
+    """Planification désignée par son UUID ou son nom (lecture de la liste,
+    4 planifications au plus). L'id est cherché d'abord, puis le nom : l'API
+    accepte un NOM au format UUID, qui ne doit pas devenir introuvable."""
     items = _list_schedules(rid)
-    key = "id" if looks_like_uuid(ref) else "name"
-    matches = [s for s in items if str(s.get(key)) == ref]
+    matches = [s for s in items if str(s.get("id")) == ref] or \
+        [s for s in items if str(s.get("name")) == ref]
     if not matches:
         _fail(f"Aucune planification de nettoyage « {ref} » sur cette registry.")
     return matches[0]
 
 
 def _resolve_schedule(rid: str, ref: str) -> str:
-    return ref if looks_like_uuid(ref) else _find_schedule(rid, ref)["id"]
+    return _find_schedule(rid, ref)["id"]
 
 
 def _critere_label(s: dict[str, Any]) -> str:
@@ -300,7 +302,10 @@ def cleanup_delete(
     schedule: str = typer.Argument(..., metavar="ID|NAME", help="Planification"),
     yes: bool = typer.Option(False, "--yes", "-y"),
 ) -> None:
-    """Supprime une planification. Ses passages et la corbeille sont conservés."""
+    """Supprime une planification. Ses passages et la corbeille sont conservés :
+    les images en attente dans la corbeille seront quand même supprimées à
+    l'échéance du délai de grâce (les restaurer avant), et les exclusions des
+    images restaurées par cette planification ne s'appliquent plus."""
     rid = _resolve_registry(registry)
     sid = _resolve_schedule(rid, schedule)
     if not yes and not typer.confirm(f"Supprimer la planification {schedule} ?"):
@@ -311,6 +316,9 @@ def cleanup_delete(
         _bail(e)
     if not _machine():
         rprint("[green]✓[/green] Planification supprimée (historique et corbeille conservés).")
+        rprint("[yellow]![/yellow] Les images encore en attente dans la corbeille seront "
+               "supprimées à l'échéance du délai de grâce : restaurez-les avant "
+               f"(`cetic registry cleanup trash {registry} --en-attente`).")
 
 
 def _dispatch(registry: str, schedule: str, action: str) -> None:

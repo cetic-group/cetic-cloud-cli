@@ -195,6 +195,7 @@ def test_update_corps_partiel_par_nom(runner, mock_api):
 
 
 def test_update_no_cron_envoie_null(runner, mock_api):
+    mock_api.get(SCHED_PATH).mock(return_value=httpx.Response(200, json=[_sched()]))
     store: dict[str, Any] = {}
     mock_api.patch(f"{SCHED_PATH}/{SCHED_ID}").mock(
         side_effect=_capture(store, 200, _sched(cron=None)))
@@ -218,6 +219,7 @@ def test_update_sans_rien(runner, mock_api):
 
 
 def test_update_critere_sans_valeur_422_de_l_api_non_masque(runner, mock_api):
+    mock_api.get(SCHED_PATH).mock(return_value=httpx.Response(200, json=[_sched()]))
     """La CLI n'invente pas de valeur et n'arrête pas la requête : l'API
     refuse (`update_cleanup_schedule`), son message est affiché tel quel."""
     store: dict[str, Any] = {}
@@ -233,6 +235,7 @@ def test_update_critere_sans_valeur_422_de_l_api_non_masque(runner, mock_api):
 
 
 def test_delete(runner, mock_api):
+    mock_api.get(SCHED_PATH).mock(return_value=httpx.Response(200, json=[_sched()]))
     route = mock_api.delete(f"{SCHED_PATH}/{SCHED_ID}").mock(return_value=httpx.Response(204))
     result = runner.invoke(app, ["registry", "cleanup", "delete", REG_ID, SCHED_ID, "--yes"])
     assert result.exit_code == 0, result.stdout
@@ -255,6 +258,7 @@ DISPATCH = {"registry_id": REG_ID, "schedule_id": SCHED_ID, "mode": "simulation"
 
 
 def test_simulate(runner, mock_api):
+    mock_api.get(SCHED_PATH).mock(return_value=httpx.Response(200, json=[_sched()]))
     mock_api.post(f"{SCHED_PATH}/{SCHED_ID}/simulate").mock(
         return_value=httpx.Response(202, json=DISPATCH))
     result = runner.invoke(app, ["registry", "cleanup", "simulate", REG_ID, SCHED_ID])
@@ -264,6 +268,7 @@ def test_simulate(runner, mock_api):
 
 
 def test_simulate_json(runner, mock_api, monkeypatch):
+    mock_api.get(SCHED_PATH).mock(return_value=httpx.Response(200, json=[_sched()]))
     monkeypatch.setenv("CCP_OUTPUT", "json")
     mock_api.post(f"{SCHED_PATH}/{SCHED_ID}/simulate").mock(
         return_value=httpx.Response(202, json=DISPATCH))
@@ -273,6 +278,7 @@ def test_simulate_json(runner, mock_api, monkeypatch):
 
 
 def test_run_409_simulation_requise_tel_quel(runner, mock_api):
+    mock_api.get(SCHED_PATH).mock(return_value=httpx.Response(200, json=[_sched()]))
     msg = ("Aucune simulation réussie de cette planification sur ses règles actuelles : "
            "simulez-la avant de l'exécuter.")
     mock_api.post(f"{SCHED_PATH}/{SCHED_ID}/run").mock(
@@ -286,6 +292,7 @@ def test_run_409_simulation_requise_tel_quel(runner, mock_api):
 
 
 def test_run_ok(runner, mock_api):
+    mock_api.get(SCHED_PATH).mock(return_value=httpx.Response(200, json=[_sched()]))
     mock_api.post(f"{SCHED_PATH}/{SCHED_ID}/run").mock(
         return_value=httpx.Response(202, json={**DISPATCH, "mode": "application"}))
     result = runner.invoke(app, ["registry", "cleanup", "run", REG_ID, SCHED_ID, "--yes"])
@@ -419,3 +426,23 @@ def test_lift_exclusion_409_non_restauree_tel_quel(runner, mock_api):
     result = runner.invoke(app, ["registry", "cleanup", "lift-exclusion", REG_ID, DEL_ID, "-y"])
     assert result.exit_code == 1
     assert msg in " ".join(result.stdout.split())
+
+
+def test_nom_au_format_uuid_resolu_par_son_nom(runner, mock_api):
+    """Relecture #83 : l'API accepte un NOM au format UUID ; la CLI cherche
+    l'id d'abord, puis le nom, au lieu de le prendre pour un id inexistant."""
+    nom = "0123abcd-0123-0123-0123-0123456789ab"
+    mock_api.get(SCHED_PATH).mock(return_value=httpx.Response(200, json=[_sched(name=nom)]))
+    route = mock_api.post(f"{SCHED_PATH}/{SCHED_ID}/simulate").mock(
+        return_value=httpx.Response(202, json=DISPATCH))
+    result = runner.invoke(app, ["registry", "cleanup", "simulate", REG_ID, nom])
+    assert result.exit_code == 0, result.stdout
+    assert route.called
+
+
+def test_delete_previent_que_la_corbeille_sera_purgee(runner, mock_api):
+    mock_api.get(SCHED_PATH).mock(return_value=httpx.Response(200, json=[_sched()]))
+    mock_api.delete(f"{SCHED_PATH}/{SCHED_ID}").mock(return_value=httpx.Response(204))
+    result = runner.invoke(app, ["registry", "cleanup", "delete", REG_ID, SCHED_ID, "--yes"])
+    assert result.exit_code == 0, result.stdout
+    assert "délai de grâce" in result.stdout
