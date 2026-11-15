@@ -250,6 +250,53 @@ de `--starts-on`, à défaut de la date de début déjà enregistrée, sinon d'a
 dans le fuseau du planning. Si la plateforme ne prend pas encore en
 charge la période, la commande échoue sans créer de planning illimité.
 
+## Nettoyage planifié des images d'une registry
+
+`cetic registry cleanup` gère jusqu'à **4 planifications** de nettoyage par
+registry de conteneurs. Une planification désigne des images par **motifs de
+dépôt** (`--repo`, répétable) et **motifs de tag** (`--tag`, répétable), jokers
+`*` et `?`, et un **critère** :
+
+| `--critere` | `--valeur` |
+|---|---|
+| `all` (tout ce qui correspond) | absente |
+| `older_than_days` | jours (1 à 3650) |
+| `keep_last_n` (garder les N plus récents, par dépôt et par motif de tag) | nombre (1 à 1000) |
+
+`--cron` (5 champs, **UTC**) est facultatif : sans cron, la planification ne
+s'exécute qu'à la demande. Rien n'est supprimé sur-le-champ : les images
+visées vont dans la **corbeille** et ne sont supprimées qu'après le délai de
+grâce de la registry, restaurables d'ici là.
+
+```bash
+cetic registry cleanup create myreg -n preversions \
+    --repo "app/*" --tag "*-rc-*" --tag "*-dev" \
+    --critere keep_last_n --valeur 5                 # à la demande seulement
+cetic registry cleanup simulate myreg preversions    # compte les images visées, ne condamne rien
+cetic registry cleanup runs myreg --schedule preversions   # résultat (tags visés, octets libérables)
+cetic registry cleanup run myreg preversions         # exécute maintenant (exige une simulation à jour)
+cetic registry cleanup update myreg preversions --cron "0 3 * * *"   # puis chaque nuit à 03:00 UTC
+cetic registry cleanup update myreg preversions --no-cron            # retour au manuel
+cetic registry cleanup list myreg
+cetic registry cleanup trash myreg --en-attente      # corbeille restaurable
+cetic registry cleanup restore myreg <DELETION_ID>
+cetic registry cleanup lift-exclusion myreg <DELETION_ID>   # l'image redevient condamnable
+cetic registry cleanup delete myreg preversions      # historique et corbeille conservés
+```
+
+- La validation (motifs, cron, motifs couvrant toute la registry, limite de 4
+  planifications, `--critere` changé sans `--valeur`) est faite par l'API ;
+  son message d'erreur est affiché tel quel, précédé du code HTTP.
+- ⚠️ Une exécution **planifiée** (cron) condamne sans simulation préalable :
+  simulez avant de donner un cron. Seul `run` exige une simulation réussie
+  sur les règles actuelles de la planification.
+- `runs` et `trash` lisent les passages et la corbeille communs avec la
+  rétention : `--origine nettoyage` (défaut de ces commandes, toujours
+  envoyé), `retention` ou `tout`. `--schedule` restreint `runs` à une
+  planification. Pagination `--limit` / `--offset`.
+- `update --repo` / `--tag` **remplacent** la liste de motifs.
+- Sortie brute de l'API avec `CCP_OUTPUT=json` (ou `yaml`).
+
 ## IP de sortie dédiée d'un VPC (depuis v2.2.1)
 
 Par défaut, un VPC sort sur internet par la **sortie partagée** de la
@@ -650,6 +697,7 @@ cetic registry tags myreg myapp/api
 cetic registry tag delete myreg myapp/api v1.0.0 --yes
 cetic registry gc myreg --wait                           # exit 1 if refused or failed
 cetic registry gc-status myreg                           # last cleanup outcome
+cetic registry cleanup list myreg                        # scheduled image cleanup (see section above)
 
 # Templates (custom)
 cetic template list
