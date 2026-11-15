@@ -588,6 +588,15 @@ cetic scp 10.0.1.42:/var/log/app ./logs -r   # download récursif
 cetic volume list
 cetic bucket list
 cetic bucket create --name backups --region RNN
+# Versionnage — on suspend, on ne désactive jamais (S3 ne revient pas à « jamais versionné »)
+cetic bucket versioning show <bucket-uuid>                       # état, durée de conservation, synchronisation
+cetic bucket versioning enable <bucket-uuid> --noncurrent-days 90   # active ou reprend (sans -d : durée en place, sinon 30 j)
+cetic bucket versioning suspend <bucket-uuid>                    # plus de nouvelles versions ; la durée ne change pas
+cetic bucket versioning retention <bucket-uuid> --days 365       # change la durée sans changer l'état (1 à 3650 j)
+# Confirmation demandée (--yes pour l'éviter) quand des versions anciennes seraient effacées :
+#   - durée raccourcie ;
+#   - prise en charge d'un versionnage posé hors plateforme (souvent sans expiration) : il reçoit la durée demandée, 30 j sinon
+# -o json / -o yaml : réponse de l'API telle quelle, rien d'autre sur stdout
 
 # Networking
 cetic vpc list                                              # colonne CIDR (— si non assigné)
