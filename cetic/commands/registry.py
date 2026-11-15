@@ -2,7 +2,7 @@
 
 Gère les registries de conteneurs managées : création, comptes utilisateurs,
 ACL granulaires (repo × user × actions), navigation des dépôts/tags, login
-docker, garbage collection.
+docker, garbage collection, nettoyage planifié des images (`cleanup`).
 
 Le mot de passe admin est stocké dans le trousseau système (keyring) et n'est
 jamais persisté en clair dans la config.
@@ -29,6 +29,7 @@ from cetic._secrets import (
     prompt_password,
     save_admin_password,
 )
+from cetic.commands._registry_cleanup import cleanup_app
 from cetic.commands._render import render_list, render_one
 
 REGISTRIES_PATH = "/v1/registries"
@@ -40,6 +41,7 @@ tag_app = typer.Typer(help="Tags d'images (manifests OCI)")
 app.add_typer(user_app, name="user")
 app.add_typer(acl_app, name="acl")
 app.add_typer(tag_app, name="tag")
+app.add_typer(cleanup_app, name="cleanup")
 
 
 # ---------------------------------------------------------------------------
