@@ -128,9 +128,11 @@ def _ecrire(bucket_id: str, status: str, days: int | None) -> dict[str, Any]:
 
 
 def _apres_502(bucket_id: str) -> None:
-    """Un 502 a deux sens : réglage enregistré mais pas appliqué (la plateforme
-    réessaie), ou rien d'enregistré (état du stockage illisible, passerelle) :
-    l'état relu les départage."""
+    """Un 502 a plusieurs causes : réglage enregistré mais pas appliqué (la
+    plateforme réessaie), rien d'enregistré (état du stockage illisible), ou
+    passerelle en échec avant ou après l'enregistrement. Seul le premier cas se
+    reconnaît à l'état relu ; dans les autres, on ne sait pas : on le dit, et
+    relancer reste sans risque (l'écriture est idempotente)."""
     try:
         cfg = client.get(f"/v1/buckets/{bucket_id}/versioning")
     except client.APIError:
@@ -139,7 +141,8 @@ def _apres_502(bucket_id: str) -> None:
         rprint("[dim]Le réglage est enregistré mais pas encore appliqué : la plateforme réessaie "
                "d'elle-même. `cetic bucket versioning show` pour suivre.[/dim]")
     else:
-        rprint("[dim]Rien n'a été enregistré : relancez la commande.[/dim]")
+        rprint("[dim]Le réglage n'est pas confirmé : vérifiez avec `cetic bucket versioning show` "
+               "avant de relancer.[/dim]")
 
 
 @versioning_app.command("show")

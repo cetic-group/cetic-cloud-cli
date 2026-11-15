@@ -298,18 +298,28 @@ def test_502_enregistre_la_plateforme_reessaie(runner, mock_api) -> None:
     r = runner.invoke(app, ["bucket", "versioning", "enable", BID])
     assert r.exit_code == 1
     assert "réessaie d'elle-même" in _texte(r)
-    assert "Rien n'a été enregistré" not in _texte(r)
+    assert "pas confirmé" not in _texte(r)
 
 
-def test_502_rien_n_est_enregistre(runner, mock_api) -> None:
-    # Second 502 de la route : état réel illisible, avant tout enregistrement.
-    _etat(mock_api, _cfg(None, None, "none"))
+@pytest.mark.parametrize("relu", [
+    _cfg(None, None, "none"),        # état réel illisible : rien d'enregistré
+    _cfg("Enabled", 30, "applied"),  # passerelle en échec après l'enregistrement
+    _cfg("Enabled", 30, "pending"),  # écriture concurrente
+])
+def test_502_non_confirme_sans_affirmer_le_resultat(runner, mock_api, relu) -> None:
+    # Seul sync_status=error prouve « enregistré, réessayé ». Ailleurs on ne sait
+    # pas : ni « rien n'a été enregistré » ni « réessaie », mais « vérifiez ».
+    mock_api.get(URL).mock(side_effect=[
+        httpx.Response(200, json=_cfg(None, None, "none")),
+        httpx.Response(200, json=relu),
+    ])
     mock_api.put(URL).mock(return_value=httpx.Response(
         502, json={"detail": "Erreur stockage objet : délai dépassé"}))
     r = runner.invoke(app, ["bucket", "versioning", "enable", BID])
     assert r.exit_code == 1
-    assert "Rien n'a été enregistré" in _texte(r)
+    assert "pas confirmé" in _texte(r) and "versioning show" in _texte(r)
     assert "réessaie d'elle-même" not in _texte(r)
+    assert "Rien n'a été enregistré" not in _texte(r)
 
 
 def test_pas_de_commande_disable(runner) -> None:
