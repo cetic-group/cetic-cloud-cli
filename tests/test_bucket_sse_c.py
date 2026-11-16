@@ -115,10 +115,31 @@ def test_presign_affiche_les_en_tetes(runner, mock_api) -> None:
     assert "jamais envoyés à CETIC" in out
 
 
-def test_presign_sans_materiel_de_cle(runner, mock_api) -> None:
-    _presign(mock_api, required_headers=SSE_HEADERS)
+def test_presign_rendu_exact_des_en_tetes(runner, mock_api) -> None:
+    """Placeholder reformulé reconnu ; valeur non-placeholder affichée telle que renvoyée."""
+    _presign(mock_api, required_headers={
+        "x-amz-server-side-encryption-customer-algorithm": "AES256",
+        "x-amz-server-side-encryption-customer-key": "<autre formulation>",
+        "x-amz-server-side-encryption-customer-key-MD5": "<à fournir par le client>",
+    })
     r = runner.invoke(app, ["bucket", "presign", BID, "k"])
-    assert KEY_MATERIAL not in r.output
+    lines = [ln.strip() for ln in r.output.splitlines()]
+    assert "x-amz-server-side-encryption-customer-algorithm: AES256" in lines
+    assert "x-amz-server-side-encryption-customer-key: <votre valeur>" in lines
+    assert "x-amz-server-side-encryption-customer-key-MD5: <votre valeur>" in lines
+    assert "autre formulation" not in r.output
+
+
+def test_list_json_sans_cle_inventee(runner, mock_api, monkeypatch) -> None:
+    monkeypatch.setenv("CCP_OUTPUT", "json")
+    obj = {"client_key_required": True, "public_allowed": False, "server_can_read_objects": False}
+    mock_api.get("/v1/buckets").mock(return_value=httpx.Response(200, json=[
+        _bucket(encryption_mode="sse_c", encryption=obj), _bucket(id="x2")]))
+    rows = json.loads(runner.invoke(app, ["bucket", "list"]).output)
+    assert rows[0]["encryption_mode"] == "sse_c" and rows[0]["encryption"] == obj
+    assert rows[1]["encryption_mode"] == "none" and "encryption" not in rows[1]
+    assert not any(isinstance(r.get("encryption"), str) for r in rows)
+    assert not any("chiffrement_label" in r for r in rows)
 
 
 def test_presign_bornes_1806_intactes(runner, mock_api) -> None:

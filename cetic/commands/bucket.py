@@ -9,7 +9,11 @@ from cetic.commands.bucket_cors import cors_app
 from cetic.commands.bucket_versioning import versioning_app
 
 _ENC_LABELS = {"none": "aucun", "sse_c": "clé client"}
-_KEY_PLACEHOLDER = "<à fournir par le client>"
+
+
+def _is_placeholder(v: object) -> bool:
+    """Valeur d'en-tête à fournir par le client (texte entre chevrons)."""
+    return isinstance(v, str) and v.startswith("<")
 
 
 def _enc_label(b: dict) -> str:
@@ -31,14 +35,19 @@ def list_buckets(region: str | None = typer.Option(None, "--region", "-r")) -> N
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
-    rows = [
-        {"id": b["id"], "name": b["name"], "region": b["region"], "status": b["status"],
-         "encryption_mode": b.get("encryption_mode") or "none", "encryption": _enc_label(b)}
-        for b in items
-    ]
+    table = config.get_output() == "table"
+    rows = []
+    for b in items:
+        row = {"id": b["id"], "name": b["name"], "region": b["region"], "status": b["status"],
+               "encryption_mode": b.get("encryption_mode") or "none"}
+        if "encryption" in b:
+            row["encryption"] = b["encryption"]
+        if table:
+            row["chiffrement_label"] = _enc_label(b)
+        rows.append(row)
     render_list(rows, title=f"Buckets ({len(rows)})",
                 columns=[("id", "ID"), ("name", "Nom"), ("region", "Région"), ("status", "Statut"),
-                         ("encryption", "Chiffrement")])
+                         ("chiffrement_label", "Chiffrement")])
 
 
 @app.command()
@@ -233,7 +242,7 @@ def presign(
     if config.get_output() != "table":
         render_one(r, title="URL signée")
         return
-    shown = {k: ("<votre valeur>" if v == _KEY_PLACEHOLDER else v) for k, v in headers.items()}
+    shown = {k: ("<votre valeur>" if _is_placeholder(v) else v) for k, v in headers.items()}
     render_one(
         {"url": r["url"], "method": r["method"], "expires_at": r["expires_at"],
          "password_protected": r.get("password_protected", False),
@@ -242,7 +251,7 @@ def presign(
     )
     if not headers:
         return
-    if any(v == _KEY_PLACEHOLDER for v in headers.values()):
+    if any(_is_placeholder(v) for v in headers.values()):
         rprint("[yellow]En-têtes à envoyer avec la requête :[/yellow]")
         for k, v in shown.items():
             rprint(f"  {k}: {v}")
