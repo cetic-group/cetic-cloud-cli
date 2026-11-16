@@ -3,10 +3,24 @@
 import typer
 from rich import print as rprint
 
-from cetic import client
+from cetic import client, config
 from cetic.commands._render import render_list, render_one
 from cetic.commands.bucket_cors import cors_app
 from cetic.commands.bucket_versioning import versioning_app
+
+_ENC_LABELS = {"none": "aucun", "sse_c": "clé client"}
+
+
+def _is_placeholder(v: object) -> bool:
+    """Valeur d'en-tête à fournir par le client (texte entre chevrons)."""
+    return isinstance(v, str) and v.startswith("<")
+
+
+def _enc_label(b: dict) -> str:
+    """Libellé du chiffrement ; un mode inconnu s'affiche tel quel."""
+    mode = b.get("encryption_mode") or "none"
+    return _ENC_LABELS.get(mode, mode)
+
 
 app = typer.Typer(help="Buckets S3 CETIC Cloud")
 app.add_typer(cors_app, name="cors")
@@ -21,12 +35,19 @@ def list_buckets(region: str | None = typer.Option(None, "--region", "-r")) -> N
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
-    rows = [
-        {"id": b["id"], "name": b["name"], "region": b["region"], "status": b["status"]}
-        for b in items
-    ]
+    table = config.get_output() == "table"
+    rows = []
+    for b in items:
+        row = {"id": b["id"], "name": b["name"], "region": b["region"], "status": b["status"],
+               "encryption_mode": b.get("encryption_mode") or "none"}
+        if "encryption" in b:
+            row["encryption"] = b["encryption"]
+        if table:
+            row["chiffrement_label"] = _enc_label(b)
+        rows.append(row)
     render_list(rows, title=f"Buckets ({len(rows)})",
-                columns=[("id", "ID"), ("name", "Nom"), ("region", "Région"), ("status", "Statut")])
+                columns=[("id", "ID"), ("name", "Nom"), ("region", "Région"), ("status", "Statut"),
+                         ("chiffrement_label", "Chiffrement")])
 
 
 @app.command()
@@ -37,6 +58,8 @@ def get(bucket_id: str = typer.Argument(...)) -> None:
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
+    if config.get_output() == "table":
+        b = {**b, "Chiffrement": _enc_label(b)}
     render_one(b, title=f"Bucket {b.get('name', bucket_id)}")
 
 
@@ -55,10 +78,17 @@ def credentials(bucket_id: str = typer.Argument(...)) -> None:
 def create(
     name: str = typer.Option(..., "--name", "-n"),
     region: str = typer.Option(..., "--region", "-r"),
+    encryption: str | None = typer.Option(
+        None, "--encryption",
+        help="Chiffrement des fichiers : aucun (défaut) ou sse-c "
+             "(clé fournie par vous, jamais connue de CETIC)"),
 ) -> None:
     """Crée un bucket S3."""
+    body: dict = {"name": name, "region": region}
+    if encryption is not None:
+        body["encryption_mode"] = encryption.strip().lower().replace("-", "_")
     try:
-        b = client.post("/v1/buckets", json={"name": name, "region": region})
+        b = client.post("/v1/buckets", json=body)
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
@@ -208,11 +238,24 @@ def presign(
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
+    headers = r.get("required_headers") or {}
+    if config.get_output() != "table":
+        render_one(r, title="URL signée")
+        return
+    shown = {k: ("<votre valeur>" if _is_placeholder(v) else v) for k, v in headers.items()}
     render_one(
         {"url": r["url"], "method": r["method"], "expires_at": r["expires_at"],
          "password_protected": r.get("password_protected", False),
-         **({"required_headers": r["required_headers"]} if r.get("required_headers") else {})},
+         **({"required_headers": shown} if shown else {})},
         title="URL signée",
     )
-    if r.get("required_headers"):
+    if not headers:
+        return
+    if any(_is_placeholder(v) for v in headers.values()):
+        rprint("[yellow]En-têtes à envoyer avec la requête :[/yellow]")
+        for k, v in shown.items():
+            rprint(f"  {k}: {v}")
+        rprint("[dim]Votre clé et son empreinte MD5 (base64) sont calculées de votre côté "
+               "et ne sont jamais envoyés à CETIC.[/dim]")
+    else:
         rprint("[yellow]L'envoi doit reprendre ces en-têtes à l'identique, sinon le stockage le refuse.[/yellow]")
