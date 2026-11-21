@@ -19,6 +19,7 @@ from typing import Any
 
 import typer
 from rich import print as rprint
+from rich.console import Console
 
 from cetic import client
 from cetic._resolve import resolve_id
@@ -28,6 +29,8 @@ from cetic._secrets import (
     save_sa_token,
 )
 from cetic.commands._render import render_list, render_one
+
+_err = Console(stderr=True)
 
 
 SA_PATH = "/v1/service-accounts"
@@ -179,6 +182,11 @@ def create(
     Optionnellement, `--save-keyring` stocke le token dans le trousseau
     système (Keychain macOS, libsecret Linux, Credential Manager Windows).
     """
+    if expires_in_days is not None and expires_at:
+        # L'une des deux, comme l'annonce l'usage : la date était ignorée sans
+        # message, même invalide (revue de la PR #87).
+        _err.print("[red]--expires-in-days ou --expires-at, pas les deux.[/red]")
+        raise typer.Exit(2)
     body: dict[str, Any] = {"name": name}
     if description is not None:
         body["description"] = description

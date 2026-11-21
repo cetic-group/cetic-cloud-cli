@@ -417,10 +417,11 @@ def create(
             "control plane. Doit être ≤ --version (le backend re-valide → 422)."
         ),
     ),
-    os_image: str = typer.Option(
-        "flatcar",
+    os_image: str | None = typer.Option(
+        None,
         "--os",
-        help="Famille d'OS des nœuds : flatcar (défaut) | ubuntu | rocky9.",
+        help="Famille d'OS des nœuds : flatcar (défaut) | ubuntu | rocky9. "
+             "Avec --template : celle du template.",
         case_sensitive=False,
     ),
     os_template_key: str | None = typer.Option(
@@ -469,8 +470,8 @@ def create(
         )
         raise typer.Exit(1)
 
-    os_norm = os_image.lower()
-    if os_norm not in VALID_OS:
+    os_norm = os_image.lower() if os_image else None
+    if os_norm is not None and os_norm not in VALID_OS:
         rprint(
             f"[red]--os invalide : '{os_image}'. "
             f"Valeurs autorisées : {', '.join(VALID_OS)}.[/red]"
@@ -483,24 +484,39 @@ def create(
     if k8s_version is not None:
         _validate_k8s_version(k8s_version)
     resolved_template_key = os_template_key
-    if not resolved_template_key or k8s_version is None:
+    templates: list[dict] = []
+    if not resolved_template_key or k8s_version is None or os_norm is None:
         try:
             templates = client.get("/v1/k8s/templates", params={"region": region})
         except client.APIError as e:
             rprint(f"[red]Erreur : {e.detail}[/red]")
             raise typer.Exit(1)
-        if k8s_version is None and os_template_key:
-            # `--template` fourni : la version est celle de CE template, pas la
-            # plus récente de la région (revue de la PR #87).
-            k8s_version = next(
-                ((t.get("k8s_version") or "").lstrip("vV") for t in templates
-                 if t.get("os_key") == os_template_key and t.get("k8s_version")),
-                None,
-            )
-            if k8s_version is None:
+        if os_template_key:
+            # `--template` fourni : sa version (pas la plus récente de la
+            # région, revue de la PR #87) et son OS. Les `matchTags` du cluster
+            # dérivent de `os_image` : le défaut `flatcar` avec un template
+            # ubuntu créait le cluster sur une autre famille (ou était refusé).
+            entree = next((t for t in templates if t.get("os_key") == os_template_key), None)
+            if entree is None:
                 rprint(f"[red]Template inconnu dans la région {region} : {os_template_key}. "
                        f"Voir : cetic k8s templates --region {region}.[/red]")
                 raise typer.Exit(1)
+            os_template = entree.get("os")
+            if os_norm is None:
+                os_norm = os_template or "flatcar"
+            elif os_template and os_template != os_norm:
+                rprint(f"[red]--os {os_norm} ne correspond pas au template {os_template_key} "
+                       f"({_fmt_os(os_template)}). Retirez --os ou choisissez un template "
+                       f"{_fmt_os(os_norm)}.[/red]")
+                raise typer.Exit(1)
+            if k8s_version is None:
+                k8s_version = (entree.get("k8s_version") or "").lstrip("vV") or None
+                if k8s_version is None:
+                    rprint(f"[red]Le template {os_template_key} n'indique pas sa version : "
+                           "passez --version.[/red]")
+                    raise typer.Exit(1)
+        if os_norm is None:
+            os_norm = "flatcar"
         if k8s_version is None:
             k8s_version = _derniere_version(templates, region=region, os_slug=os_norm)
             if k8s_version is None:

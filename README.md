@@ -470,7 +470,7 @@ Cf. [docs/iam](https://docs.cloud.cetic-group.com/services/iam) pour le détail 
    ```bash
    cetic iam roles attach CIDeployer \
      --principal-type service_account --principal-id ci-pipeline \
-     --expires-at 2027-01-01
+     --expires-at 2027-01-01T00:00:00Z
    ```
 
    `--principal-id` accepte UUID OU nom (api_key/service_account) OU email

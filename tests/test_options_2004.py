@@ -114,3 +114,13 @@ def test_config_get_masque_entierement(runner):
     result = runner.invoke(app, ["config", "get", "api_key"])
     assert result.stdout.startswith("***")
     assert "tes" not in result.stdout.split("(")[0]
+
+
+def test_service_account_expires_in_days_et_expires_at_exclusifs(runner, mock_api):
+    """La date était ignorée sans message, même invalide (revue de la PR #87)."""
+    post = mock_api.post("/v1/service-accounts").mock(return_value=httpx.Response(201, json={}))
+    result = runner.invoke(app, ["service-account", "create", "--name", "ci",
+                                 "--expires-in-days", "30", "--expires-at", "2027-01-01T00:00:00Z"])
+    assert result.exit_code == 2
+    assert "pas les deux" in result.stderr
+    assert not post.called

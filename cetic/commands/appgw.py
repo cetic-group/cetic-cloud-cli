@@ -353,10 +353,10 @@ def create(
 
     Exemples :
       cetic appgw create --name web-edge --region RNN --plan small \\
-        --vpc prod --vnet web-tier
+        --vnet <VNET_UUID>
 
       cetic appgw create -n api-gw -r PAR -p medium \\
-        --vpc <vpc-uuid> --vnet <vnet-uuid> --public-ip <ip-uuid>
+        --vnet <VNET_UUID> --public-ip <IP_UUID>
 
     Le provisioning prend ~3-5 minutes. L'état passe `creating` → `active`.
     """
