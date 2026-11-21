@@ -1,7 +1,7 @@
 """cetic — CETIC Cloud Platform CLI.
 
 Utilisation :
-  cetic auth login
+  cetic auth login --sso github
   cetic auth whoami
   cetic config view
   cetic config set region PAR

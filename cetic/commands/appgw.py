@@ -40,6 +40,7 @@ from cetic.commands._gateway import (
     validate_created_replica_count,
 )
 from cetic.commands._render import render_list, render_one
+from cetic._auth_hint import NON_AUTHENTIFIE
 
 APPGW_PATH = "/v1/app-gateways"
 
@@ -139,7 +140,7 @@ def plans() -> None:
 def _format_api_error(e: client.APIError) -> str:
     """Localise les erreurs API en messages français lisibles."""
     if e.status_code == 401:
-        return "Non authentifié — vérifiez `cetic auth login` ou `CCP_API_KEY`."
+        return NON_AUTHENTIFIE
     if e.status_code == 403:
         return "Accès refusé — droits insuffisants pour cette opération."
     if e.status_code == 404:

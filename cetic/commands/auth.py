@@ -1,4 +1,4 @@
-"""cetic auth — login (SSO), logout, whoami."""
+"""cetic auth — login (SSO ou clé d'API), logout, whoami."""
 from __future__ import annotations
 
 import http.server
@@ -7,10 +7,16 @@ import threading
 import webbrowser
 from urllib.parse import parse_qs, urlencode, urlparse
 
+import os
+
 import typer
 from rich import print as rprint
+from rich.console import Console
 
 from cetic import client, config
+from cetic._auth_hint import CONNEXION
+
+_err = Console(stderr=True)
 
 app = typer.Typer(help="Authentification CETIC Cloud")
 
@@ -24,32 +30,75 @@ def login(
         None, "--sso",
         help=f"Connexion via fournisseur SSO : {', '.join(_SSO_PROVIDERS)}.",
     ),
+    api_key: bool = typer.Option(
+        False, "--api-key",
+        help="Enregistre une clé d'API (lue sur l'entrée standard, sans écho) "
+             "comme identifiant persistant de la CLI.",
+    ),
 ) -> None:
-    """Connexion à CETIC Cloud par SSO — stocke le token localement.
+    """Connexion à CETIC Cloud — stocke l'identifiant localement.
 
-    [cyan]--sso github[/cyan] ou [cyan]--sso google[/cyan] : ouvre le navigateur
-    pour s'authentifier via le fournisseur (un serveur local éphémère récupère
-    le jeton, façon `gh`). Sinon, utilisez une clé d'API (variable
-    [cyan]CCP_API_KEY[/cyan]).
+    [cyan]--sso github|google[/cyan] : ouvre le navigateur (un serveur local
+    éphémère récupère le jeton, façon `gh`). [cyan]--api-key[/cyan] : enregistre
+    une clé d'API créée dans la console. La variable [cyan]CCP_API_KEY[/cyan], si
+    elle est définie, prime sur l'identifiant enregistré.
     """
-    if sso is None:
-        # La connexion par e-mail et mot de passe exige la vérification
-        # anti-robot de la page de connexion de la console : l'API la refuse
-        # toujours en production à un client qui n'est pas un navigateur
-        # (403 « Vérification anti-robot échouée »). La CLI ne la propose donc
-        # plus (cetic-cloud-platform#2004).
-        rprint(
-            "[red]La connexion par e-mail et mot de passe n'est pas disponible "
-            "dans la CLI.[/red] Elle exige la vérification anti-robot de la page "
-            "de connexion de la console.\n\n"
-            "Connectez-vous autrement :\n"
-            f"  • par SSO : [cyan]cetic auth login --sso {'|'.join(_SSO_PROVIDERS)}[/cyan] "
-            "(compte du même e-mail chez le fournisseur) ;\n"
-            "  • par clé d'API : créez-la dans la console (Clés d'API), puis\n"
-            "    [cyan]export CCP_API_KEY=<clé>[/cyan]."
-        )
+    if sso is not None and api_key:
+        _err.print("[red]--sso et --api-key sont exclusifs.[/red]")
+        raise typer.Exit(2)
+    if sso is not None:
+        _login_sso(sso.lower())
+        _avertir_si_env()
+        return
+    if api_key:
+        _login_api_key()
+        _avertir_si_env()
+        return
+    # La connexion par e-mail et mot de passe exige la vérification anti-robot
+    # de la page de connexion de la console : l'API la refuse toujours en
+    # production à un client qui n'est pas un navigateur (403 « Vérification
+    # anti-robot échouée »). La CLI ne la propose donc plus
+    # (cetic-cloud-platform#2004). Message sur stderr : la sortie standard
+    # reste propre pour un script.
+    _err.print(
+        "[red]La connexion par e-mail et mot de passe n'est pas disponible "
+        "dans la CLI.[/red] Elle exige la vérification anti-robot de la page "
+        "de connexion de la console.\n\n"
+        "Connectez-vous autrement :\n"
+        f"  • par SSO : [cyan]cetic auth login --sso {'|'.join(_SSO_PROVIDERS)}[/cyan] "
+        "(compte du même e-mail chez le fournisseur) ;\n"
+        "  • par clé d'API, créée dans la console (Clés d'API) : "
+        "[cyan]cetic auth login --api-key[/cyan] (enregistrée) ou "
+        "[cyan]export CCP_API_KEY=<clé>[/cyan] (session du shell)."
+    )
+    raise typer.Exit(1)
+
+
+def _login_api_key() -> None:
+    """Lit la clé sur l'entrée standard (sans écho si c'est un terminal) et
+    l'enregistre comme identifiant persistant, sans jeton de rafraîchissement
+    (une clé d'API n'expire pas comme une session)."""
+    import getpass  # noqa: PLC0415
+    import sys  # noqa: PLC0415
+
+    cle = (getpass.getpass("Clé d'API : ") if sys.stdin.isatty() else sys.stdin.readline()).strip()
+    if not cle:
+        _err.print("[red]Aucune clé lue.[/red]")
         raise typer.Exit(1)
-    _login_sso(sso.lower())
+    # Écrase un éventuel jeton de rafraîchissement d'une session SSO : sinon
+    # un 401 déclencherait un rafraîchissement qui remplacerait la clé.
+    config.set_value("api_key", cle)
+    config.set_value("refresh_token", "")
+    rprint("[green]Clé d'API enregistrée.[/green]")
+
+
+def _avertir_si_env() -> None:
+    """`CCP_API_KEY` est lue avant le fichier de configuration : la signaler,
+    sinon l'identifiant qui vient d'être enregistré serait ignoré en silence
+    (revue de la PR #85)."""
+    if os.environ.get("CCP_API_KEY"):
+        _err.print("[yellow]⚠ La variable CCP_API_KEY est définie : elle prime sur "
+                   "l'identifiant enregistré. `unset CCP_API_KEY` pour utiliser celui-ci.[/yellow]")
 
 
 def _store_tokens(access_token: str, refresh_token: str | None) -> None:
@@ -159,7 +208,7 @@ def whoami() -> None:
     """Affiche les informations du compte connecté."""
     token = config.get("api_key")
     if not token:
-        rprint("[yellow]Non connecté. Utilisez `cetic auth login`.[/yellow]")
+        rprint(f"[yellow]Non connecté. Utilisez {CONNEXION}.[/yellow]")
         raise typer.Exit(1)
 
     try:

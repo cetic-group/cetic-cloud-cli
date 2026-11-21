@@ -10,6 +10,7 @@ import typer
 from rich import print as rprint
 
 from cetic import client
+from cetic._auth_hint import NON_AUTHENTIFIE
 
 LIMIT = 65536
 FIELDS = frozenset({"l4_policy", "l7_policy", "client_ip_policy"})
@@ -139,7 +140,7 @@ def verify_policy_response(body: dict, response: object) -> None:
 def policy_bail(error: client.APIError) -> typer.Exit:
     """Policy failures never echo server details that may contain header values."""
     messages = {
-        401: "Non authentifié — vérifiez `cetic auth login` ou `CCP_API_KEY`.",
+        401: NON_AUTHENTIFIE,
         403: "Accès refusé — droits insuffisants pour cette opération.",
         404: "Ressource introuvable.",
         409: "La configuration de sécurité a changé ou n’est pas disponible. Relisez la passerelle et vérifiez vos modifications avant de réessayer manuellement.",

@@ -63,6 +63,7 @@ from rich import print as rprint
 from cetic import client
 from cetic._resolve import looks_like_uuid, resolve_id
 from cetic.commands._render import render_list, render_one
+from cetic._auth_hint import NON_AUTHENTIFIE
 
 SCHEDULE_PATH = "/v1/schedules"
 
@@ -367,7 +368,7 @@ def _detail_message(detail: Any) -> str:
 
 def _format_api_error(e: client.APIError) -> str:
     if e.status_code == 401:
-        return "Non authentifié — vérifiez `cetic auth login` ou `CCP_API_KEY`."
+        return NON_AUTHENTIFIE
     if e.status_code == 403:
         return "Accès refusé — droits insuffisants (action schedules:*)."
     if e.status_code == 404:

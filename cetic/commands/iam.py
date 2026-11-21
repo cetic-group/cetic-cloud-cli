@@ -29,6 +29,7 @@ from cetic._iam_arn import parse_arn
 from cetic._load import _load_policy_file
 from cetic._resolve import resolve_id, resolve_principal
 from cetic.commands._render import render_list, render_one
+from cetic._auth_hint import NON_AUTHENTIFIE
 
 
 IAM_ROLES_PATH = "/v1/iam/roles"
@@ -58,7 +59,7 @@ SENSITIVE_FIELDS = (
 
 def _format_api_error(e: client.APIError) -> str:
     if e.status_code == 401:
-        return "Non authentifié — vérifiez `cetic auth login` ou `CCP_API_KEY`."
+        return NON_AUTHENTIFIE
     if e.status_code == 403:
         return "Accès refusé — droits insuffisants pour cette opération."
     if e.status_code == 404:

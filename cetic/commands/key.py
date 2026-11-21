@@ -8,6 +8,7 @@ from rich.prompt import Confirm
 from rich.table import Table
 
 from cetic import client, config
+from cetic._auth_hint import NON_AUTHENTIFIE
 
 app = typer.Typer(help="Clés SSH")
 
@@ -25,7 +26,7 @@ _SCOPE_STYLE = {
 def _format_api_error(e: client.APIError) -> str:
     """Mapping uniforme des erreurs API → messages FR humains."""
     if e.status_code == 401:
-        return "Non authentifié — vérifiez `cetic auth login` ou `CCP_API_KEY`."
+        return NON_AUTHENTIFIE
     if e.status_code == 403:
         return (
             "Accès refusé — droits insuffisants. Une clé `user` ne peut être "
