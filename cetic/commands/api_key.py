@@ -54,10 +54,16 @@ def create(
 @app.command()
 def get(key_id: str = typer.Argument(...)) -> None:
     """Détails d'une clé API."""
+    # Pas de route `GET /v1/api-keys/{id}` : la clé est lue dans la liste
+    # (cetic-cloud-platform#2004).
     try:
-        k = client.get(f"/v1/api-keys/{key_id}")
+        items = client.get("/v1/api-keys")
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
+        raise typer.Exit(1)
+    k = next((i for i in items if i.get("id") == key_id), None)
+    if k is None:
+        rprint(f"[red]Erreur : clé API introuvable : {key_id}[/red]")
         raise typer.Exit(1)
     render_one(k, title=f"Clé API {k.get('name', key_id)}")
 

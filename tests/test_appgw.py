@@ -1588,49 +1588,27 @@ def test_route_update_no_fields_fails(runner, mock_api):
 # ---------------------------------------------------------------------------
 
 
-def test_acme_providers_list_of_dicts(runner, mock_api):
-    mock_api.get("/v1/app-gateways/acme/dns-providers").mock(
-        return_value=httpx.Response(
-            200,
-            json=[
-                {
-                    "name": "ionos",
-                    "label": "IONOS",
-                    "required_credentials": ["IONOS_API_KEY"],
-                },
-                {
-                    "name": "ovh",
-                    "label": "OVHcloud",
-                    "required_credentials": [
-                        "OVH_APPLICATION_KEY",
-                        "OVH_APPLICATION_SECRET",
-                        "OVH_CONSUMER_KEY",
-                    ],
-                },
-            ],
-        )
-    )
-    result = runner.invoke(app, ["appgw", "acme-providers"])
-    assert result.exit_code == 0, result.stdout
-    assert "ionos" in result.stdout
-    assert "OVHcloud" in result.stdout
-    assert "Providers DNS-01 disponibles (2)" in result.stdout
-
-
-def test_acme_providers_envelope_form(runner, mock_api):
+def test_acme_providers_forme_de_l_api(runner, mock_api):
+    """Forme réelle de l'API (`{clé: {label, fields}}`, catalogue partagé avec
+    le LB). Les anciens tests utilisaient une liste et une enveloppe
+    `{"providers": [...]}` que l'API ne rend pas : la commande affichait une
+    liste vide en vrai (cetic-cloud-platform#2004)."""
     mock_api.get("/v1/app-gateways/acme/dns-providers").mock(
         return_value=httpx.Response(
             200,
             json={
-                "providers": [
-                    {"name": "cloudflare", "label": "Cloudflare"},
-                ]
+                "cloudflare": {"label": "Cloudflare", "fields": ["api_token"]},
+                "route53": {"label": "AWS Route53",
+                            "fields": ["aws_access_key_id", "aws_secret_access_key"]},
             },
         )
     )
     result = runner.invoke(app, ["appgw", "acme-providers"])
     assert result.exit_code == 0, result.stdout
     assert "cloudflare" in result.stdout
+    assert "AWS Route53" in result.stdout
+    assert "aws_access_key_id" in result.stdout
+    assert "Providers DNS-01 disponibles (2)" in result.stdout
 
 
 def test_acme_providers_500(runner, mock_api):

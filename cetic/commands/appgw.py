@@ -1577,32 +1577,19 @@ def acme_providers() -> None:
     except client.APIError as e:
         raise _bail(e) from e
 
-    # Tolérant à 2 formes : liste plate de strings/dicts, ou dict {"providers": [...]}.
-    items: list[Any]
-    if isinstance(data, dict):
-        items = data.get("providers") or data.get("items") or []
-    elif isinstance(data, list):
-        items = data
-    else:
-        items = []
-
+    # Forme de l'API : `{clé: {"label": …, "fields": [...]}}`, comme
+    # `cetic lb acme-providers` (catalogue partagé). L'ancien parseur attendait
+    # une liste ou `{"providers": [...]}` et rendait une liste vide
+    # (cetic-cloud-platform#2004).
     rows: list[dict[str, Any]] = []
-    for entry in items:
-        if isinstance(entry, str):
-            rows.append({"name": entry, "label": "—", "credentials": "—"})
-        elif isinstance(entry, dict):
-            creds = entry.get("required_credentials") or entry.get("credentials") or []
-            if isinstance(creds, list):
-                creds_str = ", ".join(str(c) for c in creds) or "—"
-            else:
-                creds_str = str(creds)
-            rows.append(
-                {
-                    "name": entry.get("name") or entry.get("id") or "—",
-                    "label": entry.get("label") or entry.get("display_name") or "—",
-                    "credentials": creds_str,
-                }
-            )
+    for key, spec in (data or {}).items():
+        spec = spec or {}
+        fields = spec.get("fields") or []
+        rows.append({
+            "name": key,
+            "label": spec.get("label") or "—",
+            "credentials": ", ".join(str(f) for f in fields) or "—",
+        })
 
     render_list(
         rows,

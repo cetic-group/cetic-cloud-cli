@@ -89,12 +89,20 @@ app.add_typer(key_app, name="key")
 
 @key_app.command(name="list")
 def list_keys(
-    region: str | None = typer.Option(None, "--region", "-r"),
+    bucket: str | None = typer.Option(
+        None, "--bucket", "-b",
+        help="UUID du bucket : ses clés. Sans --bucket : anciennes clés de "
+             "l'organisation (créées avant les clés par bucket)."),
+    region: str | None = typer.Option(None, "--region", "-r",
+                                      help="Filtre des anciennes clés (sans --bucket)"),
 ) -> None:
-    """Liste les clés S3 scopées."""
+    """Liste les clés S3 d'un bucket, ou les anciennes clés de l'organisation."""
     try:
-        items = client.get("/v1/object-storage/keys",
-                           params={"region": region} if region else None)
+        if bucket:
+            items = client.get(f"/v1/buckets/{bucket}/keys")
+        else:
+            items = client.get("/v1/object-storage/keys",
+                               params={"region": region} if region else None)
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
@@ -112,19 +120,21 @@ def list_keys(
 
 @key_app.command()
 def create(
-    region: str = typer.Option(..., "--region", "-r"),
+    bucket: str = typer.Option(..., "--bucket", "-b", help="UUID du bucket"),
     label: str = typer.Option(..., "--label", "-l"),
     access_level: str = typer.Option("readwrite", "--access", "-a",
                                      help="read | write | readwrite | full"),
     expires_in_days: int | None = typer.Option(None, "--expires-days",
                                                help="Durée de validité en jours (1–3650)"),
 ) -> None:
-    """Crée une clé S3 scopée. Les credentials ne sont affichés qu'une seule fois."""
-    body: dict = {"region": region, "label": label, "access_level": access_level}
+    """Crée une clé S3 limitée à un bucket. Les credentials ne sont affichés qu'une seule fois."""
+    # Clés scopées par bucket : `POST /v1/buckets/{id}/keys`. L'ancienne route
+    # `POST /v1/object-storage/keys` répond 410 (cetic-cloud-platform#2004).
+    body: dict = {"label": label, "access_level": access_level}
     if expires_in_days:
         body["expires_in_days"] = expires_in_days
     try:
-        k = client.post("/v1/object-storage/keys", json=body)
+        k = client.post(f"/v1/buckets/{bucket}/keys", json=body)
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
@@ -132,19 +142,27 @@ def create(
     rprint(f"  [dim]Access Key :[/dim] {k.get('access_key')}")
     rprint(f"  [dim]Secret Key :[/dim] {k.get('secret_key')}")
     rprint(f"  [dim]Endpoint   :[/dim] {k.get('endpoint_url')}")
+    if k.get("s3_bucket_name"):
+        rprint(f"  [dim]Bucket S3  :[/dim] {k.get('s3_bucket_name')}")
     rprint("[yellow]⚠ Sauvegardez ces credentials — ils ne seront plus affichés.[/yellow]")
 
 
 @key_app.command()
 def revoke(
     key_id: str = typer.Argument(...),
+    bucket: str | None = typer.Option(
+        None, "--bucket", "-b",
+        help="UUID du bucket de la clé. Sans --bucket : ancienne clé de l'organisation."),
     yes: bool = typer.Option(False, "--yes", "-y"),
 ) -> None:
     """Révoque une clé S3 (suppression permanente)."""
     if not yes and not typer.confirm(f"Révoquer la clé {key_id} ?"):
         raise typer.Abort()
     try:
-        client.delete(f"/v1/object-storage/keys/{key_id}")
+        if bucket:
+            client.delete(f"/v1/buckets/{bucket}/keys/{key_id}")
+        else:
+            client.delete(f"/v1/object-storage/keys/{key_id}")
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
