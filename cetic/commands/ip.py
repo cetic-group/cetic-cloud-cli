@@ -151,10 +151,16 @@ def allocate(
 @app.command()
 def get(ip_id: str = typer.Argument(...)) -> None:
     """Détails d'une IP."""
+    # Pas de route `GET /v1/public-ips/{id}` : l'IP est lue dans la liste de
+    # l'organisation (cetic-cloud-platform#2004).
     try:
-        ip = client.get(f"/v1/public-ips/{ip_id}")
+        items = client.get("/v1/public-ips")
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
+        raise typer.Exit(1)
+    ip = next((p for p in items if p.get("id") == ip_id), None)
+    if ip is None:
+        rprint(f"[red]Erreur : IP publique introuvable : {ip_id}[/red]")
         raise typer.Exit(1)
     render_one(ip, title=f"IP {ip.get('ip_address', ip_id)}")
 
@@ -207,15 +213,20 @@ def attach(
     lb: str | None = typer.Option(None, "--lb"),
 ) -> None:
     """Attache l'IP à un container, VM ou LB."""
-    body = {}
-    if container: body["container_id"] = container
-    if vm: body["vm_id"] = vm
-    if lb: body["load_balancer_id"] = lb
-    if not body:
-        rprint("[red]Préciser --container, --vm ou --lb[/red]")
+    cibles = [c for c in (container, vm, lb) if c]
+    if len(cibles) != 1:
+        rprint("[red]Préciser une seule cible : --container, --vm ou --lb[/red]")
         raise typer.Exit(1)
     try:
-        client.post(f"/v1/public-ips/{ip_id}/attach", json=body)
+        if lb:
+            # L'IP d'un load balancer s'attache par la route du LB.
+            client.post(f"/v1/load-balancers/{lb}/attach-ip", json={"public_ip_id": ip_id})
+        else:
+            # Contrat de l'API : `resource_type` + `resource_id`
+            # (cetic-cloud-platform#2004).
+            body = ({"resource_type": "container", "resource_id": container} if container
+                    else {"resource_type": "vm_instance", "resource_id": vm})
+            client.post(f"/v1/public-ips/{ip_id}/attach", json=body)
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
