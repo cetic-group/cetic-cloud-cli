@@ -1435,7 +1435,9 @@ def test_route_update_basic_auth_disable(runner, mock_api):
         ],
     )
     assert result.exit_code == 0, result.stdout
-    assert captured["body"] == {"basic_auth_secret_ref": None}
+    # L'API désactive sur une liste vide ; `basic_auth_secret_ref: null`
+    # était ignoré (cetic-cloud-platform#2004).
+    assert captured["body"] == {"basic_auth_users": []}
 
 
 def test_route_create_with_strip_prefix(runner, mock_api):

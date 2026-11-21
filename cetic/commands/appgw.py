@@ -208,6 +208,10 @@ def list_gateways(
         items = client.get(APPGW_PATH, params={"region": region} if region else None)
     except client.APIError as e:
         raise _bail(e) from e
+    if region:
+        # L'API ignore `?region=` sur cette liste : filtre côté CLI
+        # (cetic-cloud-platform#2004).
+        items = [x for x in items if (x.get("region") or "").upper() == region.upper()]
     rows = [
         {
             "id": gw["id"],
@@ -1513,9 +1517,10 @@ def route_update(
     if basic_auth_user:
         body["basic_auth_users"] = _parse_basic_auth_users(list(basic_auth_user))
     elif no_basic_auth:
-        # Convention v1 : le backend accepte basic_auth_secret_ref=null pour
-        # désactiver (le payload AppgwRouteUpdate l'expose explicitement).
-        body["basic_auth_secret_ref"] = None
+        # L'API désactive sur `basic_auth_users: []` ; `basic_auth_secret_ref:
+        # null` vaut « pas de changement » : la commande annonçait un succès
+        # sans rien changer (cetic-cloud-platform#2004).
+        body["basic_auth_users"] = []
 
     body.update(security_policies)
     if not body:

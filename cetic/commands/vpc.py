@@ -89,7 +89,6 @@ def list_vpcs() -> None:
         {"id": v["id"], "name": v["name"], "region": v["region"],
          "cidr": v.get("cidr") or "—",
          "status": v.get("status", "—"),
-         "vnets": len(v.get("vnets", [])),
          # Champs bruts de l'API (exploitables en JSON/YAML) ; `egress` en est
          # le libellé lisible, seul affiché en table.
          "dedicated_egress_ip": bool(v.get("dedicated_egress_ip")),
@@ -100,7 +99,10 @@ def list_vpcs() -> None:
     ]
     render_list(rows, title=f"VPCs ({len(rows)})",
                 columns=[("id", "ID"), ("name", "Nom"), ("region", "Région"),
-                         ("cidr", "CIDR"), ("status", "Statut"), ("vnets", "VNets"),
+                         # Pas de colonne VNets : la liste de l'API ne porte pas
+                         # les VNets (la colonne valait toujours 0,
+                         # cetic-cloud-platform#2004) → `cetic vpc vnet list <vpc>`.
+                         ("cidr", "CIDR"), ("status", "Statut"),
                          ("egress", "Sortie internet")])
 
 

@@ -116,6 +116,10 @@ def list_clusters(region: str | None = typer.Option(None, "--region", "-r")) -> 
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
+    if region:
+        # L'API ignore `?region=` sur cette liste : filtre côté CLI
+        # (cetic-cloud-platform#2004).
+        items = [x for x in items if (x.get("region") or "").upper() == region.upper()]
     rows = [
         {"id": c["id"], "name": c["name"], "region": c["region"],
          "k8s_version": c.get("k8s_version", "—"),

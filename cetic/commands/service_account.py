@@ -8,7 +8,7 @@ via `--save-keyring`.
 Sous-commandes :
     cetic service-account list
     cetic service-account get ID|NAME
-    cetic service-account create --name NAME [--expires-at ISO] [--save-keyring]
+    cetic service-account create --name NAME [--expires-at AAAA-MM-JJ | --expires-in-days N] [--save-keyring]
     cetic service-account rotate ID|NAME [--save-keyring]
     cetic service-account revoke ID|NAME [--yes]
 
@@ -137,6 +137,24 @@ def get(id_or_name: str = typer.Argument(..., metavar="ID|NAME")) -> None:
     render_one(sa, title=f"Service account {sa.get('name', sid)}")
 
 
+def _jours_jusqua(date_iso: str) -> int:
+    """Nombre de jours entiers jusqu'à `date_iso` (AAAA-MM-JJ, ou date-heure
+    ISO), en jours calendaires ; refus si la date est passée ou au-delà
+    de 3650 jours (bornes de l'API)."""
+    from datetime import UTC, datetime  # noqa: PLC0415
+
+    try:
+        cible = datetime.fromisoformat(date_iso.replace("Z", "+00:00"))
+    except ValueError:
+        rprint(f"[red]Date invalide : {date_iso} (format attendu AAAA-MM-JJ).[/red]")
+        raise typer.Exit(1) from None
+    jours = (cible.date() - datetime.now(UTC).date()).days
+    if not 1 <= jours <= 3650:
+        rprint("[red]La date d'expiration doit être entre demain et 3650 jours.[/red]")
+        raise typer.Exit(1)
+    return jours
+
+
 @app.command()
 def create(
     name: str = typer.Option(..., "--name", "-n", help="Nom du service account"),
@@ -147,8 +165,7 @@ def create(
     ),
     expires_at: str | None = typer.Option(
         None, "--expires-at",
-        help="(Alias informatif) Le champ canonique côté API est --expires-in-days ; "
-        "passez une date ISO si votre version d'API la supporte.",
+        help="Date d'expiration (AAAA-MM-JJ), convertie en jours pour l'API.",
     ),
     save_keyring: bool = typer.Option(
         False, "--save-keyring",
@@ -166,9 +183,9 @@ def create(
     if expires_in_days is not None:
         body["expires_in_days"] = expires_in_days
     elif expires_at:
-        # Le contrat API expose `expires_in_days` — on passe `expires_at` brut au
-        # cas où le serveur l'accepte (rétro-compat) ; sinon 422 explicite.
-        body["expires_at"] = expires_at
+        # L'API n'accepte que `expires_in_days` : `expires_at` était ignoré et
+        # le compte ne s'expirait jamais (cetic-cloud-platform#2004).
+        body["expires_in_days"] = _jours_jusqua(expires_at)
     try:
         sa = client.post(SA_PATH, json=body)
     except client.APIError as e:

@@ -9,9 +9,9 @@ from cetic import config
 app = typer.Typer(help="Configuration CLI CETIC Cloud")
 
 SETTABLE_KEYS = {
-    "region": f"Région active ({', '.join(config.VALID_REGIONS)})",
+    "region": f"Région enregistrée ({', '.join(config.VALID_REGIONS)}) — pas encore appliquée par les commandes",
     "output": f"Format de sortie ({', '.join(config.VALID_OUTPUTS)})",
-    "lang": f"Langue ({', '.join(config.VALID_LANGS)})",
+    "lang": f"Langue ({', '.join(config.VALID_LANGS)}) — sans effet, la CLI est en français",
     "api_url": "URL API (dev uniquement)",
 }
 
@@ -69,3 +69,10 @@ def set_cmd(
 
     config.set_value(key, value)
     rprint(f"[green]{key}[/green] → {value}")
+    # Ces deux réglages sont enregistrés mais aucune commande ne les lit
+    # encore (cetic-cloud-platform#2004) : le dire plutôt que laisser croire
+    # qu'ils s'appliquent.
+    if key == "lang":
+        rprint("[yellow]La CLI n'est disponible qu'en français : ce réglage est sans effet.[/yellow]")
+    elif key == "region":
+        rprint("[yellow]Les commandes ne lisent pas encore cette région : passez --region.[/yellow]")
