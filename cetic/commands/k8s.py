@@ -1,4 +1,4 @@
-"""cetic k8s — clusters Kubernetes managés (CLKS)."""
+"""cetic k8s — clusters Kubernetes managés (CCKS)."""
 
 import re
 
@@ -45,7 +45,7 @@ def _parse_taint_arg(taint_str: str) -> dict[str, str | None]:
         raise typer.BadParameter(f"Invalid taint '{taint_str}', empty key")
     return {"key": key, "value": value, "effect": effect}
 
-app = typer.Typer(help="CETIC Cloud Kubernetes Service (CLKS)")
+app = typer.Typer(help="CETIC Cloud Kubernetes Service (CCKS)")
 pool_app = typer.Typer(help="Node pools d'un cluster K8s")
 app.add_typer(pool_app, name="pool")
 
@@ -371,14 +371,27 @@ def _resolve_os_template_key(
     Retourne la clé du premier template dont (`os`, `k8s_version`, `region`)
     correspond exactement au triplet demandé, ou `None` si aucun ne matche
     (le backend re-validera de toute façon, 422 sinon)."""
+    voulu = k8s_version.lstrip("vV")
     for t in templates:
         if (
             t.get("os") == os_slug
-            and t.get("k8s_version") == k8s_version
+            and (t.get("k8s_version") or "").lstrip("vV") == voulu
             and t.get("region") == region
         ):
             return t.get("os_key")
     return None
+
+
+def _derniere_version(templates: list[dict], *, region: str, os_slug: str) -> str | None:
+    """Version la plus récente buildée pour la région et l'OS : défaut de
+    `--version`. L'ancien défaut figé (`v1.31.0`) ne correspondait à aucun
+    build en service (cetic-cloud-platform#2004)."""
+    versions = [
+        (t.get("k8s_version") or "").lstrip("vV")
+        for t in templates
+        if t.get("os") == os_slug and t.get("region") == region and t.get("k8s_version")
+    ]
+    return max(versions, key=_version_sort_key) if versions else None
 
 
 @app.command()
@@ -394,9 +407,10 @@ def create(
             "Voir : cetic vpc vnet list <VPC>."
         ),
     ),
-    k8s_version: str = typer.Option(
-        "v1.31.0", "--version",
-        help="Version Kubernetes du CONTROL PLANE (ex: v1.31.0).",
+    k8s_version: str | None = typer.Option(
+        None, "--version",
+        help="Version Kubernetes du CONTROL PLANE (ex: 1.34.8). Omis = la plus "
+             "récente disponible dans la région pour l'OS choisi.",
     ),
     pool_version: str | None = typer.Option(
         None, "--pool-version",
@@ -468,13 +482,27 @@ def create(
     # Résolution du template : si --template n'est pas fourni, on cherche le
     # template buildé qui matche région + version + OS choisi et on envoie son
     # os_key. Le backend re-valide (os_image, version, région) → 422 sinon.
+    if k8s_version is not None:
+        _validate_k8s_version(k8s_version)
     resolved_template_key = os_template_key
-    if not resolved_template_key:
+    if not resolved_template_key or k8s_version is None:
         try:
             templates = client.get("/v1/k8s/templates", params={"region": region})
         except client.APIError as e:
             rprint(f"[red]Erreur : {e.detail}[/red]")
             raise typer.Exit(1)
+        if k8s_version is None:
+            k8s_version = _derniere_version(templates, region=region, os_slug=os_norm)
+            if k8s_version is None:
+                rprint(
+                    f"[red]Aucun template {_fmt_os(os_norm)} disponible pour la région "
+                    f"{region}. Voir : cetic k8s versions --region {region}.[/red]"
+                )
+                raise typer.Exit(1)
+    # L'API refuse le préfixe « v » à la création d'un cluster (422), alors que
+    # les pools et `upgrade-version` le retirent (cetic-cloud-platform#2004).
+    k8s_version = k8s_version.lstrip("vV")
+    if not resolved_template_key:
         resolved_template_key = _resolve_os_template_key(
             templates, region=region, k8s_version=k8s_version, os_slug=os_norm
         )
@@ -652,7 +680,7 @@ def create(
     k8s_version: str | None = typer.Option(
         None, "--version",
         help=(
-            "Version Kubernetes (workers) du pool (ex: v1.31.0). Omis = hérite du "
+            "Version Kubernetes (workers) du pool (ex: 1.34.8). Omis = hérite du "
             "control plane. Doit être ≤ celle du control plane (le backend re-valide)."
         ),
     ),
@@ -703,7 +731,7 @@ def update(
     k8s_version: str | None = typer.Option(
         None, "--version",
         help=(
-            "Pin/upgrade la version Kubernetes (workers) du pool (ex: v1.31.0). "
+            "Pin/upgrade la version Kubernetes (workers) du pool (ex: 1.34.8). "
             "Doit être ≤ celle du control plane (le backend re-valide → 422)."
         ),
     ),

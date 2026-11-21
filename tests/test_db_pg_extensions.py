@@ -103,7 +103,7 @@ def test_create_without_engine_version_sends_none(runner, mock_api) -> None:
     cap: dict[str, Any] = {}
     mock_api.post("/v1/db/pg").mock(side_effect=_capture(cap, 201, {"id": DB}))
     r = runner.invoke(app, ["db", "pg", "create", "--name", "app", "--region", "RNN",
-                            "--vnet", "vnet-1"])
+                            "--vnet", "vnet-1", "--vpc", "vpc-1"])
     assert r.exit_code == 0, r.output
     assert "engine_version" not in cap
 

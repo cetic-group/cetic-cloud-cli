@@ -338,8 +338,11 @@ def create(
         "small", "--plan", "-p",
         help="Plan tarifaire : small / medium / large",
     ),
-    vpc: str = typer.Option(..., "--vpc", help="UUID ou nom du VPC"),
-    vnet: str = typer.Option(..., "--vnet", help="UUID ou nom du VNet"),
+    # L'API déduit le VPC du VNet (`AppGwCreate` n'a pas de `vpc_id`) : --vpc
+    # était obligatoire mais ignoré, et seul l'UUID est accepté pour --vnet
+    # (cetic-cloud-platform#2004). --vpc reste accepté, masqué.
+    vpc: str | None = typer.Option(None, "--vpc", hidden=True, help="Ignoré : le VPC est celui du VNet"),
+    vnet: str = typer.Option(..., "--vnet", help="UUID du VNet"),
     public_ip: str | None = typer.Option(
         None, "--public-ip",
         help="UUID d'une IP publique pré-allouée à attacher (optionnel)",
@@ -360,13 +363,13 @@ def create(
 
     Le provisioning prend ~3-5 minutes. L'état passe `creating` → `active`.
     """
+    _ = vpc  # accepté pour compatibilité, sans effet
     security_policies = policy_payload(l4_policy=(l4_policy_file, False), l7_policy=(l7_policy_file, False), client_ip_policy=(client_ip_policy_file, False))
     body: dict[str, Any] = {
         "name": name,
         "region": region,
         "plan": plan,
         "replica_count": replica_count,
-        "vpc_id": vpc,
         "vnet_id": vnet,
     }
     if cache_enabled is not None:
