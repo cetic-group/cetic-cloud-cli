@@ -72,7 +72,8 @@ def test_create_happy_path_posts_body_and_offers_keyring(runner, mock_api, mock_
     assert "vpc_id" not in captured["body"]
     assert "vnet_id" not in captured["body"]
     assert "exposure" not in captured["body"]
-    assert captured["body"]["tags"] == {"env": "prod", "team": "core"}
+    # L'API attend `list[str]` (cetic-cloud-platform#2004).
+    assert captured["body"]["tags"] == ["env=prod", "team=core"]
     # Le mot de passe est affiché 1× dans la sortie.
     assert "s3cr3t-pwd" in result.stdout
     # Et stocké dans le keyring stub (oui à la sauvegarde).
@@ -120,13 +121,23 @@ def test_create_quota_409_message_french(runner, mock_api):
     assert "Quota atteint" in result.stdout
 
 
-def test_create_invalid_tag_format(runner, mock_api):
+def test_create_tag_libre(runner, mock_api, mock_keyring):
+    """Un tag est une chaîne libre (`list[str]` côté API) : plus de format
+    KEY=VALUE imposé (cetic-cloud-platform#2004)."""
+    captured: dict[str, Any] = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(201, json=_registry_payload())
+
+    mock_api.post("/v1/registries").mock(side_effect=_capture)
     result = runner.invoke(
         app,
         ["registry", "create", "-n", "x", "-r", "RNN", "--tag", "novalue"],
+        input="n\n",
     )
-    assert result.exit_code == 1
-    assert "Tag invalide" in result.stdout
+    assert result.exit_code == 0, result.stdout + result.stderr
+    assert captured["body"]["tags"] == ["novalue"]
 
 
 # ---------------------------------------------------------------------------
@@ -172,7 +183,7 @@ def test_update_tags_only(runner, mock_api):
         app, ["registry", "update", REG_ID, "--tags", "env=prod,team=core"]
     )
     assert result.exit_code == 0, result.stdout
-    assert captured["body"] == {"tags": {"env": "prod", "team": "core"}}
+    assert captured["body"] == {"tags": ["env=prod", "team=core"]}
 
 
 def test_update_no_changes_aborts(runner, mock_api):
@@ -362,21 +373,34 @@ def test_user_add_returns_password(runner, mock_api, mock_keyring):
     assert "ci-pwd" in result.stdout
 
 
+# Forme de `RegistryUserResponse` (API) : id, username, last_login_at, created_at.
+CI_UID = "cccccccc-0000-0000-0000-000000000001"
+_USERS = [
+    {"id": CI_UID, "username": "ci", "last_login_at": "2026-03-03T10:00:00Z",
+     "created_at": "2026-01-01T10:00:00Z"},
+    {"id": "cccccccc-0000-0000-0000-000000000002", "username": "alice",
+     "last_login_at": None, "created_at": "2026-02-02T10:00:00Z"},
+]
+
+
 def test_user_list(runner, mock_api):
     mock_api.get(f"/v1/registries/{REG_ID}/users").mock(
-        return_value=httpx.Response(200, json=[
-            {"username": "ci", "kind": "robot", "created_at": "2026-01-01T10:00:00Z"},
-            {"username": "alice", "kind": "human", "created_at": "2026-02-02T10:00:00Z"},
-        ])
+        return_value=httpx.Response(200, json=_USERS)
     )
-    result = runner.invoke(app, ["registry", "user", "list", REG_ID])
-    assert result.exit_code == 0
-    assert "ci" in result.stdout
-    assert "alice" in result.stdout
+    result = runner.invoke(app, ["registry", "user", "list", REG_ID],
+                           env={"CCP_OUTPUT": "json"})
+    assert result.exit_code == 0, result.stdout + result.stderr
+    rows = json.loads(result.stdout)
+    # L'id est affiché (les routes users/{id} l'exigent) et la dernière connexion lue.
+    assert rows[0]["id"] == CI_UID
+    assert rows[0]["last_login"] == "2026-03-03"
 
 
 def test_user_reset(runner, mock_api, mock_keyring):
-    mock_api.post(f"/v1/registries/{REG_ID}/users/ci/reset-password").mock(
+    mock_api.get(f"/v1/registries/{REG_ID}/users").mock(
+        return_value=httpx.Response(200, json=_USERS))
+    # Route par UUID (cetic-cloud-platform#2004), le nom est résolu par la liste.
+    mock_api.post(f"/v1/registries/{REG_ID}/users/{CI_UID}/reset-password").mock(
         return_value=httpx.Response(200, json={"password": "new-pwd"})
     )
     result = runner.invoke(
@@ -388,7 +412,9 @@ def test_user_reset(runner, mock_api, mock_keyring):
 
 def test_user_delete(runner, mock_api, mock_keyring):
     mock_keyring["cetic-registry::" + REG_ID + ":ci"] = "x"
-    mock_api.delete(f"/v1/registries/{REG_ID}/users/ci").mock(
+    mock_api.get(f"/v1/registries/{REG_ID}/users").mock(
+        return_value=httpx.Response(200, json=_USERS))
+    mock_api.delete(f"/v1/registries/{REG_ID}/users/{CI_UID}").mock(
         return_value=httpx.Response(204)
     )
     result = runner.invoke(app, ["registry", "user", "delete", REG_ID, "ci", "--yes"])
@@ -406,19 +432,21 @@ def test_acl_set(runner, mock_api):
 
     def _capture(request: httpx.Request) -> httpx.Response:
         captured["body"] = json.loads(request.content)
-        return httpx.Response(200, json={"id": "a-id", "username": "ci",
-                                          "repo": "myapp/*", "actions": ["pull", "push"]})
+        return httpx.Response(201, json={"id": "a-id", "user_id": CI_UID, "username": "ci",
+                                          "repo_pattern": "myapp/*", "actions": ["pull", "push"]})
 
-    mock_api.put(f"/v1/registries/{REG_ID}/acls").mock(side_effect=_capture)
+    mock_api.get(f"/v1/registries/{REG_ID}/users").mock(
+        return_value=httpx.Response(200, json=_USERS))
+    # POST (l'API n'a pas de PUT), `repo_pattern` et `user_id`.
+    mock_api.post(f"/v1/registries/{REG_ID}/acls").mock(side_effect=_capture)
     result = runner.invoke(
         app,
         ["registry", "acl", "set", REG_ID,
          "--repo", "myapp/*", "--actions", "pull,push", "--user", "ci"],
     )
     assert result.exit_code == 0, result.stdout
-    assert captured["body"]["repo"] == "myapp/*"
-    assert captured["body"]["actions"] == ["pull", "push"]
-    assert captured["body"]["username"] == "ci"
+    assert captured["body"] == {"repo_pattern": "myapp/*", "actions": ["pull", "push"],
+                                "user_id": CI_UID}
 
 
 def test_acl_set_empty_actions(runner, mock_api):
@@ -433,7 +461,7 @@ def test_acl_list(runner, mock_api):
     mock_api.get(f"/v1/registries/{REG_ID}/acls").mock(
         return_value=httpx.Response(200, json=[
             {"id": "11111111-acl-aaaa-bbbb-cccccccccccc",
-             "username": "ci", "repo": "myapp/*", "actions": ["pull", "push"]},
+             "username": "ci", "repo_pattern": "myapp/*", "actions": ["pull", "push"]},
         ])
     )
     result = runner.invoke(app, ["registry", "acl", "list", REG_ID])
@@ -594,13 +622,21 @@ def test_tags_signale_une_indexation_en_cours_sur_stderr(runner, mock_api):
 
 
 def test_tag_delete(runner, mock_api):
-    mock_api.delete(
+    """Le tag se supprime par son manifest. L'ancien chemin `…/tags/{tag}`
+    tombait sur la route de suppression du DÉPÔT entier (`{name:path}`,
+    cetic-cloud-platform#2004)."""
+    manifest = mock_api.delete(
+        f"/v1/registries/{REG_ID}/repositories/myapp/api/manifests/v1.0.0"
+    ).mock(return_value=httpx.Response(202, json={}))
+    depot = mock_api.delete(
         f"/v1/registries/{REG_ID}/repositories/myapp/api/tags/v1.0.0"
-    ).mock(return_value=httpx.Response(204))
+    ).mock(return_value=httpx.Response(202, json={}))
     result = runner.invoke(
         app, ["registry", "tag", "delete", REG_ID, "myapp/api", "v1.0.0", "--yes"]
     )
-    assert result.exit_code == 0
+    assert result.exit_code == 0, result.stdout + result.stderr
+    assert manifest.called
+    assert not depot.called
 
 
 def test_gc_no_wait(runner, mock_api):
