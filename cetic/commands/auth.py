@@ -1,14 +1,17 @@
 """cetic auth — login (SSO ou clé d'API), logout, whoami."""
 from __future__ import annotations
 
+import getpass
 import http.server
+import os
+import re
 import secrets
+import sys
 import threading
 import webbrowser
 from urllib.parse import parse_qs, urlencode, urlparse
 
-import os
-
+import httpx
 import typer
 from rich import print as rprint
 from rich.console import Console
@@ -74,22 +77,62 @@ def login(
     raise typer.Exit(1)
 
 
-def _login_api_key() -> None:
-    """Lit la clé sur l'entrée standard (sans écho si c'est un terminal) et
-    l'enregistre comme identifiant persistant, sans jeton de rafraîchissement
-    (une clé d'API n'expire pas comme une session)."""
-    import getpass  # noqa: PLC0415
-    import sys  # noqa: PLC0415
+# Clé d'API (`ccp_live_…`) ou jeton de service account (`ccp_sa_…`) : préfixe
+# puis base64 urlsafe. Toute autre forme est une erreur de collage, et un `"`
+# ou un `\` aurait en plus cassé le fichier de configuration (revue #85).
+_FORME_CLE = re.compile(r"[A-Za-z0-9_\-]{16,512}")
 
+
+def _login_api_key() -> None:
+    """Lit la clé sur l'entrée standard (sans écho si c'est un terminal),
+    la VÉRIFIE auprès de l'API, puis l'enregistre comme identifiant persistant,
+    sans jeton de rafraîchissement (une clé d'API n'expire pas comme une
+    session). Une clé refusée n'est jamais écrite."""
     cle = (getpass.getpass("Clé d'API : ") if sys.stdin.isatty() else sys.stdin.readline()).strip()
     if not cle:
         _err.print("[red]Aucune clé lue.[/red]")
         raise typer.Exit(1)
+    if not _FORME_CLE.fullmatch(cle):
+        _err.print("[red]Ce n'est pas une clé d'API CETIC Cloud[/red] (caractère inattendu "
+                   "ou longueur anormale) : vérifiez le collage. Rien n'a été enregistré.")
+        raise typer.Exit(1)
+    email = _verifier_cle(cle)
     # Écrase un éventuel jeton de rafraîchissement d'une session SSO : sinon
     # un 401 déclencherait un rafraîchissement qui remplacerait la clé.
     config.set_value("api_key", cle)
     config.set_value("refresh_token", "")
-    rprint("[green]Clé d'API enregistrée.[/green]")
+    rprint(f"[green]Clé d'API enregistrée[/green] (compte {email}).")
+
+
+def _verifier_cle(cle: str) -> str:
+    """`GET /v1/tenants/me` avec CETTE clé, hors de `client._request` (aucun
+    rafraîchissement, aucune lecture de la configuration). Rend l'e-mail du
+    compte ; sort en 1 sans rien écrire si la clé est refusée ou si l'API est
+    injoignable."""
+    from cetic import __version__  # import local : évite le cycle cetic → commands
+
+    url = config.get_api_url().rstrip("/") + "/v1/tenants/me"
+    entetes = {"Authorization": f"Bearer {cle}", "X-CCP-Client": "cli",
+               "User-Agent": f"cetic-cli/{__version__}"}
+    try:
+        with httpx.Client(timeout=30) as http:
+            resp = http.get(url, headers=entetes)
+    except httpx.HTTPError as exc:
+        _err.print(f"[red]API injoignable ({type(exc).__name__}) : la clé n'a pas pu être "
+                   "vérifiée. Rien n'a été enregistré.[/red]")
+        raise typer.Exit(1) from None
+    if resp.status_code in (401, 403):
+        _err.print("[red]Clé refusée par l'API[/red] (inconnue, révoquée ou expirée). "
+                   "Rien n'a été enregistré.")
+        raise typer.Exit(1)
+    if not resp.is_success:
+        _err.print(f"[red]Vérification de la clé impossible (HTTP {resp.status_code}). "
+                   "Rien n'a été enregistré.[/red]")
+        raise typer.Exit(1)
+    try:
+        return str(resp.json().get("email") or "?")
+    except ValueError:
+        return "?"
 
 
 def _avertir_si_env() -> None:
@@ -110,7 +153,7 @@ def _store_tokens(access_token: str, refresh_token: str | None) -> None:
 def _login_sso(provider: str) -> None:
     """Flux SSO loopback : navigateur → callback local → tokens stockés."""
     if provider not in _SSO_PROVIDERS:
-        rprint(
+        _err.print(
             f"[red]Erreur : fournisseur SSO inconnu « {provider} ».[/red] "
             f"Valeurs acceptées : {', '.join(_SSO_PROVIDERS)}."
         )
@@ -176,7 +219,7 @@ def _login_sso(provider: str) -> None:
             pass
 
         if not done.wait(timeout=_SSO_TIMEOUT_SECONDS):
-            rprint(
+            _err.print(
                 f"[red]Délai dépassé ({_SSO_TIMEOUT_SECONDS}s) sans réponse du "
                 "fournisseur.[/red]"
             )
@@ -185,10 +228,10 @@ def _login_sso(provider: str) -> None:
         server.shutdown()
 
     if result.get("error"):
-        rprint(f"[red]Erreur SSO : {result['error']}[/red]")
+        _err.print(f"[red]Erreur SSO : {result['error']}[/red]")
         raise typer.Exit(1)
     if not result.get("access_token"):
-        rprint("[red]Erreur : aucun jeton reçu du fournisseur.[/red]")
+        _err.print("[red]Erreur : aucun jeton reçu du fournisseur.[/red]")
         raise typer.Exit(1)
 
     _store_tokens(result["access_token"], result.get("refresh_token"))
@@ -208,14 +251,14 @@ def whoami() -> None:
     """Affiche les informations du compte connecté."""
     token = config.get("api_key")
     if not token:
-        rprint(f"[yellow]Non connecté. Utilisez {CONNEXION}.[/yellow]")
+        _err.print(f"[yellow]Non connecté. Utilisez {CONNEXION}.[/yellow]")
         raise typer.Exit(1)
 
     try:
         me = client.get("/v1/tenants/me")
     except client.APIError as e:
-        rprint(f"[red]Erreur : {e.detail}[/red]")
-        raise typer.Exit(1)
+        _err.print(f"[red]Erreur : {e.detail}[/red]")
+        raise typer.Exit(1) from None
 
     rprint(f"[bold]Email[/bold]      : {me['email']}")
     rprint(f"[bold]Prénom[/bold]     : {me['first_name']}")

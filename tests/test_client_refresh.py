@@ -17,8 +17,11 @@ from cetic import client, config
 
 
 def test_get_refreshes_jwt_on_401(monkeypatch, mock_api):
-    """401 → refresh transparent via refresh_token → rejeu → succès."""
-    monkeypatch.setattr("cetic.config._load_file", lambda: {"refresh_token": "rt-1"})
+    """401 → refresh transparent via refresh_token → rejeu → succès. Le JWT
+    vient du fichier : sans `CCP_API_KEY`, qui désactive le refresh."""
+    monkeypatch.delenv("CCP_API_KEY", raising=False)
+    monkeypatch.setattr("cetic.config._load_file",
+                        lambda: {"api_key": "old-jwt", "refresh_token": "rt-1"})
     saved: dict[str, str] = {}
     monkeypatch.setattr(config, "set_value", lambda k, v: saved.__setitem__(k, v))
 

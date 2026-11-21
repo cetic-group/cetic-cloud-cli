@@ -7,6 +7,7 @@ Gère automatiquement :
 """
 
 import json
+import os
 from typing import Any
 
 import httpx
@@ -47,6 +48,10 @@ def _try_refresh() -> bool:
     s'afficher). Appel httpx direct — jamais via `_request` — pour éviter toute
     récursion de refresh. Retourne True si un nouveau token a été persisté.
     """
+    # Une clé de `CCP_API_KEY` prime sur le fichier : un rafraîchissement ne
+    # peut rien pour elle, et réécrirait un fichier masqué (revue de la PR #85).
+    if os.environ.get("CCP_API_KEY"):
+        return False
     refresh_token = config.get("refresh_token")
     if not refresh_token:
         return False
