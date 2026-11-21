@@ -63,8 +63,9 @@ def create_from_container(
 ) -> None:
     """Crée un template à partir d'un snapshot container.
 
-    Le container doit être stoppé. La création est asynchrone — vérifier
-    l'état avec `cetic template get <id>`.
+    Inutile de l'arrêter : la plateforme l'arrête le temps du clonage puis le
+    redémarre. La création est asynchrone — vérifier l'état avec
+    `cetic template get <id>`.
     """
     body: dict = {"name": name}
     if description:
@@ -90,8 +91,9 @@ def create_from_vm(
 ) -> None:
     """Crée un template à partir d'un snapshot VM.
 
-    La VM doit être stoppée. La création est asynchrone — vérifier l'état
-    avec `cetic template get <id>`.
+    Inutile de l'arrêter : la plateforme l'arrête le temps du clonage puis la
+    redémarre. La création est asynchrone — vérifier l'état avec
+    `cetic template get <id>`.
     """
     body: dict = {"name": name}
     if description:

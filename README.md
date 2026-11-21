@@ -55,9 +55,9 @@ The CLI reads configuration from environment variables (priority over the config
 |---|---|---|
 | `CCP_API_KEY` | API key (Bearer token) | — *(required)* |
 | `CCP_API_URL` | API base URL | `https://api.cloud.cetic-group.com` |
-| `CCP_REGION` | Active region | `RNN` |
+| `CCP_REGION` | Region (stored, not yet applied by commands: pass `--region`) | `RNN` |
 | `CCP_OUTPUT` | Output format | `table` *(table / json / yaml)* |
-| `CCP_LANG` | Language | `fr` *(fr / en)* |
+| `CCP_LANG` | Language (no effect: the CLI is in French) | `fr` |
 
 > Upgrading from a previous version? Your old config (`~/.config/cetic/config.toml`) is migrated automatically to `~/.ccp/config` on first run.
 

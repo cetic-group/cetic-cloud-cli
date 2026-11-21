@@ -18,9 +18,9 @@ Utilisation :
 
 Variables d'environnement :
   CCP_API_KEY    — clé API (Bearer token)
-  CCP_REGION     — région active (RNN | PAR | ABJ)
+  CCP_REGION     — région enregistrée, pas encore lue par les commandes
   CCP_OUTPUT     — format (table | json | yaml)
-  CCP_LANG       — langue (fr | en)
+  CCP_LANG       — sans effet (CLI en français)
   CCP_API_URL    — surcharge URL API
 """
 

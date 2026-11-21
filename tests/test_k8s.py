@@ -54,6 +54,9 @@ def _create_args(*extra: str) -> list[str]:
         "--vpc", VPC_ID,
         "--vnet", VNET_ID,
         "--template", "clks-capi-debian-13",
+        # Version explicite : sans elle, la CLI lit la dernière version
+        # disponible (cetic-cloud-platform#2004).
+        *([] if "--version" in extra else ["--version", "1.31.0"]),
         *extra,
     ]
 
@@ -725,7 +728,9 @@ def test_create_pool_version_sent_in_initial_pool(runner, mock_api):
     mock_api.post("/v1/k8s/clusters").mock(side_effect=_capture)
     result = runner.invoke(app, _create_args("--version", "v1.32.0", "--pool-version", "v1.31.0"))
     assert result.exit_code == 0, result.stdout
-    assert captured["body"]["k8s_version"] == "v1.32.0"
+    # L'API refuse le « v » à la création du cluster : la CLI le retire
+    # (cetic-cloud-platform#2004) ; les pools l'acceptent.
+    assert captured["body"]["k8s_version"] == "1.32.0"
     assert captured["body"]["initial_pool"]["k8s_version"] == "v1.31.0"
 
 
@@ -943,3 +948,42 @@ def test_create_survives_unreadable_vnet_list(runner, mock_api):
     result = runner.invoke(app, _create_args())
     assert result.exit_code == 0, result.stdout
     assert "Cluster créé" in result.stdout
+
+
+def test_create_sans_version_prend_la_plus_recente_sans_v(runner, mock_api):
+    """cetic-cloud-platform#2004 : l'ancien défaut `v1.31.0` ne correspondait
+    à aucun build, et l'API refuse le « v » à la création d'un cluster."""
+    captured: dict[str, Any] = {}
+    mock_api.get("/v1/k8s/templates").mock(return_value=httpx.Response(200, json=[
+        _template("flatcar", "kube-v1-33-2-flatcar", "1.33.2"),
+        _template("flatcar", "kube-v1-34-8-flatcar", "1.34.8"),
+        _template("ubuntu", "kube-v1-35-0-ubuntu", "1.35.0"),
+    ]))
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(201, json=_cluster(status="Provisioning"))
+
+    mock_api.post("/v1/k8s/clusters").mock(side_effect=_capture)
+    result = runner.invoke(app, ["k8s", "create", "--name", "ccks-prod", "--region", "fr-par-1",
+                                 "--vpc", VPC_ID, "--vnet", VNET_ID])
+    assert result.exit_code == 0, result.stdout + result.stderr
+    assert captured["body"]["k8s_version"] == "1.34.8"
+    assert captured["body"]["os_template_key"] == "kube-v1-34-8-flatcar"
+
+
+def test_create_version_avec_v_envoyee_sans_v(runner, mock_api):
+    captured: dict[str, Any] = {}
+    mock_api.get("/v1/k8s/templates").mock(return_value=httpx.Response(200, json=[
+        _template("flatcar", "kube-v1-34-8-flatcar", "1.34.8")]))
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(201, json=_cluster(status="Provisioning"))
+
+    mock_api.post("/v1/k8s/clusters").mock(side_effect=_capture)
+    result = runner.invoke(app, ["k8s", "create", "--name", "ccks-prod", "--region", "fr-par-1",
+                                 "--vpc", VPC_ID, "--vnet", VNET_ID, "--version", "v1.34.8"])
+    assert result.exit_code == 0, result.stdout + result.stderr
+    assert captured["body"]["k8s_version"] == "1.34.8"
+    assert captured["body"]["os_template_key"] == "kube-v1-34-8-flatcar"

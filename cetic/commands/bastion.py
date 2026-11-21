@@ -119,7 +119,7 @@ def create(
     """Crée un bastion SSH dans un VPC.
 
     Le bastion expose un point d'entrée SSH unique et auditable vers les
-    ressources privées du VPC. Une fois `running`, ouvrez une session avec
+    ressources privées du VPC. Une fois `active`, ouvrez une session avec
     `cetic ssh <CIBLE> --bastion <hôte>`.
     """
     body: dict[str, Any] = {"name": name, "region": region, "vpc_id": vpc, "plan": plan}

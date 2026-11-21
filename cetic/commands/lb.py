@@ -175,6 +175,10 @@ def list_lbs(region: str | None = typer.Option(None, "--region", "-r")) -> None:
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
+    if region:
+        # L'API ignore `?region=` sur cette liste : filtre côté CLI
+        # (cetic-cloud-platform#2004).
+        items = [x for x in items if (x.get("region") or "").upper() == region.upper()]
     rows = [
         {"id": lb["id"], "name": lb["name"], "region": lb["region"],
          "plan": lb.get("plan") or "—",
@@ -318,8 +322,7 @@ def create(
         --acme-challenge custom --cert-file fullchain.pem --key-file privkey.pem \\
         --backend vmss:<vmss-uuid>:8080
 
-    Pour des topologies à plusieurs listeners, utiliser Terraform
-    (`ccp_load_balancer`) — le backend n'accepte les listeners qu'à la création.
+    D'autres listeners s'ajoutent ensuite avec `cetic lb listener add`.
     """
     if plan not in _LB_PLANS:
         rprint(f"[red]Erreur : --plan doit être l'un de {', '.join(_LB_PLANS)}.[/red]")

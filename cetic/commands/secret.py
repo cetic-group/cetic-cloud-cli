@@ -12,7 +12,7 @@ Sous-commandes :
     cetic secret list
     cetic secret get ID|NAME
     cetic secret create NAME --data key=value --data "cert=@/path/to/file"
-    cetic secret update ID|NAME --description "..." --label key=value
+    cetic secret update ID|NAME --description "..." --tag env:prod
     cetic secret rotate ID|NAME --data key=value
     cetic secret value ID|NAME [--key KEY] [--yes]
     cetic secret delete ID|NAME [--yes]
@@ -100,6 +100,14 @@ def _read_file_value(path: str) -> str:
         return raw.decode("utf-8")
     except UnicodeDecodeError:
         return base64.b64encode(raw).decode("ascii")
+
+
+def _tags(tag: list[str], label: list[str]) -> list[str]:
+    """Tags du secret : l'API attend `tags: list[str]` (minuscules, chiffres,
+    `. _ : / -`). `--label key=value`, l'ancienne option, était ignoré par
+    l'API (cetic-cloud-platform#2004) ; il reste accepté et devient le tag
+    `key:value`."""
+    return [*tag, *(item.replace("=", ":", 1) for item in label)]
 
 
 def _parse_kv(items: list[str], *, allow_file_ref: bool = False) -> dict[str, str]:
@@ -230,7 +238,7 @@ def list_secrets(
             "version": str(s.get("version", 1)),
             "rotated": (s.get("last_rotated_at") or "—")[:10],
             "created": (s.get("created_at") or "—")[:10],
-            "labels": ", ".join(f"{k}={v}" for k, v in (s.get("labels") or {}).items())
+            "labels": ", ".join(s.get("tags") or [])
                        or "—",
         }
         for s in items
@@ -249,7 +257,7 @@ def list_secrets(
             ("version", "Version"),
             ("rotated", "Rotation"),
             ("created", "Créé"),
-            ("labels", "Labels"),
+            ("labels", "Tags"),
         ],
     )
 
@@ -283,9 +291,13 @@ def create(
              "(ex : --data 'cert=@/path/to/cert.pem').",
     ),
     description: str | None = typer.Option(None, "--description", help="Description courte"),
+    tag: list[str] = typer.Option(
+        [], "--tag", "-t",
+        help="Tag (répétable, optionnel), ex. 'env:prod'.",
+    ),
     label: list[str] = typer.Option(
-        [], "--label", "-l",
-        help="Label 'key=value' (répétable, optionnel).",
+        [], "--label", "-l", hidden=True,
+        help="Ancienne forme 'key=value', convertie en tag 'key:value'.",
     ),
 ) -> None:
     """Crée un nouveau secret (coffre-fort de paires clé/valeur).
@@ -299,21 +311,19 @@ def create(
             --data password=p@ssw0rd \\
             --data username=admin \\
             --description "Base de données prod" \\
-            --label env=prod
+            --tag env:prod
 
         cetic secret create my-cert \\
             --data "tls.crt=@/etc/ssl/fullchain.pem" \\
             --data "tls.key=@/etc/ssl/privkey.pem" \\
-            --label app=web
+            --tag app:web
     """
     data_dict = _parse_kv(data, allow_file_ref=True)
     _validate_data_dict(data_dict)
-    labels = _parse_kv(label) if label else {}
-
     body: dict[str, Any] = {
         "name": name,
         "data": data_dict,
-        "labels": labels,
+        "tags": _tags(tag, label),
     }
     if description is not None:
         body["description"] = description
@@ -332,12 +342,16 @@ def create(
 def update(
     id_or_name: str = typer.Argument(..., metavar="ID|NAME"),
     description: str | None = typer.Option(None, "--description", help="Nouvelle description"),
+    tag: list[str] = typer.Option(
+        [], "--tag", "-t",
+        help="Remplace les tags (répétable). Sans cet argument, tags inchangés.",
+    ),
     label: list[str] = typer.Option(
-        [], "--label", "-l",
-        help="Remplace les labels (répétable). Sans cet argument, labels inchangés.",
+        [], "--label", "-l", hidden=True,
+        help="Ancienne forme 'key=value', convertie en tag 'key:value'.",
     ),
 ) -> None:
-    """Modifie les metadata d'un secret (description, labels).
+    """Modifie les metadata d'un secret (description, tags).
 
     Pour rotater la valeur, utilisez `cetic secret rotate`.
     """
@@ -345,10 +359,10 @@ def update(
     body: dict[str, Any] = {}
     if description is not None:
         body["description"] = description if description else None
-    if label:
-        body["labels"] = _parse_kv(label)
+    if tag or label:
+        body["tags"] = _tags(tag, label)
     if not body:
-        rprint("[yellow]Rien à modifier (passez --description ou --label).[/yellow]")
+        rprint("[yellow]Rien à modifier (passez --description ou --tag).[/yellow]")
         raise typer.Exit(0)
     try:
         secret = client.patch(f"{SECRET_PATH}/{sid}", json=body)

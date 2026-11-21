@@ -32,6 +32,9 @@ def list_requests(
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
+    if status:
+        # L'API ignore `?status=` : filtre côté CLI (cetic-cloud-platform#2004).
+        items = [r for r in items if r.get("status") == status]
     rows = [
         {"id": r["id"], "field": r["field"], "requested": r["requested_value"],
          "current": r.get("current_value", "—"), "status": r["status"],

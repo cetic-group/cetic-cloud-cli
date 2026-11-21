@@ -149,10 +149,11 @@ def _require_bin(name: str) -> str:
 
 def _mint_ephemeral_cert(
     tmpdir: str, *, target: str, login: str, ttl: int
-) -> tuple[Path, Path]:
+) -> tuple[Path, Path, int | None]:
     """Génère une paire éphémère + récupère un certificat signé par la plateforme.
 
-    Retourne `(key_path, cert_path)`. Lève `typer.Exit` en cas d'échec.
+    Retourne `(key_path, cert_path, serial)` ; le numéro de série est celui à
+    passer à `cetic bastion revoke --serial`. Lève `typer.Exit` en cas d'échec.
     """
     keygen_bin = _require_bin("ssh-keygen")
     key_path = Path(tmpdir) / "id"
@@ -190,7 +191,13 @@ def _mint_ephemeral_cert(
         certificate if certificate.endswith("\n") else certificate + "\n",
         encoding="utf-8",
     )
-    return key_path, cert_path
+    return key_path, cert_path, signed.get("serial")
+
+
+def _serie(serial: int | None) -> str:
+    """Numéro de série du certificat, à passer à `cetic bastion revoke
+    --serial` : il n'était affiché nulle part (cetic-cloud-platform#2004)."""
+    return f", n° de série {serial}" if serial is not None else ""
 
 
 # ── cetic ssh ────────────────────────────────────────────────────────────────
@@ -198,8 +205,8 @@ def ssh(  # noqa: PLR0913
     target: str = typer.Argument(
         ...,
         metavar="TARGET",
-        help="Cible privée à atteindre (IP privée / nom d'hôte / identifiant de "
-             "ressource). Résolue côté bastion.",
+        help="Adresse IP privée de l'instance à atteindre (accès bastion activé). "
+             "Le certificat n'est valable que pour cette adresse.",
     ),
     login: str = typer.Option(
         "root", "--login", "-l", help="Utilisateur de connexion sur la cible."
@@ -232,13 +239,16 @@ def ssh(  # noqa: PLR0913
 
     tmpdir = tempfile.mkdtemp(prefix="cetic-ssh-")
     try:
-        key_path, cert_path = _mint_ephemeral_cert(
-            tmpdir, target=target, login=login, ttl=ttl)
+        # Le bastion est résolu AVANT la signature : sans bastion, aucun
+        # certificat n'est émis pour rien (cetic-cloud-platform#2004).
         bastion_host = _resolve_bastion_host(bastion, target)
+        key_path, cert_path, serial = _mint_ephemeral_cert(
+            tmpdir, target=target, login=login, ttl=ttl)
 
         rprint(
             f"[dim]Accès SSH sécurisé vers [cyan]{target}[/cyan] via le bastion "
-            f"[cyan]{bastion_host}[/cyan] (certificat valable {ttl}s).[/dim]"
+            f"[cyan]{bastion_host}[/cyan] (certificat valable {ttl}s"
+            f"{_serie(serial)}).[/dim]"
         )
 
         # La cible est passée en argument `host=<TARGET>` que le bastion résout
@@ -302,7 +312,7 @@ def scp(  # noqa: PLR0913
     """Copie des fichiers/répertoires vers ou depuis une cible privée via le bastion.
 
     Exactement une des deux extrémités doit être distante, au format
-    `TARGET:chemin` (TARGET = IP privée / nom d'hôte / identifiant de ressource).
+    `TARGET:chemin` (TARGET = adresse IP privée de l'instance, accès bastion activé).
 
     Exemples :
         cetic scp ./app.tar 10.0.1.42:/srv/            # upload
@@ -334,9 +344,9 @@ def scp(  # noqa: PLR0913
 
     tmpdir = tempfile.mkdtemp(prefix="cetic-scp-")
     try:
-        key_path, cert_path = _mint_ephemeral_cert(
-            tmpdir, target=target, login=login, ttl=ttl)
         bastion_host = _resolve_bastion_host(bastion, target)
+        key_path, cert_path, serial = _mint_ephemeral_cert(
+            tmpdir, target=target, login=login, ttl=ttl)
 
         # La cible est transmise au bastion via la variable d'environnement de
         # session `CCP_TARGET` (le sous-système sftp ne permet pas de passer un
@@ -353,7 +363,8 @@ def scp(  # noqa: PLR0913
 
         rprint(
             f"[dim]Transfert sécurisé via le bastion [cyan]{bastion_host}[/cyan] "
-            f"→ cible [cyan]{target}[/cyan] (certificat valable {ttl}s).[/dim]"
+            f"→ cible [cyan]{target}[/cyan] (certificat valable {ttl}s"
+            f"{_serie(serial)}).[/dim]"
         )
 
         cmd = [scp_bin]

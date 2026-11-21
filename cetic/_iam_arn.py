@@ -17,10 +17,15 @@ from dataclasses import dataclass
 from typing import Iterable
 
 
-# Whitelist services (cf. iam_catalog.SERVICES)
+# Whitelist services : copie de `iam_catalog.SERVICES` (API). Elle n'en
+# comptait que 14 et refusait des ARN valides (secrets, dns, email…,
+# cetic-cloud-platform#2004) : à garder alignée sur l'API.
 _KNOWN_SERVICES = frozenset({
     "iam", "registry", "bucket", "k8s", "vm", "container", "vpc", "lb",
     "publicip", "volume", "dbaas", "billing", "support", "org",
+    "secrets", "schedules", "vpn", "bastion", "appgw", "blockchain", "wallet",
+    "ccks", "regions", "tags", "sharelink", "telemetry", "auth", "compute",
+    "dashboard", "topology", "email", "dns",
 })
 
 # Whitelist regions (lowercase) + vide
