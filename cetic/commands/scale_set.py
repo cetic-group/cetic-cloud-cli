@@ -116,7 +116,7 @@ def create(  # noqa: PLR0913
     cloud_init: Path = typer.Option(
         None, "--cloud-init",
         exists=True, file_okay=True, dir_okay=False, readable=True,
-        help="Fichier cloud-init (cloud-config) appliqué au premier démarrage.",
+        help="Script shell exécuté par bash au premier démarrage (pas de #cloud-config sur un conteneur).",
     ),
     bastion_access: bool = typer.Option(
         False, "--bastion-access",

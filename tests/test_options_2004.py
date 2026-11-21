@@ -83,3 +83,11 @@ def test_config_set_signale_les_reglages_non_appliques(runner, monkeypatch, cle,
     result = runner.invoke(app, ["config", "set", cle, valeur])
     assert result.exit_code == 0, result.stdout + result.stderr
     assert avert in result.stdout
+
+
+def test_config_get_masque_le_jeton(runner):
+    result = runner.invoke(app, ["config", "get", "api_key"])
+    assert result.exit_code == 0, result.stdout + result.stderr
+    assert "test-token" not in result.stdout
+    result = runner.invoke(app, ["config", "get", "api_key", "--reveal"])
+    assert "test-token" in result.stdout

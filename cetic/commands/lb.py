@@ -322,8 +322,7 @@ def create(
         --acme-challenge custom --cert-file fullchain.pem --key-file privkey.pem \\
         --backend vmss:<vmss-uuid>:8080
 
-    Pour des topologies à plusieurs listeners, utiliser Terraform
-    (`ccp_load_balancer`) — le backend n'accepte les listeners qu'à la création.
+    D'autres listeners s'ajoutent ensuite avec `cetic lb listener add`.
     """
     if plan not in _LB_PLANS:
         rprint(f"[red]Erreur : --plan doit être l'un de {', '.join(_LB_PLANS)}.[/red]")

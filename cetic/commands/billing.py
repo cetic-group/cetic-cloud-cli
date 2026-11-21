@@ -296,7 +296,10 @@ def commit_create(
     commit_type: str = typer.Argument(
         ..., help="monthly (-10%), yearly (-20%), two_years (-25%) ou three_years (-30%)",
     ),
-    no_auto_renew: bool = typer.Option(False, "--no-auto-renew", help="Désactive le renouvellement auto"),
+    no_auto_renew: bool = typer.Option(
+        False, "--no-auto-renew",
+        help="Enregistré, mais sans effet : la plateforme ne renouvelle encore aucun engagement.",
+    ),
 ) -> None:
     """Souscrit à un engagement mensuel ou annuel."""
     if commit_type not in COMMIT_TYPES:
@@ -320,7 +323,11 @@ def commit_create(
 
 @commit_app.command("cancel")
 def commit_cancel(commit_id: str = typer.Argument(...)) -> None:
-    """Annule un engagement. La remise reste valide jusqu'à l'échéance puis stoppe."""
+    """Annule un engagement. La remise s'arrête immédiatement.
+
+    (L'aide annonçait une remise maintenue jusqu'à l'échéance : l'API l'arrête
+    dès l'annulation, cetic-cloud-platform#2004.)
+    """
     try:
         client.post(f"/v1/billing/commits/{commit_id}/cancel")
     except client.APIError as e:

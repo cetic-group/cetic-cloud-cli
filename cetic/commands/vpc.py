@@ -362,7 +362,7 @@ def create(
     position: int | None = typer.Option(None, "--pos", help="Position (ordre d'évaluation)"),
     enabled: bool = typer.Option(True, "--enabled/--disabled"),
 ) -> None:
-    """Crée une règle de firewall sur un VNet (isolation doit être activée)."""
+    """Crée une règle de firewall sur un VNet (avec ou sans isolation activée)."""
     body: dict = {"direction": direction, "action": action, "enabled": enabled}
     if proto:
         body["proto"] = proto
