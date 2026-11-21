@@ -84,3 +84,16 @@ def test_api_key_get_lit_la_liste(runner, mock_api):
     result = runner.invoke(app, ["api-key", "get", CIBLE], env={"CCP_OUTPUT": "json"})
     assert result.exit_code == 0, result.stdout + result.stderr
     assert json.loads(result.stdout)["name"] == "ci"
+
+
+
+def test_ip_detach_d_une_ip_de_lb_passe_par_le_lb(runner, mock_api):
+    """Symétrique de `ip attach --lb` (revue de la PR #86)."""
+    mock_api.get("/v1/public-ips").mock(return_value=httpx.Response(200, json=[
+        {"id": IP, "load_balancer_id": CIBLE}]))
+    lb = mock_api.post(f"/v1/load-balancers/{CIBLE}/detach-ip").mock(
+        return_value=httpx.Response(200, json={"id": CIBLE}))
+    ip = mock_api.post(f"/v1/public-ips/{IP}/detach").mock(return_value=httpx.Response(200, json={}))
+    result = runner.invoke(app, ["ip", "detach", IP])
+    assert result.exit_code == 0, result.stdout + result.stderr
+    assert lb.called and not ip.called

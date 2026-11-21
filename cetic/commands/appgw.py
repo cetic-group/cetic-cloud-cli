@@ -31,6 +31,7 @@ from cetic.commands._appgw_security import policy_bail, policy_payload, prepare_
 from cetic._resolve import resolve_id
 from cetic.commands._catalog import render_compute_plans
 from cetic.commands._gateway import (
+    render_acme_providers,
     cert_expiry_label,
     network_label,
     read_cert_pair,
@@ -1576,30 +1577,7 @@ def acme_providers() -> None:
         data = client.get(f"{APPGW_PATH}/acme/dns-providers")
     except client.APIError as e:
         raise _bail(e) from e
-
-    # Forme de l'API : `{clé: {"label": …, "fields": [...]}}`, comme
-    # `cetic lb acme-providers` (catalogue partagé). L'ancien parseur attendait
-    # une liste ou `{"providers": [...]}` et rendait une liste vide
-    # (cetic-cloud-platform#2004).
-    rows: list[dict[str, Any]] = []
-    for key, spec in (data or {}).items():
-        spec = spec or {}
-        fields = spec.get("fields") or []
-        rows.append({
-            "name": key,
-            "label": spec.get("label") or "—",
-            "credentials": ", ".join(str(f) for f in fields) or "—",
-        })
-
-    render_list(
-        rows,
-        title=f"Providers DNS-01 disponibles ({len(rows)})",
-        columns=[
-            ("name", "Identifiant"),
-            ("label", "Libellé"),
-            ("credentials", "Credentials requis"),
-        ],
-    )
+    render_acme_providers(data)
 
 
 @listener_app.command(name="update")

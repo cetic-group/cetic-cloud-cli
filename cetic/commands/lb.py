@@ -8,6 +8,7 @@ from rich import print as rprint
 from cetic import client, config
 from cetic.commands._catalog import render_compute_plans
 from cetic.commands._gateway import (
+    render_acme_providers,
     cert_expiry_label,
     network_label,
     read_cert_pair,
@@ -504,18 +505,7 @@ def acme_providers() -> None:
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
-    rows = []
-    for key, spec in (data or {}).items():
-        spec = spec or {}
-        fields = spec.get("fields") or []
-        rows.append({
-            "key": key,
-            "label": spec.get("label") or "—",
-            "fields": ", ".join(str(f) for f in fields) or "—",
-        })
-    render_list(rows, title=f"Providers DNS-01 ({len(rows)})",
-                columns=[("key", "Identifiant"), ("label", "Libellé"),
-                         ("fields", "Credentials requis")])
+    render_acme_providers(data)
 
 
 @app.command(name="acme-retry")

@@ -160,7 +160,8 @@ def get(ip_id: str = typer.Argument(...)) -> None:
         raise typer.Exit(1)
     ip = next((p for p in items if p.get("id") == ip_id), None)
     if ip is None:
-        rprint(f"[red]Erreur : IP publique introuvable : {ip_id}[/red]")
+        # La liste ne rend que les IP allouées ou attachées (revue de la PR #86).
+        rprint(f"[red]Erreur : IP publique introuvable ou libérée : {ip_id}[/red]")
         raise typer.Exit(1)
     render_one(ip, title=f"IP {ip.get('ip_address', ip_id)}")
 
@@ -237,7 +238,14 @@ def attach(
 def detach(ip_id: str = typer.Argument(...)) -> None:
     """Détache l'IP."""
     try:
-        client.post(f"/v1/public-ips/{ip_id}/detach")
+        # L'IP d'un load balancer se détache par la route du LB, symétrique de
+        # `ip attach --lb` : la route de l'IP passait l'IP en `allocated` sans
+        # nettoyer le LB (revue de la PR #86).
+        ip = next((p for p in client.get("/v1/public-ips") if p.get("id") == ip_id), None)
+        if ip and ip.get("load_balancer_id"):
+            client.post(f"/v1/load-balancers/{ip['load_balancer_id']}/detach-ip")
+        else:
+            client.post(f"/v1/public-ips/{ip_id}/detach")
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)

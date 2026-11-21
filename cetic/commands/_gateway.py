@@ -139,3 +139,23 @@ def validate_created_replica_count(item: dict[str, Any], requested: int) -> None
             f"(valeur retournée : {actual}). Mettez la plateforme à jour avant "
             "de recréer la ressource ; vérifiez celle déjà créée."
         )
+
+
+def render_acme_providers(data: object) -> None:
+    """Affiche le catalogue DNS-01 partagé LB / application gateway
+    (`{clé: {label, fields}}`). Un seul parseur pour les deux commandes ; la
+    lecture (et la gestion d'erreur propre à chaque commande) reste à
+    l'appelant (revue de la PR #86)."""
+    from cetic.commands._render import render_list  # noqa: PLC0415
+
+    rows = []
+    for key, spec in (data or {}).items():  # type: ignore[union-attr]
+        spec = spec or {}
+        rows.append({
+            "name": key,
+            "label": spec.get("label") or "—",
+            "credentials": ", ".join(str(f) for f in spec.get("fields") or []) or "—",
+        })
+    render_list(rows, title=f"Providers DNS-01 disponibles ({len(rows)})",
+                columns=[("name", "Identifiant"), ("label", "Libellé"),
+                         ("credentials", "Credentials requis")])

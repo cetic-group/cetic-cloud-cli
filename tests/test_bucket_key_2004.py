@@ -49,3 +49,10 @@ def test_anciennes_cles_sans_bucket(runner, mock_api):
     assert runner.invoke(app, ["bucket", "key", "list"]).exit_code == 0
     assert runner.invoke(app, ["bucket", "key", "revoke", K, "--yes"]).exit_code == 0
     assert rev.called
+
+
+
+def test_list_refuse_bucket_et_region_ensemble(runner, mock_api):
+    result = runner.invoke(app, ["bucket", "key", "list", "--bucket", B, "--region", "RNN"])
+    assert result.exit_code == 1
+    assert not mock_api.calls

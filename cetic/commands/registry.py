@@ -117,16 +117,17 @@ def _tags(values: list[str]) -> list[str]:
     return [v.strip() for v in values if v.strip()]
 
 
-def _resoudre_utilisateur(rid: str, user: str) -> str:
-    """UUID d'un utilisateur de la registry à partir de son UUID ou de son nom :
-    les routes `users/{id}` et les ACL attendent l'UUID."""
+def _resoudre_utilisateur(rid: str, user: str) -> tuple[str, str]:
+    """`(uuid, nom)` d'un utilisateur de la registry à partir de son UUID ou de
+    son nom : les routes `users/{id}` et les ACL attendent l'UUID, le
+    trousseau range le mot de passe sous le nom (revue de la PR #86)."""
     try:
         items = client.get(f"{REGISTRIES_PATH}/{rid}/users")
     except client.APIError as e:
         raise _bail(e) from e
     for u in items:
         if user in (u.get("id"), u.get("username")):
-            return u["id"]
+            return u["id"], u["username"]
     rprint(f"[red]Utilisateur introuvable dans cette registry : {user}[/red]")
     raise typer.Exit(1)
 
@@ -611,7 +612,7 @@ def user_reset(
     ):
         raise typer.Abort()
     try:
-        uid = _resoudre_utilisateur(rid, username)
+        uid, username = _resoudre_utilisateur(rid, username)
         u = client.post(f"{REGISTRIES_PATH}/{rid}/users/{uid}/reset-password")
     except client.APIError as e:
         raise _bail(e) from e
@@ -635,7 +636,7 @@ def user_delete(
     if not yes and not typer.confirm(f"Supprimer l'utilisateur {username} ?"):
         raise typer.Abort()
     try:
-        uid = _resoudre_utilisateur(rid, username)
+        uid, username = _resoudre_utilisateur(rid, username)
         client.delete(f"{REGISTRIES_PATH}/{rid}/users/{uid}")
     except client.APIError as e:
         raise _bail(e) from e
@@ -660,7 +661,7 @@ def acl_set(
         None, "--user", help="Utilisateur ciblé (nom ou UUID) ; sans --user : règle globale"
     ),
 ) -> None:
-    """Crée une règle ACL."""
+    """Crée ou met à jour la règle ACL de (utilisateur, motif) — idempotent."""
     rid = _resolve_registry(id_or_name)
     actions_list = [a.strip() for a in actions.split(",") if a.strip()]
     if not actions_list:
@@ -671,8 +672,19 @@ def acl_set(
     body: dict[str, Any] = {"repo_pattern": repo, "actions": actions_list}
     try:
         if user:
-            body["user_id"] = _resoudre_utilisateur(rid, user)
-        a = client.post(f"{REGISTRIES_PATH}/{rid}/acls", json=body)
+            body["user_id"] = _resoudre_utilisateur(rid, user)[0]
+        # L'API n'a pas de PUT idempotent : POST insère une ligne à chaque
+        # appel. Une règle existante de même (utilisateur, motif) est donc
+        # modifiée par PATCH, sinon créée (revue de la PR #86).
+        existante = next(
+            (x for x in client.get(f"{REGISTRIES_PATH}/{rid}/acls")
+             if x.get("repo_pattern") == repo and x.get("user_id") == body.get("user_id")),
+            None,
+        )
+        if existante:
+            a = client.patch(f"{REGISTRIES_PATH}/{rid}/acls/{existante['id']}", json=body)
+        else:
+            a = client.post(f"{REGISTRIES_PATH}/{rid}/acls", json=body)
     except client.APIError as e:
         raise _bail(e) from e
     rprint(
@@ -920,8 +932,21 @@ def tag_delete(
     try:
         # `…/repositories/{repo}/tags/{tag}` tombait sur la route de
         # suppression du DÉPÔT (`{name:path}`) : le tag se supprime par son
-        # manifest (cetic-cloud-platform#2004).
-        client.delete(f"{REGISTRIES_PATH}/{rid}/repositories/{repo}/manifests/{tag}")
+        # manifest (cetic-cloud-platform#2004). Distribution 2.8 refuse la
+        # suppression PAR TAG (405, rendu en 409 « lecture seule ») : on
+        # supprime par DIGEST (revue de la PR #86).
+        data = client.get(f"{REGISTRIES_PATH}/{rid}/repositories/{repo}/tags")
+        items = data if isinstance(data, list) else data.get("tags", [])
+        digest = next((t.get("digest") for t in items if t.get("name") == tag), None)
+        if not digest:
+            rprint(f"[red]Tag introuvable (ou pas encore indexé) : {repo}:{tag}[/red]")
+            raise typer.Exit(1)
+        autres = sorted(t["name"] for t in items if t.get("digest") == digest and t.get("name") != tag)
+        if autres and not yes and not typer.confirm(
+            f"Les tags {', '.join(autres)} pointent sur la même image et seront supprimés aussi. Continuer ?"
+        ):
+            raise typer.Abort()
+        client.delete(f"{REGISTRIES_PATH}/{rid}/repositories/{repo}/manifests/{digest}")
     except client.APIError as e:
         raise _bail(e) from e
     rprint("[green]✓[/green] Tag supprimé. Le blob sera recyclé au prochain GC.")
