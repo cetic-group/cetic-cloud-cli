@@ -505,7 +505,8 @@ def acme_providers() -> None:
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
-    render_acme_providers(data)
+    # Forme de sortie d'avant la factorisation : `key` / `fields`.
+    render_acme_providers(data, cle="key", identifiants="fields", titre="Providers DNS-01")
 
 
 @app.command(name="acme-retry")

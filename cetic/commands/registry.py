@@ -19,6 +19,7 @@ from urllib.parse import unquote
 
 import typer
 from rich import print as rprint
+from rich.console import Console
 
 from cetic import client, config
 from cetic._resolve import resolve_id
@@ -31,6 +32,8 @@ from cetic._secrets import (
 )
 from cetic.commands._registry_cleanup import cleanup_app
 from cetic.commands._render import render_list, render_one
+
+_err = Console(stderr=True)
 
 REGISTRIES_PATH = "/v1/registries"
 
@@ -676,13 +679,18 @@ def acl_set(
         # L'API n'a pas de PUT idempotent : POST insère une ligne à chaque
         # appel. Une règle existante de même (utilisateur, motif) est donc
         # modifiée par PATCH, sinon créée (revue de la PR #86).
-        existante = next(
-            (x for x in client.get(f"{REGISTRIES_PATH}/{rid}/acls")
-             if x.get("repo_pattern") == repo and x.get("user_id") == body.get("user_id")),
-            None,
-        )
-        if existante:
-            a = client.patch(f"{REGISTRIES_PATH}/{rid}/acls/{existante['id']}", json=body)
+        memes = [x for x in client.get(f"{REGISTRIES_PATH}/{rid}/acls")
+                 if x.get("repo_pattern") == repo and x.get("user_id") == body.get("user_id")]
+        if memes:
+            a = client.patch(f"{REGISTRIES_PATH}/{rid}/acls/{memes[0]['id']}", json=body)
+            # Doublons créés avant cette correction (console, API, ancien
+            # `acl set` en POST) : le registre accorde l'UNION des règles, un
+            # retrait de droit ne prendrait donc pas effet. Ils sont supprimés
+            # (revue de la PR #86).
+            for doublon in memes[1:]:
+                client.delete(f"{REGISTRIES_PATH}/{rid}/acls/{doublon['id']}")
+            if len(memes) > 1:
+                rprint(f"[yellow]{len(memes) - 1} règle(s) en double pour ce motif supprimée(s).[/yellow]")
         else:
             a = client.post(f"{REGISTRIES_PATH}/{rid}/acls", json=body)
     except client.APIError as e:
@@ -925,28 +933,47 @@ def tag_delete(
     tag: str = typer.Argument(..., help="Tag à supprimer"),
     yes: bool = typer.Option(False, "--yes", "-y"),
 ) -> None:
-    """Supprime un tag (le blob est récupéré au prochain GC)."""
+    """Supprime un tag (le blob est récupéré au prochain GC).
+
+    L'image désignée par le tag est supprimée : les autres tags qui pointent
+    sur la même image disparaissent aussi."""
     rid = _resolve_registry(id_or_name)
     if not yes and not typer.confirm(f"Supprimer le tag {repo}:{tag} ?"):
+        raise typer.Abort()
+    # Avertissement seulement : l'index des tags est rafraîchi toutes les
+    # 5 min, il peut dater. Le digest supprimé est lu par l'API AUPRÈS DU
+    # REGISTRE (cetic-cloud-platform#2049) : jamais celui de l'index, qui
+    # pouvait désigner l'image d'un AUTRE tag (revue de la PR #86).
+    index = _index_des_tags(rid, repo)
+    digest_index = index.get(tag)
+    autres = sorted(n for n, d in index.items() if d and d == digest_index and n != tag)
+    if autres and not yes and not typer.confirm(
+        f"D'après l'index (jusqu'à 5 min de retard), les tags {', '.join(autres)} pointent "
+        "sur la même image et seront supprimés aussi. Continuer ?"
+    ):
         raise typer.Abort()
     try:
         # `…/repositories/{repo}/tags/{tag}` tombait sur la route de
         # suppression du DÉPÔT (`{name:path}`) : le tag se supprime par son
-        # manifest (cetic-cloud-platform#2004). Distribution 2.8 refuse la
-        # suppression PAR TAG (405, rendu en 409 « lecture seule ») : on
-        # supprime par DIGEST (revue de la PR #86).
-        data = client.get(f"{REGISTRIES_PATH}/{rid}/repositories/{repo}/tags")
-        items = data if isinstance(data, list) else data.get("tags", [])
-        digest = next((t.get("digest") for t in items if t.get("name") == tag), None)
-        if not digest:
-            rprint(f"[red]Tag introuvable (ou pas encore indexé) : {repo}:{tag}[/red]")
-            raise typer.Exit(1)
-        autres = sorted(t["name"] for t in items if t.get("digest") == digest and t.get("name") != tag)
-        if autres and not yes and not typer.confirm(
-            f"Les tags {', '.join(autres)} pointent sur la même image et seront supprimés aussi. Continuer ?"
-        ):
-            raise typer.Abort()
-        client.delete(f"{REGISTRIES_PATH}/{rid}/repositories/{repo}/manifests/{digest}")
+        # manifest (cetic-cloud-platform#2004).
+        rep = client.delete(f"{REGISTRIES_PATH}/{rid}/repositories/{repo}/manifests/{tag}") or {}
     except client.APIError as e:
         raise _bail(e) from e
-    rprint("[green]✓[/green] Tag supprimé. Le blob sera recyclé au prochain GC.")
+    digest = rep.get("digest") if isinstance(rep, dict) else None
+    rprint("[green]✓[/green] Tag supprimé"
+           + (f" (image {digest[:19]}…)" if digest else "")
+           + ". Le blob sera recyclé au prochain GC.")
+    if digest and digest_index and digest != digest_index:
+        _err.print("[yellow]L'index des tags était en retard : la suppression a porté sur "
+                   "l'image actuelle du tag, pas sur celle de l'index.[/yellow]")
+
+
+def _index_des_tags(rid: str, repo: str) -> dict[str, str | None]:
+    """{tag: digest} d'après l'index de l'API ; vide s'il est illisible (il
+    ne sert qu'à prévenir)."""
+    try:
+        data = client.get(f"{REGISTRIES_PATH}/{rid}/repositories/{repo}/tags")
+    except client.APIError:
+        return {}
+    items = data if isinstance(data, list) else (data or {}).get("tags", [])
+    return {t.get("name"): t.get("digest") for t in items if isinstance(t, dict) and t.get("name")}

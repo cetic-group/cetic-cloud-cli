@@ -234,6 +234,16 @@ def attach(
     rprint("[green]✓[/green] Attachement demandé.")
 
 
+# Champ de l'IP → route de détachement de la ressource qui la tient
+# (symétriques de `ip attach --lb`, des fiches gateway, bastion et VPN).
+_DETACH_PAR_RESSOURCE = (
+    ("load_balancer_id", "/v1/load-balancers/{}/detach-ip"),
+    ("app_gateway_id", "/v1/app-gateways/{}/detach-ip"),
+    ("bastion_id", "/v1/bastions/{}/detach-ip"),
+    ("vpn_gateway_id", "/v1/vpn/gateways/{}/detach-ip"),
+)
+
+
 @app.command()
 def detach(ip_id: str = typer.Argument(...)) -> None:
     """Détache l'IP."""
@@ -241,11 +251,15 @@ def detach(ip_id: str = typer.Argument(...)) -> None:
         # L'IP d'un load balancer se détache par la route du LB, symétrique de
         # `ip attach --lb` : la route de l'IP passait l'IP en `allocated` sans
         # nettoyer le LB (revue de la PR #86).
+        # Même chose pour toute ressource qui référence l'IP par une clé
+        # étrangère (gateway, bastion, VPN) : la route générique ne la nettoie
+        # pas, et l'IP serait libérée alors que la ressource la tient encore.
         ip = next((p for p in client.get("/v1/public-ips") if p.get("id") == ip_id), None)
-        if ip and ip.get("load_balancer_id"):
-            client.post(f"/v1/load-balancers/{ip['load_balancer_id']}/detach-ip")
-        else:
-            client.post(f"/v1/public-ips/{ip_id}/detach")
+        chemin = next(
+            (route.format(ip[champ]) for champ, route in _DETACH_PAR_RESSOURCE if ip and ip.get(champ)),
+            f"/v1/public-ips/{ip_id}/detach",
+        )
+        client.post(chemin)
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)

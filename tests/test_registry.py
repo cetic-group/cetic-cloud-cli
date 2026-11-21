@@ -623,15 +623,18 @@ def test_tags_signale_une_indexation_en_cours_sur_stderr(runner, mock_api):
 
 
 def test_tag_delete(runner, mock_api):
-    """Le tag se supprime par son manifest. L'ancien chemin `…/tags/{tag}`
-    tombait sur la route de suppression du DÉPÔT entier (`{name:path}`,
-    cetic-cloud-platform#2004)."""
-    # Distribution 2.8 refuse la suppression par tag : suppression par digest,
-    # lu dans la liste des tags (revue de la PR #86).
+    """Le tag se supprime par son manifest (l'ancien chemin `…/tags/{tag}`
+    tombait sur la suppression du DÉPÔT, cetic-cloud-platform#2004). Le tag
+    est passé tel quel : l'API lit son digest AUPRÈS DU REGISTRE
+    (cetic-cloud-platform#2049), jamais celui de l'index, qui peut dater de
+    5 min (revue de la PR #86)."""
     mock_api.get(f"/v1/registries/{REG_ID}/repositories/myapp/api/tags").mock(
         return_value=httpx.Response(200, json={"name": "myapp/api", "tags": [
             {"name": "v1.0.0", "digest": "sha256:abc"}, {"name": "v2", "digest": "sha256:def"}]}))
     manifest = mock_api.delete(
+        f"/v1/registries/{REG_ID}/repositories/myapp/api/manifests/v1.0.0"
+    ).mock(return_value=httpx.Response(202, json={"deleted": True, "digest": "sha256:abc"}))
+    par_digest = mock_api.delete(
         f"/v1/registries/{REG_ID}/repositories/myapp/api/manifests/sha256:abc"
     ).mock(return_value=httpx.Response(202, json={}))
     depot = mock_api.delete(
@@ -642,7 +645,25 @@ def test_tag_delete(runner, mock_api):
     )
     assert result.exit_code == 0, result.stdout + result.stderr
     assert manifest.called
-    assert not depot.called
+    assert not par_digest.called and not depot.called
+
+
+def test_tag_delete_index_en_retard(runner, mock_api):
+    """`latest` repoussé depuis le dernier sync : l'index dit `sha256:abc`
+    (l'image de `v1`), le registre `sha256:new`. La CLI ne supprime jamais le
+    digest de l'index, et signale l'écart."""
+    mock_api.get(f"/v1/registries/{REG_ID}/repositories/myapp/api/tags").mock(
+        return_value=httpx.Response(200, json={"tags": [
+            {"name": "v1", "digest": "sha256:abc"}, {"name": "latest", "digest": "sha256:abc"}]}))
+    ancien = mock_api.delete(
+        f"/v1/registries/{REG_ID}/repositories/myapp/api/manifests/sha256:abc"
+    ).mock(return_value=httpx.Response(202, json={}))
+    mock_api.delete(f"/v1/registries/{REG_ID}/repositories/myapp/api/manifests/latest").mock(
+        return_value=httpx.Response(202, json={"deleted": True, "digest": "sha256:new"}))
+    result = runner.invoke(app, ["registry", "tag", "delete", REG_ID, "myapp/api", "latest", "--yes"])
+    assert result.exit_code == 0, result.stdout + result.stderr
+    assert not ancien.called
+    assert "en retard" in result.stderr
 
 
 def test_gc_no_wait(runner, mock_api):
@@ -924,7 +945,7 @@ def test_tag_delete_previent_des_tags_partageant_le_digest(runner, mock_api):
     mock_api.get(f"/v1/registries/{REG_ID}/repositories/myapp/api/tags").mock(
         return_value=httpx.Response(200, json={"tags": [
             {"name": "v1.0.0", "digest": "sha256:abc"}, {"name": "latest", "digest": "sha256:abc"}]}))
-    sup = mock_api.delete(f"/v1/registries/{REG_ID}/repositories/myapp/api/manifests/sha256:abc").mock(
+    sup = mock_api.delete(f"/v1/registries/{REG_ID}/repositories/myapp/api/manifests/v1.0.0").mock(
         return_value=httpx.Response(202, json={}))
     # 1re confirmation : le tag ; 2e : les autres tags du même digest → refus.
     result = runner.invoke(app, ["registry", "tag", "delete", REG_ID, "myapp/api", "v1.0.0"],
@@ -945,3 +966,24 @@ def test_user_reset_et_delete_rangent_le_trousseau_sous_le_nom(runner, mock_api,
     result = runner.invoke(app, ["registry", "user", "delete", REG_ID, CI_UID, "--yes"])
     assert result.exit_code == 0, result.stdout
     assert f"cetic-registry::{REG_ID}:ci" not in mock_keyring
+
+
+def test_acl_set_supprime_les_doublons(runner, mock_api):
+    """Deux règles `ci` / `myapp/*` en `pull,push` (créées avant la
+    correction) : `acl set --actions pull` met la première à jour et supprime
+    l'autre — sinon le registre accordait l'union et `push` restait."""
+    mock_api.get(f"/v1/registries/{REG_ID}/users").mock(
+        return_value=httpx.Response(200, json=_USERS))
+    mock_api.get(f"/v1/registries/{REG_ID}/acls").mock(return_value=httpx.Response(200, json=[
+        {"id": "acl-1", "user_id": CI_UID, "repo_pattern": "myapp/*", "actions": ["pull", "push"]},
+        {"id": "acl-2", "user_id": CI_UID, "repo_pattern": "myapp/*", "actions": ["pull", "push"]},
+        {"id": "acl-3", "user_id": CI_UID, "repo_pattern": "autre/*", "actions": ["push"]}]))
+    patch = mock_api.patch(f"/v1/registries/{REG_ID}/acls/acl-1").mock(
+        return_value=httpx.Response(200, json={"id": "acl-1", "username": "ci"}))
+    sup2 = mock_api.delete(f"/v1/registries/{REG_ID}/acls/acl-2").mock(return_value=httpx.Response(204))
+    sup3 = mock_api.delete(f"/v1/registries/{REG_ID}/acls/acl-3").mock(return_value=httpx.Response(204))
+    result = runner.invoke(app, ["registry", "acl", "set", REG_ID, "--repo", "myapp/*",
+                                 "--actions", "pull", "--user", "ci"])
+    assert result.exit_code == 0, result.stdout + result.stderr
+    assert patch.called and sup2.called and not sup3.called
+    assert "double" in result.stdout

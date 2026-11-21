@@ -97,3 +97,21 @@ def test_ip_detach_d_une_ip_de_lb_passe_par_le_lb(runner, mock_api):
     result = runner.invoke(app, ["ip", "detach", IP])
     assert result.exit_code == 0, result.stdout + result.stderr
     assert lb.called and not ip.called
+
+
+@pytest.mark.parametrize("champ,route", [
+    ("app_gateway_id", "/v1/app-gateways/{}/detach-ip"),
+    ("bastion_id", "/v1/bastions/{}/detach-ip"),
+    ("vpn_gateway_id", "/v1/vpn/gateways/{}/detach-ip"),
+])
+def test_ip_detach_passe_par_la_ressource_qui_tient_l_ip(runner, mock_api, champ, route):
+    """Une IP tenue par une gateway, un bastion ou une passerelle VPN (clé
+    étrangère) : la route générique la passait en `allocated` sans nettoyer la
+    ressource (revue de la PR #86)."""
+    mock_api.get("/v1/public-ips").mock(return_value=httpx.Response(200, json=[
+        {"id": IP, champ: CIBLE}]))
+    res = mock_api.post(route.format(CIBLE)).mock(return_value=httpx.Response(200, json={}))
+    gen = mock_api.post(f"/v1/public-ips/{IP}/detach").mock(return_value=httpx.Response(200, json={}))
+    result = runner.invoke(app, ["ip", "detach", IP])
+    assert result.exit_code == 0, result.stdout + result.stderr
+    assert res.called and not gen.called
