@@ -9,7 +9,7 @@ Official command-line interface for [CETIC Cloud Platform](https://docs.cloud.ce
 cetic auth login
 cetic vm create --name web-01 --region RNN --plan small
 cetic k8s kubeconfig <cluster-id> > ~/.kube/config
-cetic db pg create --name app-db --region RNN --vnet <VNET> --plan small
+cetic db pg create --name app-db --region RNN --vpc <VPC> --vnet <VNET> --plan small
 ```
 
 ## Installation
@@ -103,7 +103,7 @@ limit, IP allow/deny, WAF, CORS, basic auth) — tout en un seul produit.
 
    ```bash
    cetic appgw create --name web-edge --region RNN --plan small \
-     --vpc prod --vnet web-tier
+     --vnet <VNET_UUID>
    ```
 
 2. **Ajouter un listener** (hostname + cert ACME automatique) :
@@ -470,7 +470,7 @@ Cf. [docs/iam](https://docs.cloud.cetic-group.com/services/iam) pour le détail 
    ```bash
    cetic iam roles attach CIDeployer \
      --principal-type service_account --principal-id ci-pipeline \
-     --expires-at 2027-01-01T00:00:00Z
+     --expires-at 2027-01-01
    ```
 
    `--principal-id` accepte UUID OU nom (api_key/service_account) OU email
@@ -634,7 +634,7 @@ cetic lb update <lb-uuid> --error-page-file maintenance.html  # page d'indisponi
 cetic lb health <lb-uuid>                                    # instances en service par scale set
 
 # Application Gateways (L7 HTTP/HTTPS routing, depuis v0.11.0)
-cetic appgw create --name web-edge --region RNN --plan small --vpc prod --vnet web-tier
+cetic appgw create --name web-edge --region RNN --plan small --vnet <VNET_UUID>
 cetic appgw listener add web-edge --hostname api.example.com --acme-challenge http01
 cetic appgw tg create web-edge --name api-pool
 cetic appgw tg member add web-edge --tg-id <tg-uuid> --container <ct-uuid> --port 8080
@@ -661,12 +661,12 @@ cetic email account create contact@exemple.com          # mot de passe demandé,
 cetic email alias create info@exemple.com --to contact@exemple.com
 
 # Databases
-cetic db pg create --name app-db --region RNN --vnet <VNET> --plan small   # sans --engine-version : version par défaut du catalogue
+cetic db pg create --name app-db --region RNN --vpc <VPC> --vnet <VNET> --plan small   # sans --engine-version : version par défaut du catalogue
 cetic db pg versions                                     # versions proposées et version par défaut
-cetic db pg create --name app-db --region RNN --vnet <VNET> --engine-version 17
-cetic db pg create --name app-db --region RNN --vnet <VNET> --replicas 3 \
+cetic db pg create --name app-db --region RNN --vpc <VPC> --vnet <VNET> --engine-version 17
+cetic db pg create --name app-db --region RNN --vpc <VPC> --vnet <VNET> --replicas 3 \
     --database app --pgbouncer --tag prod                # HA (3 réplicas), base initiale, PgBouncer (HA seule, non modifiable)
-cetic db redis create --name cache --region RNN --vnet <VNET> --replicas 1  # --tier dev|prod reste accepté (dev = 1, prod = 3)
+cetic db redis create --name cache --region RNN --vpc <VPC> --vnet <VNET> --replicas 1  # --tier dev|prod reste accepté (dev = 1, prod = 3)
 cetic db pg credentials <id>
 
 # Extensions PostgreSQL — à activer d'abord sur l'instance par le support

@@ -138,17 +138,18 @@ def get(id_or_name: str = typer.Argument(..., metavar="ID|NAME")) -> None:
 
 
 def _jours_jusqua(date_iso: str) -> int:
-    """Nombre de jours entiers jusqu'à `date_iso` (AAAA-MM-JJ, ou date-heure
-    ISO), en jours calendaires ; refus si la date est passée ou au-delà
-    de 3650 jours (bornes de l'API)."""
-    from datetime import UTC, datetime  # noqa: PLC0415
+    """Nombre de jours entre aujourd'hui (UTC) et `date_iso`, une DATE
+    AAAA-MM-JJ : l'API ne prend que des jours entiers, une heure serait perdue
+    ou ferait refuser une échéance du jour (revue de la PR #87). Refus si la
+    date n'est pas entre demain et 3650 jours (bornes de l'API)."""
+    from datetime import UTC, date, datetime  # noqa: PLC0415
 
     try:
-        cible = datetime.fromisoformat(date_iso.replace("Z", "+00:00"))
+        cible = date.fromisoformat(date_iso)
     except ValueError:
-        rprint(f"[red]Date invalide : {date_iso} (format attendu AAAA-MM-JJ).[/red]")
+        rprint(f"[red]Date invalide : {date_iso} (format attendu AAAA-MM-JJ, sans heure).[/red]")
         raise typer.Exit(1) from None
-    jours = (cible.date() - datetime.now(UTC).date()).days
+    jours = (cible - datetime.now(UTC).date()).days
     if not 1 <= jours <= 3650:
         rprint("[red]La date d'expiration doit être entre demain et 3650 jours.[/red]")
         raise typer.Exit(1)
@@ -165,7 +166,8 @@ def create(
     ),
     expires_at: str | None = typer.Option(
         None, "--expires-at",
-        help="Date d'expiration (AAAA-MM-JJ), convertie en jours pour l'API.",
+        help="Date d'expiration AAAA-MM-JJ (jour UTC), convertie en jours pour l'API ; "
+             "l'heure n'est pas acceptée (l'API compte des jours entiers).",
     ),
     save_keyring: bool = typer.Option(
         False, "--save-keyring",

@@ -4,7 +4,7 @@ import typer
 from rich import print as rprint
 
 from cetic import client
-from cetic.commands._render import render_list, render_one
+from cetic.commands._render import render_list, render_one, filter_region
 
 app = typer.Typer(help="IPs publiques CETIC Cloud")
 
@@ -50,10 +50,7 @@ def list_ips(region: str | None = typer.Option(None, "--region", "-r")) -> None:
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
-    if region:
-        # L'API ignore `?region=` sur cette liste : filtre côté CLI
-        # (cetic-cloud-platform#2004).
-        items = [x for x in items if (x.get("region") or "").upper() == region.upper()]
+    items = filter_region(items, region)  # l'API ignore ?region= (cetic-cloud-platform#2004)
     rows = [
         {"id": p["id"], "address": p.get("ip_address") or "—",
          "label": p.get("label") or "—",

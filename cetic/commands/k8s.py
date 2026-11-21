@@ -7,7 +7,7 @@ from rich import print as rprint
 
 from cetic import client
 from cetic.commands._catalog import render_compute_plans
-from cetic.commands._render import render_list, render_one
+from cetic.commands._render import render_list, render_one, filter_region
 
 
 def _parse_label_arg(label_str: str) -> tuple[str, str]:
@@ -116,10 +116,7 @@ def list_clusters(region: str | None = typer.Option(None, "--region", "-r")) -> 
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
-    if region:
-        # L'API ignore `?region=` sur cette liste : filtre côté CLI
-        # (cetic-cloud-platform#2004).
-        items = [x for x in items if (x.get("region") or "").upper() == region.upper()]
+    items = filter_region(items, region)  # l'API ignore ?region= (cetic-cloud-platform#2004)
     rows = [
         {"id": c["id"], "name": c["name"], "region": c["region"],
          "k8s_version": c.get("k8s_version", "—"),
@@ -376,7 +373,7 @@ def _resolve_os_template_key(
         if (
             t.get("os") == os_slug
             and (t.get("k8s_version") or "").lstrip("vV") == voulu
-            and t.get("region") == region
+            and (t.get("region") or "").upper() == region.upper()
         ):
             return t.get("os_key")
     return None
@@ -389,7 +386,8 @@ def _derniere_version(templates: list[dict], *, region: str, os_slug: str) -> st
     versions = [
         (t.get("k8s_version") or "").lstrip("vV")
         for t in templates
-        if t.get("os") == os_slug and t.get("region") == region and t.get("k8s_version")
+        if t.get("os") == os_slug and (t.get("region") or "").upper() == region.upper()
+        and t.get("k8s_version")
     ]
     return max(versions, key=_version_sort_key) if versions else None
 
@@ -491,6 +489,18 @@ def create(
         except client.APIError as e:
             rprint(f"[red]Erreur : {e.detail}[/red]")
             raise typer.Exit(1)
+        if k8s_version is None and os_template_key:
+            # `--template` fourni : la version est celle de CE template, pas la
+            # plus récente de la région (revue de la PR #87).
+            k8s_version = next(
+                ((t.get("k8s_version") or "").lstrip("vV") for t in templates
+                 if t.get("os_key") == os_template_key and t.get("k8s_version")),
+                None,
+            )
+            if k8s_version is None:
+                rprint(f"[red]Template inconnu dans la région {region} : {os_template_key}. "
+                       f"Voir : cetic k8s templates --region {region}.[/red]")
+                raise typer.Exit(1)
         if k8s_version is None:
             k8s_version = _derniere_version(templates, region=region, os_slug=os_norm)
             if k8s_version is None:

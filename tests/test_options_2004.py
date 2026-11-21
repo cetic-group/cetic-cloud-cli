@@ -91,3 +91,26 @@ def test_config_get_masque_le_jeton(runner):
     assert "test-token" not in result.stdout
     result = runner.invoke(app, ["config", "get", "api_key", "--reveal"])
     assert "test-token" in result.stdout
+
+
+# ── Revue de la PR #87 ───────────────────────────────────────────────────────
+
+
+def test_quota_status_insensible_a_la_casse(runner, mock_api):
+    mock_api.get("/v1/quotas/requests").mock(return_value=httpx.Response(200, json=[
+        {"id": "r1", "field": "max_vms", "requested_value": 10, "status": "pending"}]))
+    result = runner.invoke(app, ["quota", "requests", "--status", "PENDING"], env={"CCP_OUTPUT": "json"})
+    assert [r["id"] for r in json.loads(result.stdout)] == ["r1"]
+
+
+def test_service_account_expires_at_refuse_une_heure(runner, mock_api):
+    result = runner.invoke(app, ["service-account", "create", "--name", "ci",
+                                 "--expires-at", "2027-01-01T00:00:00Z"])
+    assert result.exit_code == 1
+    assert not mock_api.calls
+
+
+def test_config_get_masque_entierement(runner):
+    result = runner.invoke(app, ["config", "get", "api_key"])
+    assert result.stdout.startswith("***")
+    assert "tes" not in result.stdout.split("(")[0]

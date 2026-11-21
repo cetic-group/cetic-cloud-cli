@@ -47,9 +47,9 @@ def get(
         rprint(f"[yellow]Clé '{key}' non définie.[/yellow]")
         raise typer.Exit(1)
     # Le jeton s'affichait en clair (historique du terminal, partage d'écran,
-    # cetic-cloud-platform#2004) : masqué comme dans `config view`.
+    # cetic-cloud-platform#2004) : masqué comme dans `config view` (`***`).
     if key in _SECRETES and not reveal:
-        rprint(f"{val[:min(12, len(val) // 3)]}… [dim](masqué : --reveal pour l'afficher)[/dim]")
+        rprint("*** [dim](masqué : --reveal pour l'afficher)[/dim]")
         return
     rprint(val)
 

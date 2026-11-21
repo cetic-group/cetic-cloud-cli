@@ -39,7 +39,7 @@ from cetic.commands._gateway import (
     target_label,
     validate_created_replica_count,
 )
-from cetic.commands._render import render_list, render_one
+from cetic.commands._render import render_list, render_one, filter_region
 
 APPGW_PATH = "/v1/app-gateways"
 
@@ -208,10 +208,7 @@ def list_gateways(
         items = client.get(APPGW_PATH, params={"region": region} if region else None)
     except client.APIError as e:
         raise _bail(e) from e
-    if region:
-        # L'API ignore `?region=` sur cette liste : filtre côté CLI
-        # (cetic-cloud-platform#2004).
-        items = [x for x in items if (x.get("region") or "").upper() == region.upper()]
+    items = filter_region(items, region)  # l'API ignore ?region= (cetic-cloud-platform#2004)
     rows = [
         {
             "id": gw["id"],

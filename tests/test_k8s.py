@@ -987,3 +987,40 @@ def test_create_version_avec_v_envoyee_sans_v(runner, mock_api):
     assert result.exit_code == 0, result.stdout + result.stderr
     assert captured["body"]["k8s_version"] == "1.34.8"
     assert captured["body"]["os_template_key"] == "kube-v1-34-8-flatcar"
+
+
+def test_create_template_sans_version_prend_la_version_du_template(runner, mock_api):
+    """Revue de la PR #87 : avec --template, la version est celle du template,
+    pas la plus récente de la région ; région comparée sans la casse."""
+    captured: dict[str, Any] = {}
+    mock_api.get("/v1/k8s/templates").mock(return_value=httpx.Response(200, json=[
+        _template("flatcar", "kube-v1-33-2", "1.33.2", region="FR-PAR-1"),
+        _template("flatcar", "kube-v1-34-8", "1.34.8", region="FR-PAR-1"),
+    ]))
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(201, json=_cluster(status="Provisioning"))
+
+    mock_api.post("/v1/k8s/clusters").mock(side_effect=_capture)
+    result = runner.invoke(app, ["k8s", "create", "--name", "ccks-prod", "--region", "fr-par-1",
+                                 "--vpc", VPC_ID, "--vnet", VNET_ID, "--template", "kube-v1-33-2"])
+    assert result.exit_code == 0, result.stdout + result.stderr
+    assert captured["body"]["k8s_version"] == "1.33.2"
+    assert captured["body"]["os_template_key"] == "kube-v1-33-2"
+
+
+def test_create_sans_version_region_insensible_a_la_casse(runner, mock_api):
+    captured: dict[str, Any] = {}
+    mock_api.get("/v1/k8s/templates").mock(return_value=httpx.Response(200, json=[
+        _template("flatcar", "kube-v1-34-8", "1.34.8", region="RNN")]))
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(201, json=_cluster(status="Provisioning"))
+
+    mock_api.post("/v1/k8s/clusters").mock(side_effect=_capture)
+    result = runner.invoke(app, ["k8s", "create", "--name", "ccks-prod", "--region", "rnn",
+                                 "--vpc", VPC_ID, "--vnet", VNET_ID])
+    assert result.exit_code == 0, result.stdout + result.stderr
+    assert captured["body"]["k8s_version"] == "1.34.8"

@@ -16,7 +16,7 @@ from cetic.commands._gateway import (
     target_label,
     validate_created_replica_count,
 )
-from cetic.commands._render import render_list, render_one
+from cetic.commands._render import render_list, render_one, filter_region
 
 app = typer.Typer(help="Load Balancers CETIC Cloud")
 backend_app = typer.Typer(help="Backends d'un listener LB")
@@ -175,10 +175,7 @@ def list_lbs(region: str | None = typer.Option(None, "--region", "-r")) -> None:
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
-    if region:
-        # L'API ignore `?region=` sur cette liste : filtre côté CLI
-        # (cetic-cloud-platform#2004).
-        items = [x for x in items if (x.get("region") or "").upper() == region.upper()]
+    items = filter_region(items, region)  # l'API ignore ?region= (cetic-cloud-platform#2004)
     rows = [
         {"id": lb["id"], "name": lb["name"], "region": lb["region"],
          "plan": lb.get("plan") or "—",
