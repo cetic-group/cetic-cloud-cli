@@ -1,4 +1,4 @@
-"""cetic auth — login (mot de passe ou SSO), logout, whoami."""
+"""cetic auth — login (SSO), logout, whoami."""
 from __future__ import annotations
 
 import http.server
@@ -9,7 +9,6 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 import typer
 from rich import print as rprint
-from rich.prompt import Prompt
 
 from cetic import client, config
 
@@ -26,28 +25,31 @@ def login(
         help=f"Connexion via fournisseur SSO : {', '.join(_SSO_PROVIDERS)}.",
     ),
 ) -> None:
-    """Connexion à CETIC Cloud — stocke le token localement.
+    """Connexion à CETIC Cloud par SSO — stocke le token localement.
 
-    Par défaut : email + mot de passe. Avec [cyan]--sso github[/cyan] ou
-    [cyan]--sso google[/cyan] : ouvre le navigateur pour s'authentifier via le
-    fournisseur (un serveur local éphémère récupère le jeton, façon `gh`).
+    [cyan]--sso github[/cyan] ou [cyan]--sso google[/cyan] : ouvre le navigateur
+    pour s'authentifier via le fournisseur (un serveur local éphémère récupère
+    le jeton, façon `gh`). Sinon, utilisez une clé d'API (variable
+    [cyan]CCP_API_KEY[/cyan]).
     """
-    if sso is not None:
-        _login_sso(sso.lower())
-        return
-
-    rprint("[bold]CETIC Cloud — Connexion[/bold]")
-    email = Prompt.ask("Email")
-    password = Prompt.ask("Mot de passe", password=True)
-
-    try:
-        data = client.post("/v1/auth/login", json={"email": email, "password": password})
-    except client.APIError as e:
-        rprint(f"[red]Erreur : {e.detail}[/red]")
+    if sso is None:
+        # La connexion par e-mail et mot de passe exige la vérification
+        # anti-robot de la page de connexion de la console : l'API la refuse
+        # toujours en production à un client qui n'est pas un navigateur
+        # (403 « Vérification anti-robot échouée »). La CLI ne la propose donc
+        # plus (cetic-cloud-platform#2004).
+        rprint(
+            "[red]La connexion par e-mail et mot de passe n'est pas disponible "
+            "dans la CLI.[/red] Elle exige la vérification anti-robot de la page "
+            "de connexion de la console.\n\n"
+            "Connectez-vous autrement :\n"
+            f"  • par SSO : [cyan]cetic auth login --sso {'|'.join(_SSO_PROVIDERS)}[/cyan] "
+            "(compte du même e-mail chez le fournisseur) ;\n"
+            "  • par clé d'API : créez-la dans la console (Clés d'API), puis\n"
+            "    [cyan]export CCP_API_KEY=<clé>[/cyan]."
+        )
         raise typer.Exit(1)
-
-    _store_tokens(data["access_token"], data["refresh_token"])
-    rprint("[green]Connecté avec succès.[/green]")
+    _login_sso(sso.lower())
 
 
 def _store_tokens(access_token: str, refresh_token: str | None) -> None:
