@@ -137,8 +137,8 @@ def render_qemu_templates() -> None:
 def render_custom_templates(template_type: str | None = None) -> None:
     """Liste les templates custom de l'org (`GET /v1/custom-templates`).
 
-    `template_type` (container|vm) filtre côté client — l'endpoint renvoie un
-    set mélangé. ID jamais tronqué (règle repo).
+    `template_type` (`lxc`|`vm`, valeurs de l'API) filtre côté client —
+    l'endpoint renvoie un set mélangé. ID jamais tronqué (règle repo).
     """
     try:
         items = client.get("/v1/custom-templates")

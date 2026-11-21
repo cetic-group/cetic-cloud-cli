@@ -152,7 +152,7 @@ def delete(
 def start(vm_id: str = typer.Argument(...)) -> None:
     """Démarre une VM."""
     try:
-        client.post(f"/v1/vm-instances/{vm_id}/start")
+        client.post(f"/v1/vm-instances/{vm_id}/actions", json={"action": "start"})
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
@@ -163,7 +163,7 @@ def start(vm_id: str = typer.Argument(...)) -> None:
 def stop(vm_id: str = typer.Argument(...)) -> None:
     """Stoppe une VM."""
     try:
-        client.post(f"/v1/vm-instances/{vm_id}/stop")
+        client.post(f"/v1/vm-instances/{vm_id}/actions", json={"action": "stop"})
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
@@ -174,7 +174,7 @@ def stop(vm_id: str = typer.Argument(...)) -> None:
 def reboot(vm_id: str = typer.Argument(...)) -> None:
     """Redémarre une VM."""
     try:
-        client.post(f"/v1/vm-instances/{vm_id}/reboot")
+        client.post(f"/v1/vm-instances/{vm_id}/actions", json={"action": "reboot"})
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
