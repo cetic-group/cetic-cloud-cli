@@ -1212,6 +1212,126 @@ def test_listener_get_not_found(runner, mock_api):
     assert "aucun listener" in result.stdout.lower()
 
 
+def test_listener_cache_historical_null_is_distinct_from_disabled(runner, mock_api, monkeypatch):
+    monkeypatch.setenv("CCP_OUTPUT", "json")
+    mock_api.get(f"/v1/app-gateways/{GW_ID}/listeners").mock(
+        return_value=httpx.Response(200, json=[{
+            "id": LISTENER_ID, "hostname": "api.example.com", "cache_enabled": None,
+        }])
+    )
+    result = runner.invoke(
+        app, ["appgw", "listener", "cache", GW_ID, "--listener-id", LISTENER_ID]
+    )
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["cache_enabled"] is None
+    assert payload["supported"] is True
+    assert "historique" in payload["configuration"]
+
+
+def test_listener_cache_old_api_reports_unavailable(runner, mock_api, monkeypatch):
+    monkeypatch.setenv("CCP_OUTPUT", "json")
+    mock_api.get(f"/v1/app-gateways/{GW_ID}/listeners").mock(
+        return_value=httpx.Response(200, json=[{"id": LISTENER_ID}])
+    )
+    result = runner.invoke(
+        app, ["appgw", "listener", "cache", GW_ID, "--listener-id", LISTENER_ID]
+    )
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["supported"] is False
+    assert payload["cache_enabled"] is None
+
+
+def test_listener_cache_disable_uses_exact_id_and_confirms_response(runner, mock_api):
+    captured: dict[str, Any] = {}
+    mock_api.get(f"/v1/app-gateways/{GW_ID}/listeners").mock(
+        return_value=httpx.Response(200, json=[{
+            "id": LISTENER_ID, "hostname": "api.example.com", "cache_enabled": True,
+        }])
+    )
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={
+            "id": LISTENER_ID, "hostname": "api.example.com", "cache_enabled": False,
+        })
+
+    mock_api.patch(f"/v1/app-gateways/{GW_ID}/listeners/{LISTENER_ID}/cache").mock(
+        side_effect=_capture
+    )
+    result = runner.invoke(
+        app, ["appgw", "listener", "cache", GW_ID,
+              "--listener-id", LISTENER_ID[:8], "--disable"]
+    )
+    assert result.exit_code == 0, result.stdout
+    assert captured["body"] == {"cache_enabled": False}
+    assert "Désactivé" in result.stdout
+
+
+def test_listener_cache_rejects_mutation_on_old_api(runner, mock_api):
+    mock_api.get(f"/v1/app-gateways/{GW_ID}/listeners").mock(
+        return_value=httpx.Response(200, json=[{"id": LISTENER_ID}])
+    )
+    result = runner.invoke(
+        app, ["appgw", "listener", "cache", GW_ID,
+              "--listener-id", LISTENER_ID, "--enable"]
+    )
+    assert result.exit_code == 1
+    assert "ne fournit pas encore" in result.stdout
+
+
+def test_listener_cache_enable_confirmed(runner, mock_api):
+    mock_api.get(f"/v1/app-gateways/{GW_ID}/listeners").mock(
+        return_value=httpx.Response(200, json=[{
+            "id": LISTENER_ID, "cache_enabled": None,
+        }])
+    )
+    mock_api.patch(f"/v1/app-gateways/{GW_ID}/listeners/{LISTENER_ID}/cache").mock(
+        return_value=httpx.Response(200, json={"id": LISTENER_ID, "cache_enabled": True})
+    )
+    result = runner.invoke(
+        app, ["appgw", "listener", "cache", GW_ID,
+              "--listener-id", LISTENER_ID, "--enable"]
+    )
+    assert result.exit_code == 0, result.stdout
+    assert "Activé" in result.stdout
+
+
+def test_listener_cache_gateway_off_keeps_domain_unchanged(runner, mock_api):
+    mock_api.get(f"/v1/app-gateways/{GW_ID}/listeners").mock(
+        return_value=httpx.Response(200, json=[{
+            "id": LISTENER_ID, "cache_enabled": False,
+        }])
+    )
+    mock_api.patch(f"/v1/app-gateways/{GW_ID}/listeners/{LISTENER_ID}/cache").mock(
+        return_value=httpx.Response(409, json={"detail": "gateway cache must be enabled"})
+    )
+    result = runner.invoke(
+        app, ["appgw", "listener", "cache", GW_ID,
+              "--listener-id", LISTENER_ID, "--enable"]
+    )
+    assert result.exit_code == 1
+    assert "Conflit" in result.stdout
+
+
+def test_listener_cache_rejects_unconfirmed_response(runner, mock_api):
+    mock_api.get(f"/v1/app-gateways/{GW_ID}/listeners").mock(
+        return_value=httpx.Response(200, json=[{
+            "id": LISTENER_ID, "cache_enabled": False,
+        }])
+    )
+    mock_api.patch(f"/v1/app-gateways/{GW_ID}/listeners/{LISTENER_ID}/cache").mock(
+        return_value=httpx.Response(200, json={"id": LISTENER_ID, "cache_enabled": False})
+    )
+    result = runner.invoke(
+        app, ["appgw", "listener", "cache", GW_ID,
+              "--listener-id", LISTENER_ID, "--enable"]
+    )
+    assert result.exit_code == 1
+    assert "pas confirmé" in result.stdout
+
+
 # ---------------------------------------------------------------------------
 # Sub-app : route create avec basic auth (v0.12.0)
 # ---------------------------------------------------------------------------
@@ -1661,15 +1781,9 @@ def test_no_legacy_brand_terminology():
 
 
 def test_appgw_app_command_count():
-    """v0.12.0 : 8 top-level + 5 listener + 4 tg + 2 tg member + 5 route = 24 commandes.
+    """L'inventaire CLI inclut la commande de cache domaine.
 
-    v0.11.0 → v0.12.0 ajoute :
-    - top-level : `acme-providers`
-    - listener  : `get`
-    - tg        : `update`
-    - route     : `get`, `update`
-
-    Note : Typer stocke `c.name=None` quand `@app.command()` est utilisé sans
+    Typer stocke `c.name=None` quand `@app.command()` est utilisé sans
     paramètre `name=...`. Dans ce cas le nom CLI dérive de la fonction.
     """
     from cetic.commands import appgw
@@ -1688,9 +1802,9 @@ def test_appgw_app_command_count():
         assert expected in top_level, f"{expected} manquant dans {top_level}"
 
     listener_cmds = _names(appgw.listener_app.registered_commands)
-    # add, get, list, delete, renew-cert, rotate-cert (#53 : certificat client)
-    assert len(listener_cmds) == 6, listener_cmds
-    for expected in ("add", "get", "list", "delete", "renew-cert", "rotate-cert"):
+    # add, get, list, cache, delete, renew-cert, rotate-cert
+    assert len(listener_cmds) == 7, listener_cmds
+    for expected in ("add", "get", "list", "cache", "delete", "renew-cert", "rotate-cert"):
         assert expected in listener_cmds, f"listener {expected} manquant"
 
     tg_cmds = _names(appgw.tg_app.registered_commands)
@@ -1713,7 +1827,7 @@ def test_appgw_app_command_count():
         + len(tg_member_cmds)
         + len(route_cmds)
     )
-    assert total == 28  # +1 : `plans` (v0.23.0) ; +3 : update, rotate-cert, member list (#53)
+    assert total == 29
 
 
 def test_format_api_error_messages():

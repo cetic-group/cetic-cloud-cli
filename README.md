@@ -126,6 +126,13 @@ limit, IP allow/deny, WAF, CORS, basic auth) — tout en un seul produit.
      --cert-file fullchain.pem --key-file privkey.pem
    ```
 
+   Le cache par domaine se lit avec `cetic appgw listener cache web-edge
+   --listener-id <listener-uuid>`. Utilisez `--enable` ou `--disable` pour le
+   modifier après avoir activé le cache sur la passerelle. Un domaine historique
+   peut avoir un état « non défini », distinct de « désactivé ». Cette commande
+   requiert l'API qui expose `cache_enabled` ; elle refuse une modification si
+   la réponse ne confirme pas l'état demandé.
+
 3. **Créer un target group + ajouter des backends** (containers, VMs, ou IPs) :
 
    ```bash

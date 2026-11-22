@@ -563,18 +563,8 @@ def listener_list(
     )
 
 
-@listener_app.command(name="get")
-def listener_get(
-    id_or_name: str = typer.Argument(..., metavar="GW_ID|GW_NAME"),
-    listener_id: str = typer.Option(..., "--listener-id", help="UUID du listener"),
-) -> None:
-    """Affiche les détails d'un listener (recherche locale dans la liste).
-
-    Le backend ne propose pas de GET singleton pour les listeners ; cette
-    commande liste la gateway puis filtre côté client par UUID (préfixe
-    accepté également, si le préfixe est unique).
-    """
-    gid = _resolve_appgw(id_or_name)
+def _find_listener(gid: str, listener_id: str) -> dict[str, Any]:
+    """Trouve un listener par UUID ou préfixe unique dans la liste API."""
     try:
         items = client.get(f"{APPGW_PATH}/{gid}/listeners")
     except client.APIError as e:
@@ -595,10 +585,78 @@ def listener_get(
             f"({len(matches)} listeners correspondent).[/red]"
         )
         raise typer.Exit(1)
-    listener = matches[0]
+    return matches[0]
+
+
+@listener_app.command(name="get")
+def listener_get(
+    id_or_name: str = typer.Argument(..., metavar="GW_ID|GW_NAME"),
+    listener_id: str = typer.Option(..., "--listener-id", help="UUID du listener"),
+) -> None:
+    """Affiche les détails d'un listener (recherche locale dans la liste).
+
+    Le backend ne propose pas de GET singleton pour les listeners ; cette
+    commande liste la gateway puis filtre côté client par UUID (préfixe
+    accepté également, si le préfixe est unique).
+    """
+    gid = _resolve_appgw(id_or_name)
+    listener = _find_listener(gid, listener_id)
     render_one(
         listener,
         title=f"Listener {listener.get('hostname', listener['id'])}",
+    )
+
+
+@listener_app.command(name="cache")
+def listener_cache(
+    id_or_name: str = typer.Argument(..., metavar="GW_ID|GW_NAME"),
+    listener_id: str = typer.Option(..., "--listener-id", help="UUID du listener"),
+    enabled: bool | None = typer.Option(
+        None, "--enable/--disable",
+        help="Activer ou désactiver le cache pour ce domaine ; sans option, lire l'état",
+    ),
+) -> None:
+    """Lit ou modifie le cache HTTP d'un domaine.
+
+    Le cache doit d'abord être activé sur la passerelle. L'absence de choix
+    sur un domaine historique est conservée comme état non défini.
+    """
+    gid = _resolve_appgw(id_or_name)
+    listener = _find_listener(gid, listener_id)
+    if "cache_enabled" not in listener and enabled is not None:
+        rprint("[red]Erreur : cette API ne fournit pas encore le cache par domaine. "
+               "Déployez la version compatible avant de le modifier.[/red]")
+        raise typer.Exit(1)
+
+    if enabled is not None:
+        try:
+            listener = client.patch(
+                f"{APPGW_PATH}/{gid}/listeners/{listener['id']}/cache",
+                json={"cache_enabled": enabled},
+            )
+        except client.APIError as e:
+            raise _bail(e) from e
+        if listener.get("cache_enabled") is not enabled:
+            rprint("[red]Erreur : l'API n'a pas confirmé l'état du cache demandé. "
+                   "Relisez le domaine avant de poursuivre.[/red]")
+            raise typer.Exit(1)
+
+    supported = "cache_enabled" in listener
+    state = listener.get("cache_enabled")
+    label = (
+        "Indisponible (API ancienne)" if not supported else
+        "Non défini (domaine historique)" if state is None else
+        "Activé" if state is True else "Désactivé"
+    )
+    render_one(
+        {
+            "listener_id": listener["id"],
+            "hostname": listener.get("hostname"),
+            "cache_enabled": state,
+            "supported": supported,
+            "configuration": label,
+        },
+        title="Cache HTTP du domaine",
     )
 
 
