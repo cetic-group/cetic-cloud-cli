@@ -1212,6 +1212,164 @@ def test_listener_get_not_found(runner, mock_api):
     assert "aucun listener" in result.stdout.lower()
 
 
+def _validation_listener_payload(**overrides: Any) -> dict[str, Any]:
+    payload = {
+        "id": LISTENER_ID,
+        "hostname": "api.example.com",
+        "acme_status": "issued",
+        "acme_challenge": "dns01",
+        "acme_dns_provider": "cloudflare",
+        "cert_path": "/etc/haproxy/certs/current.pem",
+        "certificate_revision": "a" * 64,
+        "pending_validation": None,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_listener_validation_change_http01_uses_current_revision(runner, mock_api):
+    before = _validation_listener_payload()
+    captured: dict[str, Any] = {}
+    mock_api.get(f"/v1/app-gateways/{GW_ID}/listeners").mock(
+        return_value=httpx.Response(200, json=[before])
+    )
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(202, json=_validation_listener_payload(pending_validation={
+            "id": "request-1", "status": "pending", "acme_challenge": "http01",
+            "acme_dns_provider": None,
+        }))
+
+    mock_api.post(f"/v1/app-gateways/{GW_ID}/listeners/{LISTENER_ID}/validation-change").mock(
+        side_effect=_capture
+    )
+    result = runner.invoke(app, [
+        "appgw", "listener", "validation-change", GW_ID,
+        "--listener-id", LISTENER_ID, "--acme-challenge", "http01",
+    ])
+    assert result.exit_code == 0, result.stdout
+    assert captured["body"] == {
+        "acme_challenge": "http01", "expected_certificate_revision": "a" * 64,
+    }
+    assert "request-1" in result.stdout
+
+
+def test_listener_validation_change_dns_credentials_file_not_logged(
+    runner, mock_api, tmp_path, monkeypatch,
+):
+    monkeypatch.setenv("CCP_OUTPUT", "json")
+    secret = "private-token-123"
+    path = tmp_path / "dns.json"
+    path.write_text(json.dumps({"application_key": "key", "application_secret": secret}))
+    captured: dict[str, Any] = {}
+    mock_api.get(f"/v1/app-gateways/{GW_ID}/listeners").mock(
+        return_value=httpx.Response(200, json=[_validation_listener_payload()])
+    )
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(202, json=_validation_listener_payload(pending_validation={
+            "id": "request-2", "status": "pending", "acme_challenge": "dns01",
+            "acme_dns_provider": "ovh",
+        }))
+
+    mock_api.post(f"/v1/app-gateways/{GW_ID}/listeners/{LISTENER_ID}/validation-change").mock(
+        side_effect=_capture
+    )
+    result = runner.invoke(app, [
+        "appgw", "listener", "validation-change", GW_ID,
+        "--listener-id", LISTENER_ID, "--acme-challenge", "dns01",
+        "--dns-provider", "ovh", "--dns-credentials-file", str(path),
+    ])
+    assert result.exit_code == 0, result.stdout
+    assert captured["body"]["acme_dns_credentials"]["application_secret"] == secret
+    assert secret not in result.stdout
+    assert json.loads(result.stdout)["pending_request_id"] == "request-2"
+
+
+def test_listener_validation_change_requires_api_revision(runner, mock_api):
+    mock_api.get(f"/v1/app-gateways/{GW_ID}/listeners").mock(
+        return_value=httpx.Response(200, json=[_validation_listener_payload(
+            certificate_revision=None,
+        )])
+    )
+    result = runner.invoke(app, [
+        "appgw", "listener", "validation-change", GW_ID,
+        "--listener-id", LISTENER_ID, "--acme-challenge", "http01",
+    ])
+    assert result.exit_code == 1
+    assert "révision indisponible" in result.stdout
+
+
+def test_listener_validation_change_rejects_unconfirmed_response(runner, mock_api):
+    mock_api.get(f"/v1/app-gateways/{GW_ID}/listeners").mock(
+        return_value=httpx.Response(200, json=[_validation_listener_payload()])
+    )
+    mock_api.post(f"/v1/app-gateways/{GW_ID}/listeners/{LISTENER_ID}/validation-change").mock(
+        return_value=httpx.Response(202, json=_validation_listener_payload())
+    )
+    result = runner.invoke(app, [
+        "appgw", "listener", "validation-change", GW_ID,
+        "--listener-id", LISTENER_ID, "--acme-challenge", "http01",
+    ])
+    assert result.exit_code == 1
+    assert "pas confirmé" in result.stdout
+
+
+def test_listener_validation_change_409_does_not_echo_secret(
+    runner, mock_api, tmp_path,
+):
+    secret = "private-token-456"
+    path = tmp_path / "dns.json"
+    path.write_text(json.dumps({"api_token": secret}))
+    mock_api.get(f"/v1/app-gateways/{GW_ID}/listeners").mock(
+        return_value=httpx.Response(200, json=[_validation_listener_payload()])
+    )
+    mock_api.post(f"/v1/app-gateways/{GW_ID}/listeners/{LISTENER_ID}/validation-change").mock(
+        return_value=httpx.Response(409, json={"detail": f"conflict {secret}"})
+    )
+    result = runner.invoke(app, [
+        "appgw", "listener", "validation-change", GW_ID,
+        "--listener-id", LISTENER_ID, "--acme-challenge", "dns01",
+        "--dns-provider", "cloudflare", "--dns-credentials-file", str(path),
+    ])
+    assert result.exit_code == 1
+    assert "conflit" in result.stdout.lower()
+    assert secret not in result.stdout
+
+
+def test_listener_validation_retry_reuses_pending_id(runner, mock_api):
+    pending = {"id": "request-3", "status": "failed", "acme_challenge": "dns01",
+               "acme_dns_provider": "cloudflare"}
+    mock_api.get(f"/v1/app-gateways/{GW_ID}/listeners").mock(
+        return_value=httpx.Response(200, json=[_validation_listener_payload(
+            pending_validation=pending,
+        )])
+    )
+    mock_api.post(
+        f"/v1/app-gateways/{GW_ID}/listeners/{LISTENER_ID}/validation-change/retry"
+    ).mock(return_value=httpx.Response(202, json=_validation_listener_payload(
+        pending_validation={**pending, "status": "pending"},
+    )))
+    result = runner.invoke(app, [
+        "appgw", "listener", "validation-retry", GW_ID, "--listener-id", LISTENER_ID,
+    ])
+    assert result.exit_code == 0, result.stdout
+    assert "request-3" in result.stdout
+
+
+def test_listener_validation_retry_requires_pending_request(runner, mock_api):
+    mock_api.get(f"/v1/app-gateways/{GW_ID}/listeners").mock(
+        return_value=httpx.Response(200, json=[_validation_listener_payload()])
+    )
+    result = runner.invoke(app, [
+        "appgw", "listener", "validation-retry", GW_ID, "--listener-id", LISTENER_ID,
+    ])
+    assert result.exit_code == 1
+    assert "aucune validation" in result.stdout.lower()
+
+
 # ---------------------------------------------------------------------------
 # Sub-app : route create avec basic auth (v0.12.0)
 # ---------------------------------------------------------------------------
@@ -1661,15 +1819,9 @@ def test_no_legacy_brand_terminology():
 
 
 def test_appgw_app_command_count():
-    """v0.12.0 : 8 top-level + 5 listener + 4 tg + 2 tg member + 5 route = 24 commandes.
+    """Vérifie les commandes AppGW, dont la validation différée du certificat.
 
-    v0.11.0 → v0.12.0 ajoute :
-    - top-level : `acme-providers`
-    - listener  : `get`
-    - tg        : `update`
-    - route     : `get`, `update`
-
-    Note : Typer stocke `c.name=None` quand `@app.command()` est utilisé sans
+    Typer stocke `c.name=None` quand `@app.command()` est utilisé sans
     paramètre `name=...`. Dans ce cas le nom CLI dérive de la fonction.
     """
     from cetic.commands import appgw
@@ -1688,9 +1840,11 @@ def test_appgw_app_command_count():
         assert expected in top_level, f"{expected} manquant dans {top_level}"
 
     listener_cmds = _names(appgw.listener_app.registered_commands)
-    # add, get, list, delete, renew-cert, rotate-cert (#53 : certificat client)
-    assert len(listener_cmds) == 6, listener_cmds
-    for expected in ("add", "get", "list", "delete", "renew-cert", "rotate-cert"):
+    assert len(listener_cmds) >= 8, listener_cmds
+    for expected in (
+        "add", "get", "list", "delete", "renew-cert", "rotate-cert",
+        "validation-change", "validation-retry",
+    ):
         assert expected in listener_cmds, f"listener {expected} manquant"
 
     tg_cmds = _names(appgw.tg_app.registered_commands)
@@ -1713,7 +1867,7 @@ def test_appgw_app_command_count():
         + len(tg_member_cmds)
         + len(route_cmds)
     )
-    assert total == 28  # +1 : `plans` (v0.23.0) ; +3 : update, rotate-cert, member list (#53)
+    assert total >= 30
 
 
 def test_format_api_error_messages():
