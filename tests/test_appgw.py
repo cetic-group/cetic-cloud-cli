@@ -661,6 +661,35 @@ def test_tg_create_leastconn(runner, mock_api):
     assert captured["body"]["algorithm"] == "leastconn"
 
 
+def test_tg_create_explicitly_disables_health_check(runner, mock_api):
+    captured: dict[str, Any] = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(201, json={"id": TG_ID, "hc_enabled": False})
+
+    mock_api.post(f"/v1/app-gateways/{GW_ID}/target-groups").mock(side_effect=_capture)
+    result = runner.invoke(
+        app, ["appgw", "tg", "create", GW_ID, "--name", "api-pool", "--no-hc-enabled"]
+    )
+    assert result.exit_code == 0, result.stdout
+    assert captured["body"] == {
+        "name": "api-pool", "algorithm": "roundrobin", "hc_enabled": False,
+    }
+
+
+def test_tg_create_refuses_unconfirmed_health_state(runner, mock_api):
+    mock_api.post(f"/v1/app-gateways/{GW_ID}/target-groups").mock(
+        return_value=httpx.Response(201, json={"id": TG_ID, "name": "api-pool"})
+    )
+    result = runner.invoke(
+        app, ["appgw", "tg", "create", GW_ID, "--name", "api-pool", "--no-hc-enabled"]
+    )
+    assert result.exit_code == 1
+    assert TG_ID in result.stdout
+    assert "pas confirmé" in result.stdout
+
+
 def test_tg_create_422(runner, mock_api):
     mock_api.post(f"/v1/app-gateways/{GW_ID}/target-groups").mock(
         return_value=httpx.Response(422, json={"detail": "name already exists"})
@@ -691,6 +720,19 @@ def test_tg_list(runner, mock_api):
     result = runner.invoke(app, ["appgw", "tg", "list", GW_ID])
     assert result.exit_code == 0, result.stdout
     assert "api-pool" in result.stdout
+
+
+def test_tg_list_shows_disabled_health_check(runner, mock_api):
+    mock_api.get(f"/v1/app-gateways/{GW_ID}/target-groups").mock(
+        return_value=httpx.Response(200, json=[{
+            "id": TG_ID, "name": "api-pool", "algorithm": "roundrobin",
+            "hc_enabled": False, "hc_path": "/healthz", "members": [],
+        }])
+    )
+    result = runner.invoke(app, ["appgw", "tg", "list", GW_ID])
+    assert result.exit_code == 0, result.stdout
+    assert "Désactivé" in result.stdout
+    assert "/healthz" not in result.stdout
 
 
 def test_tg_delete_with_yes(runner, mock_api):
@@ -1144,6 +1186,34 @@ def test_tg_update_health_check_fields(runner, mock_api):
         "hc_healthy_threshold": 3,
         "hc_unhealthy_threshold": 5,
     }
+
+
+def test_tg_update_explicitly_disables_health_check(runner, mock_api):
+    captured: dict[str, Any] = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"id": TG_ID, "hc_enabled": False})
+
+    mock_api.patch(f"/v1/app-gateways/{GW_ID}/target-groups/{TG_ID}").mock(
+        side_effect=_capture
+    )
+    result = runner.invoke(
+        app, ["appgw", "tg", "update", GW_ID, "--tg-id", TG_ID, "--no-hc-enabled"]
+    )
+    assert result.exit_code == 0, result.stdout
+    assert captured["body"] == {"hc_enabled": False}
+
+
+def test_tg_update_refuses_unconfirmed_health_state(runner, mock_api):
+    mock_api.patch(f"/v1/app-gateways/{GW_ID}/target-groups/{TG_ID}").mock(
+        return_value=httpx.Response(200, json={"id": TG_ID, "hc_enabled": True})
+    )
+    result = runner.invoke(
+        app, ["appgw", "tg", "update", GW_ID, "--tg-id", TG_ID, "--no-hc-enabled"]
+    )
+    assert result.exit_code == 1
+    assert "pas confirmé" in result.stdout
 
 
 def test_tg_update_no_fields_fails(runner, mock_api):

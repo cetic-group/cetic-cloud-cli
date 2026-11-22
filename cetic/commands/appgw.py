@@ -690,19 +690,33 @@ def tg_create(
         "roundrobin", "--algorithm",
         help="Algorithme de répartition : roundrobin / leastconn / source / random",
     ),
+    hc_enabled: bool | None = typer.Option(
+        None, "--hc-enabled/--no-hc-enabled",
+        help="Activer ou désactiver le health check (activé par défaut)",
+    ),
 ) -> None:
     """Crée un target group (pool de backends + health check).
 
     Exemples :
       cetic appgw tg create web-edge --name api-pool
       cetic appgw tg create web-edge --name web-pool --algorithm leastconn
+      cetic appgw tg create web-edge --name unmanaged --no-hc-enabled
     """
     gid = _resolve_appgw(id_or_name)
     body: dict[str, Any] = {"name": name, "algorithm": algorithm}
+    if hc_enabled is not None:
+        body["hc_enabled"] = hc_enabled
     try:
         tg = client.post(f"{APPGW_PATH}/{gid}/target-groups", json=body)
     except client.APIError as e:
         raise _bail(e) from e
+    if hc_enabled is not None and tg.get("hc_enabled") is not hc_enabled:
+        rprint(
+            "[red]Le target group a été créé, mais l'API n'a pas confirmé "
+            f"l'état du health check demandé. Vérifiez le groupe {tg.get('id', 'créé')} "
+            "avant de poursuivre.[/red]"
+        )
+        raise typer.Exit(1)
     rprint(
         f"[green]✓[/green] Target group créé : [bold]{tg['id']}[/bold] "
         f"({tg.get('name', name)})"
@@ -724,7 +738,16 @@ def tg_list(
             "id": tg["id"],
             "name": tg.get("name", "—"),
             "algorithm": tg.get("algorithm", "—"),
-            "hc_path": tg.get("hc_path", "—"),
+            "health_check": (
+                "Activé"
+                if tg.get("hc_enabled") is True
+                else "Désactivé"
+                if tg.get("hc_enabled") is False
+                else "—"
+            ),
+            "hc_path": (
+                tg.get("hc_path", "—") if tg.get("hc_enabled") is not False else "—"
+            ),
             "members": str(len(tg.get("members") or [])),
         }
         for tg in items
@@ -736,6 +759,7 @@ def tg_list(
             ("id", "ID"),
             ("name", "Nom"),
             ("algorithm", "Algorithme"),
+            ("health_check", "Health check"),
             ("hc_path", "Health path"),
             ("members", "Membres"),
         ],
@@ -774,6 +798,10 @@ def tg_update(
     algorithm: str | None = typer.Option(
         None, "--algorithm",
         help="Algorithme de répartition : roundrobin / leastconn / source / random",
+    ),
+    hc_enabled: bool | None = typer.Option(
+        None, "--hc-enabled/--no-hc-enabled",
+        help="Activer ou désactiver le health check",
     ),
     hc_protocol: str | None = typer.Option(
         None, "--hc-protocol",
@@ -817,6 +845,9 @@ def tg_update(
       # Affiner le health check
       cetic appgw tg update web-edge --tg-id <tg-uuid> \\
         --hc-path /health --hc-interval-sec 10 --hc-healthy-threshold 3
+
+      # Désactiver le health check (les membres deviennent non surveillés)
+      cetic appgw tg update web-edge --tg-id <tg-uuid> --no-hc-enabled
     """
     if algorithm is not None and algorithm not in _TG_ALGORITHMS:
         rprint(
@@ -859,6 +890,8 @@ def tg_update(
         body["name"] = name
     if algorithm is not None:
         body["algorithm"] = algorithm
+    if hc_enabled is not None:
+        body["hc_enabled"] = hc_enabled
     if hc_protocol is not None:
         body["hc_protocol"] = hc_protocol
     if hc_method is not None:
@@ -888,6 +921,12 @@ def tg_update(
         tg = client.patch(f"{APPGW_PATH}/{gid}/target-groups/{tg_id}", json=body)
     except client.APIError as e:
         raise _bail(e) from e
+    if hc_enabled is not None and (tg or {}).get("hc_enabled") is not hc_enabled:
+        rprint(
+            "[red]L'API n'a pas confirmé l'état du health check demandé. "
+            f"Vérifiez le target group {tg_id} avant de poursuivre.[/red]"
+        )
+        raise typer.Exit(1)
     rprint(
         f"[green]✓[/green] Target group mis à jour : "
         f"[bold]{(tg or {}).get('id', tg_id)}[/bold]"

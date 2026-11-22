@@ -140,6 +140,12 @@ limit, IP allow/deny, WAF, CORS, basic auth) — tout en un seul produit.
    cetic appgw tg member list web-edge --tg-id <tg-uuid>
    ```
 
+   Le Health check est activé par défaut. Pour un groupe sans sonde, ajoutez
+   `--no-hc-enabled` à `tg create`, ou utilisez
+   `tg update web-edge --tg-id <tg-uuid> --no-hc-enabled`. Le CLI vérifie que
+   l'API confirme ce choix ; déployez l'API prenant en charge `hc_enabled`
+   avant d'utiliser ces options. `tg list` distingue les groupes non surveillés.
+
 4. **Créer une route** (host implicite via listener + path + policies) :
 
    ```bash
