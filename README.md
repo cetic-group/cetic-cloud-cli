@@ -126,6 +126,25 @@ limit, IP allow/deny, WAF, CORS, basic auth) — tout en un seul produit.
      --cert-file fullchain.pem --key-file privkey.pem
    ```
 
+   Quand l'API active le changement différé de validation ACME
+   (`APPGW_STAGED_VALIDATION_ENABLED`), une nouvelle méthode ou un nouveau
+   fournisseur DNS peut être demandé sans retirer le certificat en service :
+
+   ```bash
+   cetic appgw listener validation-change web-edge \
+     --listener-id <listener-uuid> --acme-challenge dns01 \
+     --dns-provider ovh --dns-credentials-file ./dns-credentials.json
+   cetic appgw listener get web-edge --listener-id <listener-uuid>
+   cetic appgw listener validation-retry web-edge --listener-id <listener-uuid>
+   ```
+
+   Le fichier DNS contient un objet JSON de clés et valeurs propres au
+   fournisseur. Les secrets ne figurent ni dans la ligne de commande ni dans
+   la sortie. Le CLI lit la révision courante avant de soumettre la demande ;
+   une révision absente ou périmée bloque le changement. Sur échec de la
+   nouvelle validation, le certificat et la configuration active restent en
+   service. La commande `validation-retry` reprend la demande existante.
+
 3. **Créer un target group + ajouter des backends** (containers, VMs, ou IPs) :
 
    ```bash

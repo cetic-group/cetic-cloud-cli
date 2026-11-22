@@ -18,6 +18,8 @@ Fonctionnement :
 
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -599,6 +601,183 @@ def listener_get(
     render_one(
         listener,
         title=f"Listener {listener.get('hostname', listener['id'])}",
+    )
+
+
+def _validation_listener(gid: str, listener_id: str) -> dict[str, Any]:
+    """Lit un listener exact avant toute demande de rotation ACME."""
+    try:
+        listeners = client.get(f"{APPGW_PATH}/{gid}/listeners")
+    except client.APIError as e:
+        raise _bail(e) from e
+    listener = next((item for item in listeners if item.get("id") == listener_id), None)
+    if listener is None:
+        rprint("[red]Erreur : listener introuvable. Fournissez son UUID complet.[/red]")
+        raise typer.Exit(1)
+    return listener
+
+
+def _dns_credentials_from_file(path: Path) -> dict[str, str]:
+    """Lit un objet JSON sans jamais inclure sa valeur dans les erreurs."""
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as e:
+        raise ValueError("fichier d'identifiants DNS illisible ou JSON invalide") from e
+    if not isinstance(payload, dict) or not payload or not all(
+        isinstance(key, str) and key and isinstance(value, str) and value
+        for key, value in payload.items()
+    ):
+        raise ValueError("le fichier DNS doit contenir un objet JSON de clés et valeurs non vides")
+    return payload
+
+
+def _validation_api_error(e: client.APIError) -> typer.Exit:
+    """Évite de reproduire un détail API qui pourrait contenir un secret DNS."""
+    message = {
+        403: "Accès refusé pour changer la validation du certificat.",
+        404: "Passerelle ou domaine introuvable.",
+        409: "Changement indisponible ou en conflit. Relisez le listener.",
+    }.get(
+        e.status_code,
+        "La demande de validation a échoué. Vérifiez la configuration du listener.",
+    )
+    rprint(f"[red]Erreur : {message}[/red]")
+    return typer.Exit(1)
+
+
+def _show_validation_result(
+    listener: dict[str, Any], before: dict[str, Any], challenge: str,
+    provider: str | None, request_id: str | None = None,
+    previous_request_id: str | None = None,
+) -> None:
+    if not isinstance(listener, dict):
+        rprint("[red]Erreur : réponse de validation incomplète. Relisez le listener.[/red]")
+        raise typer.Exit(1)
+    pending = listener.get("pending_validation")
+    revision_before = before.get("certificate_revision")
+    same_request = (
+        isinstance(pending, dict)
+        and bool(pending.get("id"))
+        and (request_id is None or pending.get("id") == request_id)
+        and (previous_request_id is None or pending.get("id") != previous_request_id)
+        and pending.get("acme_challenge") == challenge
+        and pending.get("acme_dns_provider") == provider
+        and pending.get("status") in {"pending", "issuing", "ready", "failed"}
+        and listener.get("certificate_revision") == revision_before
+        and listener.get("cert_path") == before.get("cert_path")
+        and listener.get("acme_challenge") == before.get("acme_challenge")
+        and listener.get("acme_dns_provider") == before.get("acme_dns_provider")
+        and listener.get("id") == before.get("id")
+    )
+    already_promoted = (
+        pending is None
+        and listener.get("certificate_revision") != revision_before
+        and listener.get("acme_status") == "issued"
+        and listener.get("acme_challenge") == challenge
+        and listener.get("acme_dns_provider") == provider
+        and listener.get("id") == before.get("id")
+    )
+    if not (same_request or already_promoted):
+        rprint("[red]Erreur : l'API n'a pas confirmé la demande. "
+               "Relisez le listener avant toute nouvelle action.[/red]")
+        raise typer.Exit(1)
+    render_one(
+        {
+            "listener_id": listener["id"],
+            "hostname": listener.get("hostname"),
+            "validation": "Terminée" if already_promoted else pending["status"],
+            "pending_request_id": None if already_promoted else pending["id"],
+            "active_challenge": listener.get("acme_challenge"),
+            "active_dns_provider": listener.get("acme_dns_provider"),
+            "certificate_revision": listener.get("certificate_revision"),
+        },
+        title="Validation du certificat",
+    )
+
+
+@listener_app.command(name="validation-change")
+def listener_validation_change(
+    id_or_name: str = typer.Argument(..., metavar="GW_ID|GW_NAME"),
+    listener_id: str = typer.Option(..., "--listener-id", help="UUID complet du listener"),
+    acme_challenge: str = typer.Option(
+        ..., "--acme-challenge", help="Nouvelle méthode : http01 ou dns01",
+    ),
+    dns_provider: str | None = typer.Option(
+        None, "--dns-provider", help="Fournisseur DNS pour dns01",
+    ),
+    dns_credentials_file: Path | None = typer.Option(  # noqa: B008
+        None, "--dns-credentials-file", exists=True, dir_okay=False,
+        help="Fichier JSON local des identifiants DNS ; aucune valeur dans la ligne de commande",
+    ),
+) -> None:
+    """Demande une nouvelle validation ACME sans retirer le certificat actif.
+
+    La fonction serveur doit être activée par l'équipe avant utilisation. Suivez
+    l'état avec `listener get` ; un échec conserve le certificat en service.
+    """
+    if acme_challenge not in ("http01", "dns01"):
+        rprint("[red]Erreur : --acme-challenge doit être http01 ou dns01.[/red]")
+        raise typer.Exit(1)
+    if acme_challenge == "dns01" and (not dns_provider or dns_credentials_file is None):
+        rprint("[red]Erreur : dns01 requiert --dns-provider et --dns-credentials-file.[/red]")
+        raise typer.Exit(1)
+    if acme_challenge == "http01" and (dns_provider or dns_credentials_file):
+        rprint("[red]Erreur : http01 ne prend pas d'identifiants DNS.[/red]")
+        raise typer.Exit(1)
+    gid = _resolve_appgw(id_or_name)
+    before = _validation_listener(gid, listener_id)
+    revision = before.get("certificate_revision")
+    if (before.get("acme_status") != "issued" or not before.get("cert_path")
+            or not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{64}", revision)):
+        rprint("[red]Erreur : certificat en service ou révision indisponible. "
+               "Déployez l'API compatible et relisez le listener.[/red]")
+        raise typer.Exit(1)
+    body: dict[str, Any] = {
+        "acme_challenge": acme_challenge,
+        "expected_certificate_revision": revision,
+    }
+    if acme_challenge == "dns01":
+        try:
+            body["acme_dns_credentials"] = _dns_credentials_from_file(dns_credentials_file)
+        except ValueError as e:
+            rprint(f"[red]Erreur : {e}.[/red]")
+            raise typer.Exit(1) from e
+        body["acme_dns_provider"] = dns_provider
+    try:
+        result = client.post(
+            f"{APPGW_PATH}/{gid}/listeners/{listener_id}/validation-change", json=body,
+        )
+    except client.APIError as e:
+        raise _validation_api_error(e) from e
+    previous = before.get("pending_validation")
+    _show_validation_result(
+        result, before, acme_challenge, dns_provider,
+        previous_request_id=previous.get("id") if isinstance(previous, dict) else None,
+    )
+
+
+@listener_app.command(name="validation-retry")
+def listener_validation_retry(
+    id_or_name: str = typer.Argument(..., metavar="GW_ID|GW_NAME"),
+    listener_id: str = typer.Option(..., "--listener-id", help="UUID complet du listener"),
+) -> None:
+    """Relance une validation différée après un échec ou un dispatch perdu."""
+    gid = _resolve_appgw(id_or_name)
+    before = _validation_listener(gid, listener_id)
+    pending = before.get("pending_validation")
+    if (not isinstance(pending, dict) or not pending.get("id")
+            or pending.get("acme_challenge") not in ("http01", "dns01")):
+        rprint("[red]Erreur : aucune validation en attente à reprendre.[/red]")
+        raise typer.Exit(1)
+    try:
+        result = client.post(
+            f"{APPGW_PATH}/{gid}/listeners/{listener_id}/validation-change/retry",
+        )
+    except client.APIError as e:
+        raise _validation_api_error(e) from e
+    _show_validation_result(
+        result, before, pending["acme_challenge"],
+        pending.get("acme_dns_provider"), pending["id"],
     )
 
 
