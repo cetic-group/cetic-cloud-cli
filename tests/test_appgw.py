@@ -286,40 +286,87 @@ def test_detach_ip_409(runner, mock_api):
     assert "Conflit" in result.stdout
 
 
-def test_health_with_target_groups(runner, mock_api):
+def test_health_with_real_backend_contract(runner, mock_api):
+    """GET /health expose backends[], sans IP ni date de dernière sonde."""
     mock_api.get(f"/v1/app-gateways/{GW_ID}/health").mock(
         return_value=httpx.Response(
             200,
             json={
-                "target_groups": [
-                    {
-                        "name": "api-pool",
-                        "members": [
-                            {
-                                "id": MEMBER_ID,
-                                "address": "10.0.0.5",
-                                "port": 8080,
-                                "status": "UP",
-                                "last_check_at": "2026-05-15T10:00:00Z",
-                            },
-                            {
-                                "id": "11" * 16,
-                                "address": "10.0.0.6",
-                                "port": 8080,
-                                "status": "DOWN",
-                                "last_check_at": "2026-05-15T10:00:00Z",
-                            },
-                        ],
-                    }
+                "appgw_id": GW_ID,
+                "state": "available",
+                "replicas": [{
+                    "role": "primary", "available": True,
+                    "observed_at": "2026-11-22T10:00:00Z",
+                }],
+                "backends": [
+                    {"member_id": MEMBER_ID, "target_group_id": TG_ID, "status": "UP",
+                     "replica_role": "primary", "instance_key": None,
+                     "last_check": None, "weight": 100},
+                    {"member_id": "11" * 16, "target_group_id": TG_ID, "status": "DOWN",
+                     "replica_role": "primary", "instance_key": "abcd1234",
+                     "last_check": None, "weight": 100},
                 ]
             },
         )
     )
     result = runner.invoke(app, ["appgw", "health", GW_ID])
     assert result.exit_code == 0, result.stdout
-    assert "api-pool" in result.stdout
+    assert TG_ID in result.stdout
+    assert MEMBER_ID in result.stdout
+    assert "Sain" in result.stdout
+    assert "En panne" in result.stdout
     assert "UP" in result.stdout
     assert "DOWN" in result.stdout
+    assert "abcd1234" in result.stdout
+    assert "—:—" not in result.stdout
+    assert "Dernier check" not in result.stdout
+
+
+def test_health_partial_distinguishes_unmonitored_and_unavailable(runner, mock_api):
+    mock_api.get(f"/v1/app-gateways/{GW_ID}/health").mock(
+        return_value=httpx.Response(200, json={
+            "appgw_id": GW_ID, "state": "partial",
+            "replicas": [
+                {"role": "primary", "available": True},
+                {"role": "secondary", "available": False},
+            ],
+            "backends": [
+                {"member_id": MEMBER_ID, "target_group_id": TG_ID, "status": "no_check",
+                 "replica_role": "primary", "last_check": None, "weight": 100},
+                {"member_id": MEMBER_ID, "target_group_id": TG_ID, "status": "unknown",
+                 "replica_role": "secondary", "last_check": None, "weight": 100},
+            ],
+        }))
+    result = runner.invoke(app, ["appgw", "health", GW_ID])
+    assert result.exit_code == 0, result.stdout
+    assert "Mesure partielle" in result.stdout
+    assert "1/2 répliques" in result.stdout
+    assert "Non surveillé" in result.stdout
+    assert "État indisponible" in result.stdout
+    assert "Sain" not in result.stdout
+
+
+def test_health_without_measure_is_never_reported_healthy(runner, mock_api):
+    # Contrat pré-#2059 : backends=[] sans state ni replicas.
+    mock_api.get(f"/v1/app-gateways/{GW_ID}/health").mock(
+        return_value=httpx.Response(200, json={"appgw_id": GW_ID, "backends": []})
+    )
+    result = runner.invoke(app, ["appgw", "health", GW_ID])
+    assert result.exit_code == 0, result.stdout
+    assert "Mesure indisponible" in result.stdout
+    assert "Aucun état de membre mesuré" in result.stdout
+    assert "Sain" not in result.stdout
+
+
+def test_health_json_preserves_full_api_response(runner, mock_api, monkeypatch):
+    monkeypatch.setenv("CCP_OUTPUT", "json")
+    payload = {"appgw_id": GW_ID, "state": "unavailable", "replicas": [], "backends": []}
+    mock_api.get(f"/v1/app-gateways/{GW_ID}/health").mock(
+        return_value=httpx.Response(200, json=payload)
+    )
+    result = runner.invoke(app, ["appgw", "health", GW_ID])
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == payload
 
 
 def test_health_404(runner, mock_api):

@@ -128,9 +128,16 @@ def _status_color(status: str) -> str:
 
 
 def _format_health_status(status: str) -> str:
-    """Renvoie un texte coloré Rich (UP vert, DOWN rouge, autres ambre)."""
-    color = _status_color(status)
-    return f"[{color}]{status or '—'}[/{color}]"
+    """N'annonce jamais un membre sain sans mesure UP explicite."""
+    labels = {
+        "UP": ("green", "Sain (UP)"),
+        "DOWN": ("red", "En panne (DOWN)"),
+        "MAINT": ("yellow", "En maintenance"),
+        "no_check": ("yellow", "Non surveillé"),
+        "unknown": ("yellow", "État indisponible"),
+    }
+    color, label = labels.get(status, labels["unknown"])
+    return f"[{color}]{label}[/{color}]"
 
 
 # ---------------------------------------------------------------------------
@@ -351,48 +358,69 @@ def detach_ip(
 def health(
     id_or_name: str = typer.Argument(..., metavar="ID|NAME"),
 ) -> None:
-    """Affiche l'état UP/DOWN des backends par target group.
-
-    Indicateurs colorés :
-      [green]UP[/green]    backend joignable + health check OK
-      [red]DOWN[/red]      backend injoignable ou check KO
-      [yellow]TRANSIENT[/yellow] en cours de healthcheck (montée/descente)
-    """
+    """Affiche la santé réellement observée des membres par réplique."""
     gid = _resolve_appgw(id_or_name)
     try:
         h = client.get(f"{APPGW_PATH}/{gid}/health")
     except client.APIError as e:
         raise _bail(e) from e
 
-    # Si l'API renvoie une structure {target_groups: [...]}, on affiche
-    # une table colorée. Sinon fallback render_one pour le format json/yaml.
-    target_groups = h.get("target_groups") if isinstance(h, dict) else None
-    if not target_groups:
+    # Les formats machine gardent le contrat API, sans table ni réécriture.
+    if config.get_output() != "table" or not isinstance(h, dict):
         render_one(h, title="Santé Application Gateway")
         return
+    # Le contrat est {appgw_id, state, replicas, backends}. L'ancienne API
+    # expose déjà `backends=[]` sans observation : absence de state = indisponible.
+    state = h.get("state", "unavailable")
+    replicas = h.get("replicas") or []
+    observed = sum(
+        replica.get("available") is True
+        for replica in replicas if isinstance(replica, dict)
+    )
+    suffix = f" ({observed}/{len(replicas)} répliques)" if replicas else ""
+    if state == "available":
+        rprint(f"[green]Mesure disponible{suffix}.[/green]")
+    elif state == "partial":
+        rprint(
+            f"[yellow]Mesure partielle{suffix} : "
+            "les membres non observés restent indéterminés.[/yellow]"
+        )
+    else:
+        rprint(
+            f"[yellow]Mesure indisponible{suffix} : "
+            "aucun membre n'est annoncé sain sans observation.[/yellow]"
+        )
 
+    backends = h.get("backends") or []
+    if not backends:
+        rprint("[yellow]Aucun état de membre mesuré.[/yellow]")
+        return
     rows: list[dict[str, Any]] = []
-    for tg in target_groups:
-        tg_name = tg.get("name", "—")
-        for member in tg.get("members", []):
-            rows.append(
-                {
-                    "target_group": tg_name,
-                    "member_id": (member.get("id") or "—"),
-                    "address": f"{member.get('address', '—')}:{member.get('port', '—')}",
-                    "status": _format_health_status(member.get("status", "—")),
-                    "last_check": (member.get("last_check_at") or "—")[:19],
-                }
-            )
+    for backend in backends:
+        if not isinstance(backend, dict):
+            continue
+        role = {"primary": "Primaire", "secondary": "Secondaire"}.get(
+            backend.get("replica_role"), "—"
+        )
+        rows.append({
+            "target_group": backend.get("target_group_id") or "—",
+            "member_id": backend.get("member_id") or "—",
+            "instance": backend.get("instance_key") or "—",
+            "replica": role,
+            "status": _format_health_status(backend.get("status", "unknown")),
+        })
+    if not rows:
+        rprint("[yellow]Aucun état de membre mesuré.[/yellow]")
+        return
     render_list(
         rows,
-        title=f"Santé backends ({len(rows)})",
+        title=f"Santé des membres ({len(rows)} observations)",
         columns=[
             ("target_group", "Target group"),
             ("member_id", "Member"),
-            ("address", "Adresse"),
+            ("instance", "Instance"),
+            ("replica", "Réplique"),
             ("status", "État"),
-            ("last_check", "Dernier check"),
         ],
     )
 
