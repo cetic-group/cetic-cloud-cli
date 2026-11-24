@@ -129,10 +129,13 @@ VALID_TIERS = ("dev", "prod")
 VALID_KUBECONFIG_MODES = ("private", "public", "sso")
 
 # Familles d'OS proposées pour les nœuds K8s (slug backend `os_image`).
-VALID_OS = ("flatcar", "ubuntu", "rocky9")
+# `rocky9` reste accepté pour les clusters existants : la plateforme ne
+# construit plus de gabarits Rocky Linux 9 (cetic-cloud-platform#2145).
+VALID_OS = ("flatcar", "ubuntu", "rocky10", "rocky9")
 _OS_LABEL = {
     "flatcar": "Flatcar",
     "ubuntu": "Ubuntu",
+    "rocky10": "Rocky Linux 10",
     "rocky9": "Rocky Linux 9",
 }
 
@@ -717,7 +720,7 @@ def create(
     os_image: str = typer.Option(
         "flatcar",
         "--os",
-        help="Famille d'OS des nœuds : flatcar (défaut) | ubuntu | rocky9.",
+        help="Famille d'OS des nœuds : flatcar (défaut) | ubuntu | rocky10.",
         case_sensitive=False,
     ),
     os_template_key: str | None = typer.Option(
