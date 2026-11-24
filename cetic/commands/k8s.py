@@ -1028,6 +1028,8 @@ def upgrade_patch(
             c = client.post(f"/v1/k8s/clusters/{cluster_id}/upgrade-patch")
         except client.APIError as e:
             _fail(e)
+        if _emit_machine(c):
+            return
         rprint(f"[green]✓[/green] Mise à niveau reprise (status : {c.get('status', '?')}).")
         rprint(f"[dim]Suivre avec : cetic k8s upgrades {cluster_id}[/dim]")
         return
@@ -1035,13 +1037,15 @@ def upgrade_patch(
     if not patch:
         en_cours = _fmt_upgrade(c.get("upgrade_en_cours"))
         if en_cours:
-            rprint(f"[yellow]Mise à niveau déjà en cours : {en_cours}.[/yellow]")
+            rprint(f"[yellow]Mise à niveau déjà en cours : {en_cours}.[/yellow]",
+                   file=sys.stderr)
         else:
-            rprint("[yellow]Aucun patch disponible pour ce cluster.[/yellow]")
+            rprint("[yellow]Aucun patch disponible pour ce cluster.[/yellow]",
+                   file=sys.stderr)
         raise typer.Exit(0)
     version = patch.get("version")
     if not version or not _K8S_VERSION_RE.match(version):
-        rprint(f"[red]Patch disponible illisible : {patch!r}.[/red]")
+        rprint(f"[red]Patch disponible illisible : {patch!r}.[/red]", file=sys.stderr)
         raise typer.Exit(1)
     if patch.get("templates_ok") is False:
         _warn(f"Aucun template {version} n'est prêt pour l'OS d'au moins un pool : "
@@ -1056,11 +1060,23 @@ def upgrade_patch(
         c = client.post(f"/v1/k8s/clusters/{cluster_id}/upgrade-patch?version={version}")
     except client.APIError as e:
         _fail(e)
+    if _emit_machine(c):
+        return
     rprint(f"[green]✓[/green] Patch {version} lancé (status : {c.get('status', '?')}).")
     op = _fmt_upgrade(c.get("upgrade_en_cours"))
     if op:
         rprint(f"[dim]{op}[/dim]")
         rprint(f"[dim]Suivre avec : cetic k8s upgrades {cluster_id}[/dim]")
+
+
+def _emit_machine(c: dict) -> bool:
+    """`-o json|yaml` : émet le cluster renvoyé sur stdout (sans les champs
+    `proxy_*`, comme `get`) et rend True ; en table, ne fait rien."""
+    if _is_table():
+        return False
+    render_one({k: v for k, v in (c or {}).items() if not k.startswith("proxy_")},
+               title="Cluster")
+    return True
 
 
 @app.command(name="upgrade-cancel")
@@ -1083,7 +1099,8 @@ def upgrade_cancel(
     op = c.get("upgrade_en_cours")
     if not op or op.get("statut") != "en_pause":
         if op:
-            rprint(f"[red]Mise à niveau en cours, pas en pause : {_fmt_upgrade(op)}.[/red]",
+            statut = _UPGRADE_STATUT.get(op.get("statut", ""), op.get("statut") or "?")
+            rprint(f"[red]Mise à niveau {statut}, pas en pause : {_fmt_upgrade(op)}.[/red]",
                    file=sys.stderr)
             rprint("[dim]Une étape en cours se termine toujours ; seule une mise à niveau "
                    "en pause s'annule.[/dim]", file=sys.stderr)
@@ -1115,6 +1132,8 @@ def upgrade_cancel(
                    f"cetic k8s upgrades {cluster_id}.[/dim]", file=sys.stderr)
             raise typer.Exit(1) from None
         _fail(e)
+    if _emit_machine(c):
+        return
     rprint(f"[green]✓[/green] Mise à niveau annulée (version du plan de contrôle : "
            f"{c.get('k8s_version', '?')}, status : {c.get('status', '?')}).")
     rprint(f"[dim]Historique : cetic k8s upgrades {cluster_id}[/dim]")

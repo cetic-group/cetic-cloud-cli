@@ -496,7 +496,8 @@ def test_upgrade_patch_none_available(runner, mock_api):
     mock_api.get(BASE).mock(return_value=httpx.Response(200, json=_cluster()))
     result = runner.invoke(app, ["k8s", "upgrade-patch", CID, "--yes"])
     assert result.exit_code == 0
-    assert "Aucun patch disponible" in result.stdout
+    assert "Aucun patch disponible" in result.stderr
+    assert result.stdout == ""
     assert _no_call(mock_api, "POST")
 
 
@@ -910,7 +911,8 @@ def test_upgrade_cancel_yes_skips_prompt(runner, mock_api):
 
 @pytest.mark.parametrize(("op", "needle"), [
     (None, "Aucune mise à niveau en attente"),
-    (OPERATION, "pas en pause"),
+    (OPERATION, "Mise à niveau en cours, pas en pause"),
+    (dict(OPERATION, statut="en_attente"), "Mise à niveau en attente, pas en pause"),
 ])
 def test_upgrade_cancel_refused_locally_when_not_paused(runner, mock_api, op, needle):
     mock_api.get(BASE).mock(return_value=httpx.Response(
@@ -979,3 +981,46 @@ def test_get_shows_cancelled_status(runner, mock_api):
     assert result.exit_code == 0, result.output
     assert ("mineure 1.31.4 → 1.32.0, annulée (automatique, 1/3 étapes, 2 annulée(s))"
             in _flat(result.stdout))
+
+
+def test_upgrade_patch_still_resumes_paused_patch(runner, mock_api):
+    """Garde : le CLI ne doit pas être plus strict que le serveur, un PATCH en
+    pause reste repris par `upgrade-patch`."""
+    pause = dict(OPERATION, statut="en_pause", type="patch")
+    mock_api.get(BASE).mock(return_value=httpx.Response(
+        200, json=_cluster(upgrade_en_cours=pause)))
+    cap = _capture(mock_api.post(f"{BASE}/upgrade-patch"), 200,
+                   _cluster(status="updating", upgrade_en_cours=OPERATION))
+    result = runner.invoke(app, ["k8s", "upgrade-patch", CID, "--yes"])
+    assert result.exit_code == 0, result.output
+    assert cap["params"] == {}
+    assert "Mise à niveau reprise" in result.stdout
+
+
+def test_upgrade_cancel_json_output(runner, mock_api, monkeypatch):
+    monkeypatch.setenv("CCP_OUTPUT", "json")
+    mock_api.get(BASE).mock(return_value=httpx.Response(
+        200, json=_cluster(upgrade_en_cours=PAUSE_MINEURE)))
+    retour = dict(_cluster(k8s_version="1.31.4"), proxy_vip_vnet="10.0.0.1")
+    mock_api.post(f"{BASE}/upgrade-cancel").mock(
+        return_value=httpx.Response(200, json=retour))
+    result = runner.invoke(app, ["k8s", "upgrade-cancel", CID, "--yes"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.stdout)
+    assert data["id"] == CID and data["k8s_version"] == "1.31.4"
+    assert "proxy_vip_vnet" not in data
+
+
+@pytest.mark.parametrize("paused", [True, False])
+def test_upgrade_patch_json_output(runner, mock_api, monkeypatch, paused):
+    monkeypatch.setenv("CCP_OUTPUT", "json")
+    cluster = (_cluster(upgrade_en_cours=dict(OPERATION, statut="en_pause")) if paused
+               else _cluster(patch_disponible=PATCH))
+    mock_api.get(BASE).mock(return_value=httpx.Response(200, json=cluster))
+    mock_api.post(f"{BASE}/upgrade-patch").mock(return_value=httpx.Response(
+        200, json=_cluster(status="updating", upgrade_en_cours=OPERATION)))
+    result = runner.invoke(app, ["k8s", "upgrade-patch", CID, "--yes"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.stdout)
+    assert data["status"] == "updating"
+    assert data["upgrade_en_cours"] == OPERATION
