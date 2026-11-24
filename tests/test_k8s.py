@@ -58,7 +58,7 @@ def _create_args(*extra: str) -> list[str]:
     ]
 
 
-def test_create_default_plan_is_starter(runner, mock_api):
+def test_create_default_leaves_plan_to_server(runner, mock_api):
     captured: dict[str, Any] = {}
 
     def _capture(request: httpx.Request) -> httpx.Response:
@@ -68,10 +68,11 @@ def test_create_default_plan_is_starter(runner, mock_api):
     mock_api.post("/v1/k8s/clusters").mock(side_effect=_capture)
     result = runner.invoke(app, _create_args())
     assert result.exit_code == 0, result.stdout
-    assert captured["body"]["plan"] == "starter"
-    # `tier` est déprécié : plus jamais envoyé.
+    # Ni --plan ni --tier : le serveur applique son défaut (starter).
+    assert "plan" not in captured["body"]
     assert "tier" not in captured["body"]
     assert "déprécié" not in result.output
+    assert "plan : starter" in result.stdout
 
 
 def test_create_tier_prod_maps_to_standard_with_warning(runner, mock_api):
@@ -84,8 +85,9 @@ def test_create_tier_prod_maps_to_standard_with_warning(runner, mock_api):
     mock_api.post("/v1/k8s/clusters").mock(side_effect=_capture)
     result = runner.invoke(app, _create_args("--tier", "prod"))
     assert result.exit_code == 0, result.stdout
+    # `tier` transmis avec `plan` : une API antérieure à #2143 ignore `plan`.
     assert captured["body"]["plan"] == "standard"
-    assert "tier" not in captured["body"]
+    assert captured["body"]["tier"] == "prod"
     assert "Cluster créé" in result.stdout
     # Avertissement de dépréciation sur stderr, pas dans stdout.
     assert "déprécié" in result.stderr
@@ -104,6 +106,7 @@ def test_create_tier_case_insensitive(runner, mock_api):
     result = runner.invoke(app, _create_args("--tier", "PROD"))
     assert result.exit_code == 0, result.stdout
     assert captured["body"]["plan"] == "standard"
+    assert captured["body"]["tier"] == "prod"
 
 
 def test_create_tier_invalid_rejected(runner, mock_api):

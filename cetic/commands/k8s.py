@@ -1,5 +1,6 @@
 """cetic k8s — clusters Kubernetes managés (CLKS)."""
 
+import json
 import re
 import sys
 from datetime import date
@@ -65,12 +66,7 @@ def _error_hint(e: client.APIError) -> str | None:
     quoi faire avec le CLI. `None` quand l'erreur n'appelle rien de plus."""
     body = e.body or {}
     if e.code == CODE_PLAN_RECREATION:
-        cible = body.get("to") or "<plan>"
-        return (
-            "Starter ↔ Standard/Pro ne se change pas à chaud : créez un nouveau "
-            f"cluster avec --plan {cible} (cetic k8s create … --plan {cible}) "
-            "puis migrez les charges."
-        )
+        return _recreation_hint(body.get("to") or "<plan>")
     if e.code == CODE_PLAN_NODE_LIMIT:
         plan = body.get("plan") or "?"
         return (
@@ -93,12 +89,21 @@ def _error_hint(e: client.APIError) -> str | None:
     return None
 
 
+def _recreation_hint(cible: str) -> str:
+    return (
+        "Starter ↔ Standard/Pro ne se change pas à chaud : créez un nouveau "
+        f"cluster avec --plan {cible} (cetic k8s create … --plan {cible}) "
+        "puis migrez les charges."
+    )
+
+
 def _fail(e: client.APIError) -> NoReturn:
     """Affiche l'erreur de l'API (et son conseil éventuel) puis sort en 1."""
-    rprint(f"[red]Erreur : {e.detail}[/red]")
+    # stderr : `kubeconfig > fichier` et `-o json` ne reçoivent jamais l'erreur.
+    rprint(f"[red]Erreur : {e.detail}[/red]", file=sys.stderr)
     hint = _error_hint(e)
     if hint:
-        rprint(f"[dim]{hint}[/dim]")
+        rprint(f"[dim]{hint}[/dim]", file=sys.stderr)
     raise typer.Exit(1)
 
 
@@ -328,11 +333,14 @@ def list_clusters(region: str | None = typer.Option(None, "--region", "-r")) -> 
          "plan": _fmt_plan(_cluster_plan(c)) if _is_table() else _cluster_plan(c),
          "tier": _fmt_tier(c.get("tier")) if _is_table() else c.get("tier"),
          "status": c["status"],
-         "update": _fmt_update_column(c),
          "patch_disponible": c.get("patch_disponible"),
          "upgrade_en_cours": c.get("upgrade_en_cours")}
         for c in items
     ]
+    if _is_table():
+        # Colonne de lecture humaine : jamais dans le JSON/YAML.
+        for row, c in zip(rows, items, strict=True):
+            row["update"] = _fmt_update_column(c)
     render_list(rows, title=f"Clusters K8s ({len(rows)})",
                 columns=[("id", "ID"), ("name", "Nom"), ("region", "Région"),
                          ("k8s_version", "Version"), ("os", "OS"),
@@ -360,10 +368,11 @@ def get(cluster_id: str = typer.Argument(...)) -> None:
     plan = _cluster_plan(c)
     if plan:
         c["plan"] = plan
+    if _is_table():
+        # `max_nodes` n'est pas un champ de l'API : affiché en table seulement.
         entry = _plan_entry(plan)
         if entry and entry.get("max_nodes") is not None:
             c["max_nodes"] = entry["max_nodes"]
-    if _is_table():
         c = _cluster_table_view(c)
     render_one(c, title=f"Cluster {c.get('name', cluster_id)}")
 
@@ -770,7 +779,6 @@ def create(
         if plan_norm is None:
             plan_norm = _PLAN_FROM_TIER[tier_norm]
         _warn(f"--tier est déprécié : utilisez --plan {plan_norm}.")
-    plan_norm = plan_norm or "starter"
 
     os_norm = os_image.lower()
     if os_norm not in VALID_OS:
@@ -828,7 +836,6 @@ def create(
         "k8s_version": k8s_version,
         "os_image": os_norm,
         "os_template_key": resolved_template_key,
-        "plan": plan_norm,
         "initial_pool": pool_body,
         "autoscaler_scale_down_delay_after_add": scale_down_delay,
         "autoscaler_scale_down_unneeded_time": scale_down_unneeded,
@@ -836,6 +843,13 @@ def create(
         "ingress_controller_scope": ingress_scope,
         "ingress_controller_class": ingress_class,
     }
+    # Ni --plan ni --tier : rien d'envoyé, le serveur applique son défaut
+    # (starter). `tier` est transmis quand il est fourni : une API antérieure à
+    # #2143 ignore `plan` et créerait sinon un cluster `dev` en silence.
+    if plan_norm is not None:
+        body["plan"] = plan_norm
+    if tier is not None:
+        body["tier"] = tier.lower()
     if ingress_ip_id:
         body["ingress_public_ip_id"] = ingress_ip_id
     if ingress_internal_ip:
@@ -851,7 +865,7 @@ def create(
         _fail(e)
     rprint(
         f"[green]✓[/green] Cluster créé : [bold]{c['id']}[/bold] "
-        f"(plan : {_cluster_plan(c) or plan_norm}, status: {c.get('status', '?')})"
+        f"(plan : {_cluster_plan(c) or plan_norm or 'starter'}, status: {c.get('status', '?')})"
     )
     rprint("[dim]Le provisioning prend 5-15 min. Suivre avec : cetic k8s get {id}[/dim]")
 
@@ -874,8 +888,21 @@ def set_plan(
     visé. Le prix du plan s'applique dès le changement.
     """
     plan_norm = _normalize_plan(plan)
+    try:
+        actuel = _cluster_plan(client.get(f"/v1/k8s/clusters/{cluster_id}"))
+    except client.APIError as e:
+        _fail(e)
+    if actuel == plan_norm:
+        rprint(f"[yellow]Le cluster est déjà au plan {plan_norm} : rien à changer.[/yellow]")
+        raise typer.Exit(0)
+    if actuel and (actuel == "starter") != (plan_norm == "starter"):
+        # Même refus que l'API (409), avant toute confirmation.
+        rprint(f"[red]Passer de {actuel} à {plan_norm} demande de recréer le "
+               "cluster.[/red]", file=sys.stderr)
+        rprint(f"[dim]{_recreation_hint(plan_norm)}[/dim]", file=sys.stderr)
+        raise typer.Exit(1)
     if not yes and not typer.confirm(
-        f"Passer le cluster {cluster_id} au plan {plan_norm} ? "
+        f"Passer le cluster {cluster_id} du plan {actuel or '?'} au plan {plan_norm} ? "
         "Le prix du plan s'applique dès le changement.",
         err=True,
     ):
@@ -920,10 +947,22 @@ def upgrade_version(
         f"[green]✓[/green] Plan de contrôle → {c.get('k8s_version', k8s_version)} "
         f"(status : {c.get('status', '?')})"
     )
-    rprint(
-        f"[dim]Pools à mettre à niveau ensuite : cetic k8s pool upgrade {cluster_id} "
-        "<POOL> --version <VERSION>[/dim]"
-    )
+    cible = c.get("k8s_version") or k8s_version
+    restants = [
+        p for p in c.get("node_pools") or []
+        if _norm_version(p.get("k8s_version") or cible) != _norm_version(cible)
+    ]
+    if restants:
+        rprint("Pools restés sur leur version, à mettre à niveau un par un :")
+        for p in restants:
+            rprint(
+                f"  {p.get('name', p.get('id'))} ({p.get('k8s_version')}) : "
+                f"cetic k8s pool upgrade {cluster_id} {p.get('id')} --version {cible}"
+            )
+
+
+def _norm_version(v: str | None) -> str:
+    return (v or "").lstrip("vV")
 
 
 @app.command(name="upgrade", hidden=True)
@@ -945,6 +984,9 @@ def upgrade_patch(
 ) -> None:
     """Applique le patch disponible en un geste : plan de contrôle puis pools.
 
+    Une mise à niveau EN PAUSE (fenêtre de maintenance terminée) est proposée
+    à la reprise immédiate.
+
     La cible est le patch affiché par `cetic k8s get` (`patch_disponible`) :
     plan de contrôle d'abord, puis chaque pool de la même mineure, l'un après
     l'autre (remplacement progressif des nœuds, avec drain). Les pools d'une
@@ -955,6 +997,22 @@ def upgrade_patch(
         c = client.get(f"/v1/k8s/clusters/{cluster_id}")
     except client.APIError as e:
         _fail(e)
+    op_courante = c.get("upgrade_en_cours")
+    if op_courante and op_courante.get("statut") == "en_pause":
+        if not yes and not typer.confirm(
+            f"Mise à niveau en pause : {_fmt_upgrade(op_courante)}. La reprendre "
+            "maintenant ?",
+            err=True,
+        ):
+            raise typer.Abort()
+        try:
+            # Sans `?version=` : l'API reprend l'opération en pause telle quelle.
+            c = client.post(f"/v1/k8s/clusters/{cluster_id}/upgrade-patch")
+        except client.APIError as e:
+            _fail(e)
+        rprint(f"[green]✓[/green] Mise à niveau reprise (status : {c.get('status', '?')}).")
+        rprint(f"[dim]Suivre avec : cetic k8s upgrades {cluster_id}[/dim]")
+        return
     patch = c.get("patch_disponible")
     if not patch:
         en_cours = _fmt_upgrade(c.get("upgrade_en_cours"))
@@ -1024,6 +1082,9 @@ def list_upgrades(
 # ── Maintenance (mise à jour automatique) ─────────────────────────────────
 
 _JOURS = ("lun", "mar", "mer", "jeu", "ven", "sam", "dim")
+_JOURS_COMPLETS = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
+# Abréviations exactes ou noms complets, rien d'autre (`jeuxyz` est refusé).
+_JOURS_NOMS = {n: i + 1 for noms in (_JOURS, _JOURS_COMPLETS) for i, n in enumerate(noms)}
 _HEURE_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
 
@@ -1040,11 +1101,12 @@ def _parse_jours(raw: str) -> list[int]:
             jours.update(range(a, b + 1))
         elif re.fullmatch(r"[1-7]", part):
             jours.add(int(part))
-        elif part[:3] in _JOURS and len(part) >= 3:
-            jours.add(_JOURS.index(part[:3]) + 1)
+        elif part in _JOURS_NOMS:
+            jours.add(_JOURS_NOMS[part])
         else:
             raise typer.BadParameter(
-                f"Jour invalide : '{part}'. Attendu 1-7 (1 = lundi) ou lun…dim."
+                f"Jour invalide : '{part}'. Attendu 1-7 (1 = lundi), lun…dim ou "
+                "lundi…dimanche."
             )
     if not jours:
         raise typer.BadParameter("--jours : au moins un jour.")
@@ -1218,6 +1280,43 @@ def maintenance_set(
 # ── SSO OIDC ──────────────────────────────────────────────────────────────
 
 
+_OIDC_DEFAUTS: dict[str, Any] = {
+    "username_claim": "email", "username_prefix": "oidc:", "groups_claim": "groups",
+    "groups_prefix": "oidc:", "extra_scopes": [], "ca_pem": None,
+}
+_OIDC_CLES = ("issuer_url", "client_id", "username_claim", "username_prefix",
+              "groups_claim", "groups_prefix", "extra_scopes", "ca_pem")
+_CA_PEM_MAX = 65536
+
+
+def _fmt_ca(pem: str | None) -> str | None:
+    """CA abrégée pour la table : nombre de certificats et taille."""
+    if not pem:
+        return None
+    n = pem.count("-----BEGIN CERTIFICATE-----")
+    return f"{n} certificat(s) PEM, {len(pem)} caractères"
+
+
+def _read_ca_file(path: Path) -> str:
+    """Lit une CA PEM ; sortie propre (pas de trace) si illisible ou invalide."""
+    try:
+        pem = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        rprint(f"[red]--ca-file illisible ({path}) : {exc.__class__.__name__}. "
+               "Attendu un fichier PEM texte (un certificat DER doit être converti : "
+               "openssl x509 -inform der -in ca.der -out ca.pem).[/red]", file=sys.stderr)
+        raise typer.Exit(1) from None
+    if "-----BEGIN CERTIFICATE-----" not in pem:
+        rprint(f"[red]--ca-file : {path} ne contient aucun certificat PEM "
+               "(-----BEGIN CERTIFICATE-----).[/red]", file=sys.stderr)
+        raise typer.Exit(1)
+    if len(pem) > _CA_PEM_MAX:
+        rprint(f"[red]--ca-file : {len(pem)} caractères, {_CA_PEM_MAX} au plus.[/red]",
+               file=sys.stderr)
+        raise typer.Exit(1)
+    return pem
+
+
 @oidc_app.command(name="get")
 def oidc_get(cluster_id: str = typer.Argument(...)) -> None:
     """Affiche la configuration SSO (OIDC) du cluster."""
@@ -1226,59 +1325,117 @@ def oidc_get(cluster_id: str = typer.Argument(...)) -> None:
     except client.APIError as e:
         _fail(e)
     o = c.get("oidc")
-    if not o:
-        if _is_table():
-            rprint("[yellow]SSO non configuré sur ce cluster (cetic k8s oidc set).[/yellow]")
+    if not _is_table():
+        # JSON/YAML : `null` sans SSO, l'objet brut sinon.
+        if config.get_output() == "yaml":
+            import yaml
+            print(yaml.safe_dump(o, allow_unicode=True, sort_keys=False), end="")
         else:
-            render_one({}, title="OIDC")
+            print(json.dumps(o, ensure_ascii=False, indent=2))
         return
-    render_one(o, title=f"SSO du cluster {c.get('name', cluster_id)}")
+    if not o:
+        rprint("[yellow]SSO non configuré sur ce cluster (cetic k8s oidc set).[/yellow]")
+        return
+    vue = dict(o)
+    vue["ca_pem"] = _fmt_ca(o.get("ca_pem"))
+    render_one(vue, title=f"SSO du cluster {c.get('name', cluster_id)}")
 
 
 @oidc_app.command(name="set")
 def oidc_set(
     cluster_id: str = typer.Argument(...),
-    issuer_url: str = typer.Option(
-        ..., "--issuer-url",
-        help="URL de l'émetteur OIDC (https, port 443, joignable publiquement)."),
-    client_id: str = typer.Option(..., "--client-id", help="Identifiant du client OIDC."),
-    username_claim: str = typer.Option("email", "--username-claim"),
-    username_prefix: str = typer.Option("oidc:", "--username-prefix"),
+    issuer_url: str | None = typer.Option(
+        None, "--issuer-url",
+        help=("URL de l'émetteur OIDC (https, port 443, joignable publiquement). "
+              "Requise si le SSO n'est pas encore configuré.")),
+    client_id: str | None = typer.Option(
+        None, "--client-id",
+        help="Identifiant du client OIDC. Requis si le SSO n'est pas encore configuré."),
+    username_claim: str | None = typer.Option(None, "--username-claim",
+                                              help="Défaut : email."),
+    username_prefix: str | None = typer.Option(None, "--username-prefix",
+                                               help="Défaut : oidc:."),
     groups_claim: str | None = typer.Option(
-        "groups", "--groups-claim", help="Claim des groupes (cf. --no-groups)."),
+        None, "--groups-claim", help="Claim des groupes (défaut : groups ; cf. --no-groups)."),
     no_groups: bool = typer.Option(
         False, "--no-groups", help="Ne lit aucun claim de groupes."),
-    groups_prefix: str = typer.Option("oidc:", "--groups-prefix"),
+    groups_prefix: str | None = typer.Option(None, "--groups-prefix",
+                                             help="Défaut : oidc:."),
     extra_scopes: list[str] | None = typer.Option(
-        None, "--scope", help="Scope OIDC supplémentaire (répétable, 10 au plus)."),
+        None, "--scope",
+        help="Scope OIDC supplémentaire (répétable, 10 au plus). Remplace la liste."),
+    no_scopes: bool = typer.Option(False, "--no-scopes", help="Vide la liste des scopes."),
     ca_file: Path | None = typer.Option(
-        None, "--ca-file", exists=True, dir_okay=False, readable=True,
+        None, "--ca-file", dir_okay=False,
         help="CA (PEM) de l'émetteur s'il n'est pas signé par une autorité publique."),
+    no_ca: bool = typer.Option(False, "--no-ca", help="Retire la CA configurée."),
     yes: bool = typer.Option(False, "--yes", "-y"),
 ) -> None:
     """Configure le SSO du cluster sur votre fournisseur d'identité (OIDC).
 
-    L'apiserver redémarre si la configuration change (coupure brève de l'API
-    sur le plan Starter). Ensuite : `cetic k8s kubeconfig <ID> --mode sso`, et
-    des (Cluster)RoleBinding sur vos groupes préfixés (ex. `oidc:admins`).
+    Les options omises gardent la valeur actuelle (CA et scopes compris), ou
+    leur défaut si le SSO n'est pas encore configuré. La confirmation liste ce
+    qui change. L'apiserver redémarre si la configuration change (coupure
+    brève de l'API sur le plan Starter). Ensuite : `cetic k8s kubeconfig <ID>
+    --mode sso`, et des (Cluster)RoleBinding sur vos groupes préfixés (ex.
+    `oidc:admins`).
     """
-    if not issuer_url.startswith("https://"):
-        rprint("[red]--issuer-url doit être en https://.[/red]")
+    for a, b, msg in ((groups_claim, no_groups, "--groups-claim et --no-groups"),
+                      (extra_scopes, no_scopes, "--scope et --no-scopes"),
+                      (ca_file, no_ca, "--ca-file et --no-ca")):
+        if a and b:
+            rprint(f"[red]{msg} sont incompatibles.[/red]", file=sys.stderr)
+            raise typer.Exit(1)
+    if issuer_url is not None and not issuer_url.strip().lower().startswith("https://"):
+        rprint("[red]--issuer-url doit être en https://.[/red]", file=sys.stderr)
         raise typer.Exit(1)
-    body: dict[str, Any] = {
-        "issuer_url": issuer_url,
-        "client_id": client_id,
-        "username_claim": username_claim,
-        "username_prefix": username_prefix,
-        "groups_claim": None if no_groups else groups_claim,
-        "groups_prefix": groups_prefix,
-        "extra_scopes": list(extra_scopes or []),
-        "ca_pem": ca_file.read_text() if ca_file else None,
+    ca_pem = _read_ca_file(ca_file) if ca_file else None
+    try:
+        c = client.get(f"/v1/k8s/clusters/{cluster_id}")
+    except client.APIError as e:
+        _fail(e)
+    actuelle = c.get("oidc") or None
+    base = {k: (actuelle or {}).get(k, _OIDC_DEFAUTS.get(k)) for k in _OIDC_CLES}
+    demandes: dict[str, Any] = {
+        "issuer_url": issuer_url, "client_id": client_id,
+        "username_claim": username_claim, "username_prefix": username_prefix,
+        "groups_claim": groups_claim, "groups_prefix": groups_prefix,
+        "extra_scopes": list(extra_scopes) if extra_scopes else None, "ca_pem": ca_pem,
     }
+    body = {k: (demandes[k] if demandes[k] is not None else base[k]) for k in _OIDC_CLES}
+    if no_groups:
+        body["groups_claim"] = None
+    if no_scopes:
+        body["extra_scopes"] = []
+    if no_ca:
+        body["ca_pem"] = None
+    body["extra_scopes"] = list(body["extra_scopes"] or [])
+    manquants = [f"--{k.replace('_', '-')}" for k in ("issuer_url", "client_id")
+                 if not body[k]]
+    if manquants:
+        rprint(f"[red]SSO non configuré : {' et '.join(manquants)} requis.[/red]",
+               file=sys.stderr)
+        raise typer.Exit(1)
+
+    def _montre(k: str, v: Any) -> str:
+        if k == "ca_pem":
+            return _fmt_ca(v) or "aucune"
+        if isinstance(v, list):
+            return ", ".join(v) or "aucun"
+        return "aucun" if v is None else str(v)
+
+    if actuelle:
+        changes = [f"  {k} : {_montre(k, base[k])} → {_montre(k, body[k])}"
+                   for k in _OIDC_CLES if base[k] != body[k]]
+        if not changes:
+            rprint("[yellow]Configuration SSO identique : rien à changer.[/yellow]")
+            raise typer.Exit(0)
+    else:
+        changes = [f"  {k} : {_montre(k, body[k])}" for k in _OIDC_CLES]
+    entete = "Modifications du SSO" if actuelle else "Nouvelle configuration SSO"
+    rprint(f"{entete} du cluster {cluster_id} :\n" + "\n".join(changes), file=sys.stderr)
     if not yes and not typer.confirm(
-        f"Configurer le SSO du cluster {cluster_id} sur {issuer_url} ? "
-        "L'apiserver redémarre si la configuration change.",
-        err=True,
+        "Appliquer ? L'apiserver redémarre.", err=True,
     ):
         raise typer.Abort()
     try:
@@ -1288,7 +1445,7 @@ def oidc_set(
     rprint("[green]✓[/green] SSO configuré.")
     rprint(f"[dim]Kubeconfig : cetic k8s kubeconfig {cluster_id} --mode sso[/dim]")
     rprint(f"[dim]Droits : kubectl create clusterrolebinding … "
-           f"--group={groups_prefix}<groupe>[/dim]")
+           f"--group={body['groups_prefix']}<groupe>[/dim]")
 
 
 @oidc_app.command(name="delete")
