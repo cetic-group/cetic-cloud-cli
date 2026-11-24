@@ -121,7 +121,8 @@ def test_create_plan_pro_sent(runner, mock_api):
     result = runner.invoke(app, _create_args("--plan", "PRO"))
     assert result.exit_code == 0, result.output
     assert cap["body"]["plan"] == "pro"
-    assert "tier" not in cap["body"]
+    # `tier` cohérent joint : une API antérieure à #2143 ne lit que lui.
+    assert cap["body"]["tier"] == "prod"
     assert "plan : pro" in result.stdout
 
 
@@ -660,6 +661,16 @@ def test_oidc_set_body_defaults(runner, mock_api):
     }
     assert "Nouvelle configuration SSO" in result.stderr
     assert "--mode sso" in _flat(result.stdout)
+
+
+def test_oidc_set_strips_issuer_url(runner, mock_api):
+    mock_api.get(BASE).mock(return_value=httpx.Response(200, json=_cluster()))
+    cap = _capture(mock_api.put(f"{BASE}/oidc"))
+    result = runner.invoke(app, ["k8s", "oidc", "set", CID, "--issuer-url",
+                                 "  https://sso.example.com/realms/x ", "--client-id", "kube",
+                                 "--yes"])
+    assert result.exit_code == 0, result.output
+    assert cap["body"]["issuer_url"] == "https://sso.example.com/realms/x"
 
 
 def test_oidc_set_first_time_requires_issuer_and_client(runner, mock_api):

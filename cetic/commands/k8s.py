@@ -848,7 +848,9 @@ def create(
     # #2143 ignore `plan` et créerait sinon un cluster `dev` en silence.
     if plan_norm is not None:
         body["plan"] = plan_norm
-    if tier is not None:
+        # `tier` cohérent toujours joint : une API antérieure à #2143 ne lit que lui.
+        body["tier"] = tier.lower() if tier is not None else _TIER_FROM_PLAN[plan_norm]
+    elif tier is not None:
         body["tier"] = tier.lower()
     if ingress_ip_id:
         body["ingress_public_ip_id"] = ingress_ip_id
@@ -1386,7 +1388,9 @@ def oidc_set(
         if a and b:
             rprint(f"[red]{msg} sont incompatibles.[/red]", file=sys.stderr)
             raise typer.Exit(1)
-    if issuer_url is not None and not issuer_url.strip().lower().startswith("https://"):
+    if issuer_url is not None:
+        issuer_url = issuer_url.strip()
+    if issuer_url is not None and not issuer_url.lower().startswith("https://"):
         rprint("[red]--issuer-url doit être en https://.[/red]", file=sys.stderr)
         raise typer.Exit(1)
     ca_pem = _read_ca_file(ca_file) if ca_file else None
