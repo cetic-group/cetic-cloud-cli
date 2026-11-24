@@ -524,7 +524,7 @@ cetic container create --name api --region RNN --vnet <VNET> \
     --disk-gb 40                           # défaut = disque du plan si omis
 cetic container resize-disk <ID> --disk-gb 80    # agrandissement uniquement
 cetic vm resize-disk <ID> --disk-gb 100
-cetic k8s create --name prod --region RNN --disk-gb 60          # pool initial
+cetic k8s create --name prod --region RNN --disk-gb 60          # pool initial (défaut 20 Go, fixé à la création)
 cetic k8s pool create <cluster-id> --name gpu --disk-gb 60
 cetic db pg resize-disk <ID> --storage-gb 50     # idem mysql/redis/mongo
 cetic registry create --name reg --region RNN --storage-gb 100
@@ -566,6 +566,36 @@ cetic k8s pool list <cluster-id>      # colonne Version : version du pool (worke
 cetic k8s pool create <cluster-id> --name gpu --version v1.31.0   # --version=workers (≤ CP, omis=hérite)
 cetic k8s pool update <cluster-id> <pool-id> --version v1.31.2    # pin/upgrade la version du pool
 
+# Kubernetes — plans, mises à niveau, maintenance, SSO (cetic-cloud-platform#2143)
+cetic k8s cluster-plans               # starter (gratuit) | standard | pro : nœuds max, etcd, HA, prix
+cetic k8s create --name prod --region RNN --plan standard   # --tier dev|prod déprécié (dev=starter, prod=standard)
+cetic k8s set-plan <cluster-id> --plan pro                  # standard ↔ pro à chaud ; starter ↔ payant = recréer
+cetic k8s get <cluster-id>            # plan, nœuds max, volume etcd, patch disponible, mise à niveau en cours
+cetic k8s upgrade-version <cluster-id> --version v1.32.0    # PLAN DE CONTRÔLE seul (les pools restent épinglés)
+cetic k8s pool upgrade <cluster-id> <pool-id> --version v1.32.0   # puis chaque pool
+cetic k8s upgrade-patch <cluster-id>  # patch disponible en un geste : plan de contrôle puis pools
+cetic k8s upgrades <cluster-id>       # historique (manuelles et automatiques)
+cetic k8s maintenance get <cluster-id>
+cetic k8s maintenance set <cluster-id> --auto-mineure --jours sam,dim --heure-debut 03:00 \
+    --gel 2026-12-20:2027-01-03       # fenêtre (options omises = inchangées), périodes de gel
+cetic k8s oidc set <cluster-id> --issuer-url https://sso.example.com/realms/acme --client-id kube
+cetic k8s kubeconfig <cluster-id> --mode sso > ~/.kube/config     # kubelogin (kubectl oidc-login)
+cetic k8s oidc delete <cluster-id>
+```
+
+> **Changements de comportement (cetic-cloud-platform#2143)**
+> - `cetic k8s upgrade-version` (et l'ancien `cetic k8s upgrade`, désormais alias
+>   déprécié) ne met plus à niveau que le **plan de contrôle** : les pools qui
+>   héritaient de sa version restent sur l'ancienne. La commande liste chaque pool
+>   concerné avec la commande exacte `cetic k8s pool upgrade <cluster> <pool> --version <X>` ;
+>   pour un patch, `cetic k8s upgrade-patch` traite plan de contrôle et pools en une fois.
+> - `cetic k8s create --tier` est déprécié au profit de `--plan` (toujours transmis
+>   tel quel à l'API, avec le `plan` correspondant).
+> - `cetic k8s list -o json` : `tier` est la valeur brute (`dev`/`prod`, plus de balisage
+>   Rich) ; nouvelles clés `plan`, `patch_disponible`, `upgrade_en_cours`.
+> - Les erreurs de l'API des commandes `cetic k8s` sont écrites sur stderr.
+
+```bash
 # Planificateur marche/arrêt (depuis v0.41.0) — éteindre nuits + week-ends
 cetic schedule list                                        # état ON/OFF + coût estimé/mois
 cetic schedule create weekend --vm web-01 --off "fri:20-mon:08"   # OFF vendredi 20h → lundi 08h

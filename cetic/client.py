@@ -15,9 +15,27 @@ from cetic import config
 
 
 class APIError(Exception):
-    def __init__(self, status_code: int, detail: str) -> None:
+    """Erreur HTTP de l'API.
+
+    `detail` : message lisible (aplati, cf. `_normalize_detail`). `code` et
+    `body` : code machine et objet `detail` d'origine quand l'API renvoie une
+    erreur structurée (`{"code": ..., "message": ..., ...}`), `None` sinon —
+    pour qu'une commande adapte son message au cas précis sans analyser le
+    texte.
+    """
+
+    def __init__(
+        self,
+        status_code: int,
+        detail: str,
+        *,
+        code: str | None = None,
+        body: dict[str, Any] | None = None,
+    ) -> None:
         self.status_code = status_code
         self.detail = detail
+        self.code = code
+        self.body = body
         super().__init__(f"[{status_code}] {detail}")
 
 
@@ -158,8 +176,12 @@ def _normalize_detail(detail: Any) -> str:
 def _raise_for_status(resp: httpx.Response) -> None:
     if resp.is_success:
         return
+    raw: Any = None
     try:
-        detail = _normalize_detail(resp.json().get("detail", resp.text))
+        raw = resp.json().get("detail", resp.text)
+        detail = _normalize_detail(raw)
     except Exception:
         detail = resp.text
-    raise APIError(resp.status_code, detail)
+    body = raw if isinstance(raw, dict) else None
+    code = body.get("code") if body and isinstance(body.get("code"), str) else None
+    raise APIError(resp.status_code, detail, code=code, body=body)
