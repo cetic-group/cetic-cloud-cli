@@ -1,11 +1,15 @@
 """cetic k8s — clusters Kubernetes managés (CLKS)."""
 
 import re
+import sys
+from datetime import date
+from pathlib import Path
+from typing import Any, NoReturn
 
 import typer
 from rich import print as rprint
 
-from cetic import client
+from cetic import client, config
 from cetic.commands._catalog import render_compute_plans
 from cetic.commands._render import render_list, render_one
 
@@ -45,13 +49,79 @@ def _parse_taint_arg(taint_str: str) -> dict[str, str | None]:
         raise typer.BadParameter(f"Invalid taint '{taint_str}', empty key")
     return {"key": key, "value": value, "effect": effect}
 
+
+# ── Erreurs de l'API ──────────────────────────────────────────────────────
+
+#: Codes machine des refus CCKS (#2143) — `detail.code` du corps de l'erreur.
+CODE_PLAN_RECREATION = "ccks_plan_change_requires_recreation"
+CODE_PLAN_NODE_LIMIT = "ccks_plan_node_limit"
+CODE_IP_BLOCK_NOT_EXTENDABLE = "ccks_node_ip_block_not_extendable"
+
+
+def _error_hint(e: client.APIError) -> str | None:
+    """Conseil actionnable selon le `code` du corps (ou le statut 402).
+
+    Le message de l'API (`e.detail`) dit ce qui est refusé ; le conseil dit
+    quoi faire avec le CLI. `None` quand l'erreur n'appelle rien de plus."""
+    body = e.body or {}
+    if e.code == CODE_PLAN_RECREATION:
+        cible = body.get("to") or "<plan>"
+        return (
+            "Starter ↔ Standard/Pro ne se change pas à chaud : créez un nouveau "
+            f"cluster avec --plan {cible} (cetic k8s create … --plan {cible}) "
+            "puis migrez les charges."
+        )
+    if e.code == CODE_PLAN_NODE_LIMIT:
+        plan = body.get("plan") or "?"
+        return (
+            f"Plan {plan} : {body.get('max_nodes', '?')} nœuds au plus, "
+            f"{body.get('requested_nodes', '?')} demandés (somme, par pool, de "
+            "max(replicas, max)). Réduisez --replicas / --max, ou changez de "
+            "plan (cetic k8s cluster-plans, cetic k8s set-plan)."
+        )
+    if e.code == CODE_IP_BLOCK_NOT_EXTENDABLE:
+        return (
+            f"Bloc d'adresses des nœuds : {body.get('node_ip_block_size', '?')}, "
+            f"il en faut {body.get('required', '?')}. Ce cluster ne peut pas "
+            "monter de plan à chaud : recréez-le avec le plan visé."
+        )
+    if e.status_code == 402:
+        url = body.get("action_url")
+        return "Plafond de dépenses atteint : relevez-le avant de réessayer" + (
+            f" ({url})." if url else " (console, Facturation)."
+        )
+    return None
+
+
+def _fail(e: client.APIError) -> NoReturn:
+    """Affiche l'erreur de l'API (et son conseil éventuel) puis sort en 1."""
+    rprint(f"[red]Erreur : {e.detail}[/red]")
+    hint = _error_hint(e)
+    if hint:
+        rprint(f"[dim]{hint}[/dim]")
+    raise typer.Exit(1)
+
+
+def _warn(message: str) -> None:
+    """Avertissement sur stderr : la sortie json/yaml (stdout) reste lisible."""
+    rprint(f"[yellow]⚠[/yellow] {message}", file=sys.stderr)
+
+
+def _is_table() -> bool:
+    return config.get_output() not in ("json", "yaml")
+
+
 app = typer.Typer(help="CETIC Cloud Kubernetes Service (CLKS)")
 pool_app = typer.Typer(help="Node pools d'un cluster K8s")
 app.add_typer(pool_app, name="pool")
+maintenance_app = typer.Typer(help="Mise à jour automatique d'un cluster (patchs, fenêtre, gels)")
+app.add_typer(maintenance_app, name="maintenance")
+oidc_app = typer.Typer(help="SSO (OIDC) d'un cluster : connexion kubectl par votre IdP")
+app.add_typer(oidc_app, name="oidc")
 
 
 VALID_TIERS = ("dev", "prod")
-VALID_KUBECONFIG_MODES = ("private", "public")
+VALID_KUBECONFIG_MODES = ("private", "public", "sso")
 
 # Familles d'OS proposées pour les nœuds K8s (slug backend `os_image`).
 VALID_OS = ("flatcar", "ubuntu", "rocky9")
@@ -108,26 +178,166 @@ def _fmt_tier(tier: str | None) -> str:
     return f"[{style}]{tier}[/{style}]"
 
 
+# ── Plans du plan de contrôle (#2143) ─────────────────────────────────────
+
+VALID_PLANS = ("starter", "standard", "pro")
+# `tier` (déprécié) ↔ `plan` : mêmes correspondances que l'API.
+_PLAN_FROM_TIER = {"dev": "starter", "prod": "standard"}
+_TIER_FROM_PLAN = {"starter": "dev", "standard": "prod", "pro": "prod"}
+_PLAN_STYLE = {"starter": "cyan", "standard": "yellow", "pro": "magenta"}
+
+# Disque OS par défaut d'un pool (`CCKS_POOL_DISK_DEFAULT_GB` côté API).
+POOL_DISK_DEFAULT_GB = 20
+_DISK_HELP = (
+    f"Taille du disque OS (Go) de chaque nœud. Défaut : {POOL_DISK_DEFAULT_GB} Go "
+    "(ou le disque minimal du plan s'il est plus grand). Fixée à la création "
+    "du pool."
+)
+
+
+def _cluster_plan(c: dict) -> str | None:
+    """Plan du cluster ; une API antérieure à #2143 n'expose que `tier`."""
+    return c.get("plan") or _PLAN_FROM_TIER.get(c.get("tier") or "")
+
+
+def _fmt_plan(plan: str | None) -> str:
+    if not plan:
+        return "—"
+    style = _PLAN_STYLE.get(plan, "white")
+    return f"[{style}]{plan}[/{style}]"
+
+
+def _normalize_plan(plan: str) -> str:
+    p = plan.lower()
+    if p not in VALID_PLANS:
+        rprint(
+            f"[red]--plan invalide : '{plan}'. "
+            f"Valeurs autorisées : {', '.join(VALID_PLANS)}.[/red]"
+        )
+        raise typer.Exit(1)
+    return p
+
+
+def _fetch_cluster_plans() -> list[dict]:
+    try:
+        return client.get("/v1/k8s/clusters/plans")
+    except client.APIError as e:
+        _fail(e)
+
+
+def _plan_entry(plan: str | None) -> dict | None:
+    """Entrée du catalogue d'un plan, best-effort (`None` si illisible) :
+    l'affichage d'un cluster ne doit pas échouer faute de catalogue."""
+    if not plan:
+        return None
+    try:
+        plans = client.get("/v1/k8s/clusters/plans")
+    except Exception:  # noqa: BLE001 — lecture de confort
+        return None
+    return next((p for p in plans or [] if p.get("key") == plan), None)
+
+
+def _fmt_price(p: dict) -> str:
+    monthly = p.get("price_monthly")
+    if monthly is None:
+        return "—"
+    try:
+        if float(monthly) == 0:
+            return "Gratuit"
+    except ValueError:
+        pass
+    return f"{monthly} {p.get('currency') or 'EUR'}/mois"
+
+
+# ── Mises à niveau (#2143) ────────────────────────────────────────────────
+
+_UPGRADE_TYPE = {
+    "plan_de_controle": "plan de contrôle",
+    "pool": "pool",
+    "patch": "patch",
+    "mineure": "mineure",
+}
+_UPGRADE_STATUT = {
+    "en_cours": "en cours",
+    "en_pause": "en pause",
+    "terminee": "terminée",
+    "echec": "échec",
+    "en_attente": "en attente",
+}
+
+
+def _fmt_patch_disponible(p: dict | None) -> str | None:
+    """« v1.31.4 (plan de contrôle + 2 pool(s), ~25 min) »."""
+    if not p:
+        return None
+    cibles = []
+    if p.get("plan_de_controle"):
+        cibles.append("plan de contrôle")
+    pools = p.get("pools") or []
+    if pools:
+        cibles.append(f"{len(pools)} pool(s)")
+    parts = [" + ".join(cibles)] if cibles else []
+    if p.get("duree_estimee_minutes"):
+        parts.append(f"~{p['duree_estimee_minutes']} min")
+    txt = p.get("version", "?") + (f" ({', '.join(parts)})" if parts else "")
+    if p.get("templates_ok") is False:
+        txt += " — template manquant"
+    return txt
+
+
+def _fmt_upgrade(op: dict | None) -> str | None:
+    """« patch v1.31.3 → v1.31.4, en cours (manuelle, 1/3 étapes) »."""
+    if not op:
+        return None
+    etapes = op.get("etapes") or []
+    faites = sum(1 for e in etapes if e.get("statut") == "terminee")
+    details = [_UPGRADE_STATUT.get(op.get("statut", ""), op.get("statut") or "?")]
+    extra = [op["origine"]] if op.get("origine") else []
+    if etapes:
+        extra.append(f"{faites}/{len(etapes)} étapes")
+    return (
+        f"{_UPGRADE_TYPE.get(op.get('type', ''), op.get('type') or '?')} "
+        f"{op.get('version_depart') or '?'} → {op.get('version_cible', '?')}, "
+        f"{details[0]}" + (f" ({', '.join(extra)})" if extra else "")
+    )
+
+
+def _fmt_update_column(c: dict) -> str:
+    """Colonne « Mise à jour » de la liste : l'opération en cours prime sur le
+    patch disponible."""
+    op = c.get("upgrade_en_cours")
+    if op:
+        return f"{_UPGRADE_STATUT.get(op.get('statut', ''), op.get('statut'))} → {op.get('version_cible', '?')}"
+    p = c.get("patch_disponible")
+    if p:
+        return f"patch {p.get('version', '?')} disponible"
+    return "—"
+
+
 @app.command(name="list")
 def list_clusters(region: str | None = typer.Option(None, "--region", "-r")) -> None:
     """Liste les clusters K8s du tenant."""
     try:
         items = client.get("/v1/k8s/clusters", params={"region": region} if region else None)
     except client.APIError as e:
-        rprint(f"[red]Erreur : {e.detail}[/red]")
-        raise typer.Exit(1)
+        _fail(e)
     rows = [
         {"id": c["id"], "name": c["name"], "region": c["region"],
          "k8s_version": c.get("k8s_version", "—"),
          "os": _fmt_os(c.get("os_image")),
-         "tier": _fmt_tier(c.get("tier")),
-         "status": c["status"]}
+         "plan": _fmt_plan(_cluster_plan(c)) if _is_table() else _cluster_plan(c),
+         "tier": _fmt_tier(c.get("tier")) if _is_table() else c.get("tier"),
+         "status": c["status"],
+         "update": _fmt_update_column(c),
+         "patch_disponible": c.get("patch_disponible"),
+         "upgrade_en_cours": c.get("upgrade_en_cours")}
         for c in items
     ]
     render_list(rows, title=f"Clusters K8s ({len(rows)})",
                 columns=[("id", "ID"), ("name", "Nom"), ("region", "Région"),
                          ("k8s_version", "Version"), ("os", "OS"),
-                         ("tier", "Tier"), ("status", "Statut")])
+                         ("plan", "Plan"), ("status", "Statut"),
+                         ("update", "Mise à jour")])
 
 
 @app.command()
@@ -136,8 +346,7 @@ def get(cluster_id: str = typer.Argument(...)) -> None:
     try:
         c = client.get(f"/v1/k8s/clusters/{cluster_id}")
     except client.APIError as e:
-        rprint(f"[red]Erreur : {e.detail}[/red]")
-        raise typer.Exit(1)
+        _fail(e)
     # Les champs `proxy_*` ne concernent pas le client : on les retire de la
     # sortie (table comme JSON/YAML).
     if isinstance(c, dict):
@@ -146,7 +355,48 @@ def get(cluster_id: str = typer.Argument(...)) -> None:
     # scripts JSON/YAML).
     if "os_image" in c:
         c["os"] = _fmt_os(c.get("os_image"))
+    # #2143 — plan et sa limite de nœuds (le cluster n'expose pas `max_nodes` :
+    # lu dans le catalogue des plans, best-effort).
+    plan = _cluster_plan(c)
+    if plan:
+        c["plan"] = plan
+        entry = _plan_entry(plan)
+        if entry and entry.get("max_nodes") is not None:
+            c["max_nodes"] = entry["max_nodes"]
+    if _is_table():
+        c = _cluster_table_view(c)
     render_one(c, title=f"Cluster {c.get('name', cluster_id)}")
+
+
+def _fmt_pool_line(p: dict, cp_version: str | None) -> str:
+    disk = f"{p['disk_gb']} Go" if p.get("disk_gb") else "disque du plan"
+    return (
+        f"{p.get('name', '?')} : {p.get('plan', '?')}, {p.get('replicas', '?')} nœud(s), "
+        f"{disk}, {_fmt_pool_version(p.get('k8s_version'), cp_version)}, "
+        f"{p.get('status', '?')}"
+    )
+
+
+def _cluster_table_view(c: dict) -> dict:
+    """Rendu table de `get` : objets imbriqués résumés en une ligne lisible.
+
+    JSON/YAML gardent les objets bruts (scripts)."""
+    out = dict(c)
+    out["plan"] = _fmt_plan(c.get("plan"))
+    if c.get("etcd_volume_gb") is not None:
+        out["etcd_volume_gb"] = f"{c['etcd_volume_gb']} Gi"
+    if "patch_disponible" in c:
+        out["patch_disponible"] = _fmt_patch_disponible(c.get("patch_disponible"))
+    if "upgrade_en_cours" in c:
+        out["upgrade_en_cours"] = _fmt_upgrade(c.get("upgrade_en_cours"))
+    if "oidc" in c:
+        o = c.get("oidc")
+        out["oidc"] = f"{o.get('issuer_url')} (client {o.get('client_id')})" if o else None
+    if isinstance(c.get("node_pools"), list):
+        out["node_pools"] = " ; ".join(
+            _fmt_pool_line(p, c.get("k8s_version")) for p in c["node_pools"]
+        ) or None
+    return out
 
 
 @app.command()
@@ -155,11 +405,21 @@ def kubeconfig(
     mode: str = typer.Option(
         "private",
         "--mode",
-        help="Endpoint du kubeconfig : private (VNet, défaut) | public (Gateway).",
+        help=(
+            "Endpoint du kubeconfig : private (VNet, défaut) | public (Gateway) | "
+            "sso (endpoint public, connexion par votre fournisseur d'identité via "
+            "kubelogin — cf. cetic k8s oidc set)."
+        ),
         case_sensitive=False,
     ),
 ) -> None:
-    """Récupère le kubeconfig admin du cluster (à coller dans `~/.kube/config`)."""
+    """Récupère le kubeconfig du cluster (à coller dans `~/.kube/config`).
+
+    `private` / `public` : kubeconfig admin par certificat client.
+    `sso` : aucun certificat ; `kubectl` lance `kubectl oidc-login` (plugin
+    kubelogin, à installer) et les droits viennent des (Cluster)RoleBinding
+    posés sur vos groupes (préfixe `oidc:` par défaut).
+    """
     mode_norm = mode.lower()
     if mode_norm not in VALID_KUBECONFIG_MODES:
         rprint(
@@ -173,12 +433,19 @@ def kubeconfig(
             params={"mode": mode_norm},
         )
     except client.APIError as e:
-        rprint(f"[red]Erreur : {e.detail}[/red]")
-        raise typer.Exit(1)
+        _fail(e)
     if isinstance(kc, dict) and "kubeconfig" in kc:
         print(kc["kubeconfig"])
     else:
         print(kc)
+    if mode_norm == "sso":
+        # Sur stderr : `> ~/.kube/config` ne doit recevoir que le YAML.
+        rprint(
+            "[dim]Kubeconfig SSO : nécessite le plugin kubelogin "
+            "(`kubectl krew install oidc-login`). Sans (Cluster)RoleBinding sur "
+            "vos groupes, l'utilisateur n'a aucun droit.[/dim]",
+            file=sys.stderr,
+        )
 
 
 @app.command()
@@ -191,6 +458,38 @@ def plans() -> None:
     render_compute_plans(kind="k8s_node", title="Plans node pool K8s")
 
 
+@app.command(name="cluster-plans")
+def cluster_plans() -> None:
+    """Liste les plans du cluster (plan de contrôle) : starter, standard, pro.
+
+    Le plan fixe la haute disponibilité, le nombre maximal de nœuds (somme,
+    par pool, de max(replicas, max)), le volume etcd et le prix. À ne pas
+    confondre avec `cetic k8s plans` (gabarits des nœuds des pools).
+    """
+    data = _fetch_cluster_plans()
+    if not _is_table():
+        render_list(data, title="Plans de cluster K8s", columns=[])
+        return
+    rows = [
+        {
+            "key": _fmt_plan(p.get("key")),
+            "price": _fmt_price(p),
+            "max_nodes": p.get("max_nodes"),
+            "cp": p.get("control_plane_replicas"),
+            "etcd": f"{p.get('etcd_members', '?')} × {p.get('etcd_volume_gb', '?')} Gi",
+            "ha": "oui" if p.get("high_availability") else "non",
+            "block": p.get("node_ip_block_size"),
+            "vnet": f"/{p['recommended_vnet_prefix']}" if p.get("recommended_vnet_prefix") else "—",
+        }
+        for p in data
+    ]
+    render_list(rows, title=f"Plans de cluster K8s ({len(rows)})",
+                columns=[("key", "Plan"), ("price", "Prix"), ("max_nodes", "Nœuds max"),
+                         ("cp", "Réplicas plan de contrôle"), ("etcd", "etcd"),
+                         ("ha", "Haute dispo."), ("block", "Bloc d'IP nœuds"),
+                         ("vnet", "VNet conseillé")])
+
+
 @app.command()
 def versions(
     region: str | None = typer.Option(None, "--region", "-r", help="Filtrer par région"),
@@ -199,8 +498,7 @@ def versions(
     try:
         data = client.get("/v1/k8s/templates", params={"region": region} if region else None)
     except client.APIError as e:
-        rprint(f"[red]Erreur : {e.detail}[/red]")
-        raise typer.Exit(1)
+        _fail(e)
     # Une version peut exister sur plusieurs OS/régions ; on dédoublonne par
     # (version, région) et on agrège les OS proposés.
     seen: dict[tuple[str, str], dict] = {}
@@ -255,8 +553,7 @@ def templates(
     try:
         data = client.get("/v1/k8s/templates", params={"region": region} if region else None)
     except client.APIError as e:
-        rprint(f"[red]Erreur : {e.detail}[/red]")
-        raise typer.Exit(1)
+        _fail(e)
 
     if name:
         needle = name.lower()
@@ -415,10 +712,20 @@ def create(
             "résolu automatiquement depuis --version + --os."
         ),
     ),
-    tier: str = typer.Option(
-        "dev",
+    plan: str | None = typer.Option(
+        None,
+        "--plan",
+        help=(
+            "Plan du cluster : starter (défaut, gratuit, sans haute disponibilité) | "
+            "standard | pro (haute disponibilité). Limites et prix : "
+            "cetic k8s cluster-plans."
+        ),
+        case_sensitive=False,
+    ),
+    tier: str | None = typer.Option(
+        None,
         "--tier",
-        help="Tier: dev=frontal unique, prod=frontal redondant (bascule auto)",
+        help="DÉPRÉCIÉ, utilisez --plan (dev = starter, prod = standard).",
         case_sensitive=False,
     ),
     # Pool initial
@@ -427,7 +734,7 @@ def create(
     pool_replicas: int = typer.Option(1, "--pool-replicas"),
     pool_disk_gb: int | None = typer.Option(
         None, "--disk-gb",
-        help="Taille du disque OS (Go) du pool initial ; défaut = disque du plan, extensible ensuite.",
+        help=_DISK_HELP,
     ),
     pool_min: int | None = typer.Option(None, "--pool-min", help="Active l'autoscaler"),
     pool_max: int | None = typer.Option(None, "--pool-max"),
@@ -445,13 +752,25 @@ def create(
     apiserver_internal_ip: str | None = typer.Option(None, "--apiserver-internal-ip"),
 ) -> None:
     """Crée un cluster K8s (provisioning ~5-15 min, asynchrone)."""
-    tier_norm = tier.lower()
-    if tier_norm not in VALID_TIERS:
-        rprint(
-            f"[red]--tier invalide : '{tier}'. "
-            f"Valeurs autorisées : {', '.join(VALID_TIERS)}.[/red]"
-        )
-        raise typer.Exit(1)
+    plan_norm = _normalize_plan(plan) if plan is not None else None
+    if tier is not None:
+        tier_norm = tier.lower()
+        if tier_norm not in VALID_TIERS:
+            rprint(
+                f"[red]--tier invalide : '{tier}'. "
+                f"Valeurs autorisées : {', '.join(VALID_TIERS)}.[/red]"
+            )
+            raise typer.Exit(1)
+        if plan_norm is not None and _TIER_FROM_PLAN[plan_norm] != tier_norm:
+            rprint(
+                f"[red]--plan {plan_norm} et --tier {tier_norm} (déprécié) en "
+                "désaccord : ne passez que --plan.[/red]"
+            )
+            raise typer.Exit(1)
+        if plan_norm is None:
+            plan_norm = _PLAN_FROM_TIER[tier_norm]
+        _warn(f"--tier est déprécié : utilisez --plan {plan_norm}.")
+    plan_norm = plan_norm or "starter"
 
     os_norm = os_image.lower()
     if os_norm not in VALID_OS:
@@ -469,8 +788,7 @@ def create(
         try:
             templates = client.get("/v1/k8s/templates", params={"region": region})
         except client.APIError as e:
-            rprint(f"[red]Erreur : {e.detail}[/red]")
-            raise typer.Exit(1)
+            _fail(e)
         resolved_template_key = _resolve_os_template_key(
             templates, region=region, k8s_version=k8s_version, os_slug=os_norm
         )
@@ -510,7 +828,7 @@ def create(
         "k8s_version": k8s_version,
         "os_image": os_norm,
         "os_template_key": resolved_template_key,
-        "tier": tier_norm,
+        "plan": plan_norm,
         "initial_pool": pool_body,
         "autoscaler_scale_down_delay_after_add": scale_down_delay,
         "autoscaler_scale_down_unneeded_time": scale_down_unneeded,
@@ -530,28 +848,465 @@ def create(
     try:
         c = client.post("/v1/k8s/clusters", json=body)
     except client.APIError as e:
-        rprint(f"[red]Erreur : {e.detail}[/red]")
-        raise typer.Exit(1)
-    rprint(f"[green]✓[/green] Cluster créé : [bold]{c['id']}[/bold] (status: {c.get('status', '?')})")
+        _fail(e)
+    rprint(
+        f"[green]✓[/green] Cluster créé : [bold]{c['id']}[/bold] "
+        f"(plan : {_cluster_plan(c) or plan_norm}, status: {c.get('status', '?')})"
+    )
     rprint("[dim]Le provisioning prend 5-15 min. Suivre avec : cetic k8s get {id}[/dim]")
 
 
-@app.command()
-def upgrade(
+@app.command(name="set-plan")
+def set_plan(
+    cluster_id: str = typer.Argument(...),
+    plan: str = typer.Option(
+        ..., "--plan", "-p",
+        help="Plan visé : starter | standard | pro (cf. cetic k8s cluster-plans).",
+        case_sensitive=False,
+    ),
+    yes: bool = typer.Option(False, "--yes", "-y"),
+) -> None:
+    """Change le plan du cluster.
+
+    Standard ↔ Pro : à chaud (le plan de contrôle passe de 2 à 3 réplicas, ou
+    l'inverse). Starter ↔ Standard/Pro : refusé, il faut recréer le cluster.
+    Une descente est refusée si les nœuds des pools dépassent la limite du plan
+    visé. Le prix du plan s'applique dès le changement.
+    """
+    plan_norm = _normalize_plan(plan)
+    if not yes and not typer.confirm(
+        f"Passer le cluster {cluster_id} au plan {plan_norm} ? "
+        "Le prix du plan s'applique dès le changement.",
+        err=True,
+    ):
+        raise typer.Abort()
+    try:
+        c = client.patch(f"/v1/k8s/clusters/{cluster_id}", json={"plan": plan_norm})
+    except client.APIError as e:
+        _fail(e)
+    rprint(
+        f"[green]✓[/green] Plan du cluster : [bold]{_cluster_plan(c) or plan_norm}[/bold] "
+        f"(status : {c.get('status', '?')})"
+    )
+
+
+@app.command(name="upgrade-version")
+def upgrade_version(
     cluster_id: str = typer.Argument(...),
     k8s_version: str = typer.Option(..., "--version", "-v", help="Ex: v1.32.0"),
     yes: bool = typer.Option(False, "--yes", "-y"),
 ) -> None:
-    """Met à niveau la version Kubernetes du cluster (progressif, sans interruption)."""
-    if not yes and not typer.confirm(f"Upgrader le cluster {cluster_id} vers {k8s_version} ?"):
+    """Met à niveau le PLAN DE CONTRÔLE seul (une mineure à la fois).
+
+    Les pools ne bougent pas : ceux qui héritaient de la version du plan de
+    contrôle sont épinglés sur l'ancienne. Mettez-les ensuite à niveau un par
+    un (`cetic k8s pool upgrade`). Pour un simple patch, plan de contrôle et
+    pools en une fois : `cetic k8s upgrade-patch`. Refusé (422) si un pool
+    resterait à plus de 3 mineures de retard.
+    """
+    _validate_k8s_version(k8s_version)
+    if not yes and not typer.confirm(
+        f"Mettre à niveau le plan de contrôle du cluster {cluster_id} vers "
+        f"{k8s_version} (les pools restent sur leur version) ?",
+        err=True,
+    ):
         raise typer.Abort()
     try:
         c = client.post(f"/v1/k8s/clusters/{cluster_id}/upgrade-version",
                         json={"k8s_version": k8s_version})
     except client.APIError as e:
-        rprint(f"[red]Erreur : {e.detail}[/red]")
+        _fail(e)
+    rprint(
+        f"[green]✓[/green] Plan de contrôle → {c.get('k8s_version', k8s_version)} "
+        f"(status : {c.get('status', '?')})"
+    )
+    rprint(
+        f"[dim]Pools à mettre à niveau ensuite : cetic k8s pool upgrade {cluster_id} "
+        "<POOL> --version <VERSION>[/dim]"
+    )
+
+
+@app.command(name="upgrade", hidden=True)
+def upgrade_deprecated(
+    cluster_id: str = typer.Argument(...),
+    k8s_version: str = typer.Option(..., "--version", "-v"),
+    yes: bool = typer.Option(False, "--yes", "-y"),
+) -> None:
+    """DÉPRÉCIÉ : alias de `cetic k8s upgrade-version` (plan de contrôle seul)."""
+    _warn("`cetic k8s upgrade` est déprécié : utilisez `cetic k8s upgrade-version` "
+          "(plan de contrôle seul).")
+    upgrade_version(cluster_id=cluster_id, k8s_version=k8s_version, yes=yes)
+
+
+@app.command(name="upgrade-patch")
+def upgrade_patch(
+    cluster_id: str = typer.Argument(...),
+    yes: bool = typer.Option(False, "--yes", "-y"),
+) -> None:
+    """Applique le patch disponible en un geste : plan de contrôle puis pools.
+
+    La cible est le patch affiché par `cetic k8s get` (`patch_disponible`) :
+    plan de contrôle d'abord, puis chaque pool de la même mineure, l'un après
+    l'autre (remplacement progressif des nœuds, avec drain). Les pools d'une
+    autre mineure ne sont pas touchés. Si le patch disponible change entre
+    l'affichage et l'envoi, l'API refuse (409) : relancez la commande.
+    """
+    try:
+        c = client.get(f"/v1/k8s/clusters/{cluster_id}")
+    except client.APIError as e:
+        _fail(e)
+    patch = c.get("patch_disponible")
+    if not patch:
+        en_cours = _fmt_upgrade(c.get("upgrade_en_cours"))
+        if en_cours:
+            rprint(f"[yellow]Mise à niveau déjà en cours : {en_cours}.[/yellow]")
+        else:
+            rprint("[yellow]Aucun patch disponible pour ce cluster.[/yellow]")
+        raise typer.Exit(0)
+    version = patch.get("version")
+    if not version or not _K8S_VERSION_RE.match(version):
+        rprint(f"[red]Patch disponible illisible : {patch!r}.[/red]")
         raise typer.Exit(1)
-    rprint(f"[green]✓[/green] Upgrade déclenché → status : {c.get('status', '?')}")
+    if patch.get("templates_ok") is False:
+        _warn(f"Aucun template {version} n'est prêt pour l'OS d'au moins un pool : "
+              "l'API refusera la mise à niveau.")
+    if not yes and not typer.confirm(
+        f"Appliquer le patch {_fmt_patch_disponible(patch)} au cluster {cluster_id} ?",
+        err=True,
+    ):
+        raise typer.Abort()
+    try:
+        # `?version=` : l'API refuse (409) si le patch a changé depuis la lecture.
+        c = client.post(f"/v1/k8s/clusters/{cluster_id}/upgrade-patch?version={version}")
+    except client.APIError as e:
+        _fail(e)
+    rprint(f"[green]✓[/green] Patch {version} lancé (status : {c.get('status', '?')}).")
+    op = _fmt_upgrade(c.get("upgrade_en_cours"))
+    if op:
+        rprint(f"[dim]{op}[/dim]")
+        rprint(f"[dim]Suivre avec : cetic k8s upgrades {cluster_id}[/dim]")
+
+
+@app.command(name="upgrades")
+def list_upgrades(
+    cluster_id: str = typer.Argument(...),
+    limit: int = typer.Option(50, "--limit", "-l", min=1, max=200),
+) -> None:
+    """Historique des mises à niveau du cluster (manuelles et automatiques)."""
+    try:
+        items = client.get(f"/v1/k8s/clusters/{cluster_id}/upgrades",
+                           params={"limit": limit})
+    except client.APIError as e:
+        _fail(e)
+    if not _is_table():
+        render_list(items, title="Mises à niveau", columns=[])
+        return
+    rows = []
+    for op in items:
+        etapes = op.get("etapes") or []
+        faites = sum(1 for e in etapes if e.get("statut") == "terminee")
+        rows.append({
+            "date": (op.get("created_at") or "")[:16].replace("T", " ") or "—",
+            "type": _UPGRADE_TYPE.get(op.get("type", ""), op.get("type")),
+            "origine": op.get("origine"),
+            "versions": f"{op.get('version_depart') or '?'} → {op.get('version_cible', '?')}",
+            "statut": _UPGRADE_STATUT.get(op.get("statut", ""), op.get("statut")),
+            "etapes": f"{faites}/{len(etapes)}" if etapes else "—",
+            "fin": (op.get("termine_at") or "")[:16].replace("T", " ") or "—",
+            "erreur": op.get("error_message"),
+        })
+    render_list(rows, title=f"Mises à niveau du cluster {cluster_id[:8]} ({len(rows)})",
+                columns=[("date", "Date"), ("type", "Type"), ("origine", "Origine"),
+                         ("versions", "Versions"), ("statut", "Statut"),
+                         ("etapes", "Étapes"), ("fin", "Fin"), ("erreur", "Erreur")])
+
+
+# ── Maintenance (mise à jour automatique) ─────────────────────────────────
+
+_JOURS = ("lun", "mar", "mer", "jeu", "ven", "sam", "dim")
+_HEURE_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+
+
+def _parse_jours(raw: str) -> list[int]:
+    """`2,3,4` | `mar,mer,jeu` | `2-4` → jours ISO triés (1 = lundi)."""
+    jours: set[int] = set()
+    for part in (x.strip().lower() for x in raw.split(",")):
+        if not part:
+            continue
+        if re.fullmatch(r"[1-7]-[1-7]", part):
+            a, b = (int(x) for x in part.split("-"))
+            if a > b:
+                raise typer.BadParameter(f"Plage de jours inversée : '{part}'.")
+            jours.update(range(a, b + 1))
+        elif re.fullmatch(r"[1-7]", part):
+            jours.add(int(part))
+        elif part[:3] in _JOURS and len(part) >= 3:
+            jours.add(_JOURS.index(part[:3]) + 1)
+        else:
+            raise typer.BadParameter(
+                f"Jour invalide : '{part}'. Attendu 1-7 (1 = lundi) ou lun…dim."
+            )
+    if not jours:
+        raise typer.BadParameter("--jours : au moins un jour.")
+    return sorted(jours)
+
+
+def _parse_gel(raw: str) -> dict[str, str]:
+    """`AAAA-MM-JJ:AAAA-MM-JJ` → `{debut, fin}` (bornes incluses)."""
+    debut_s, sep, fin_s = raw.partition(":")
+    try:
+        if not sep:
+            raise ValueError
+        debut, fin = date.fromisoformat(debut_s.strip()), date.fromisoformat(fin_s.strip())
+    except ValueError:
+        raise typer.BadParameter(
+            f"Période de gel invalide : '{raw}'. Format : AAAA-MM-JJ:AAAA-MM-JJ."
+        ) from None
+    if fin < debut:
+        raise typer.BadParameter(f"Période de gel inversée : '{raw}'.")
+    if (fin - debut).days + 1 > 31:
+        raise typer.BadParameter(f"Période de gel de plus de 31 jours : '{raw}'.")
+    return {"debut": debut.isoformat(), "fin": fin.isoformat()}
+
+
+def _fmt_fenetre(f: dict | None) -> str | None:
+    if not f:
+        return None
+    jours = ", ".join(_JOURS[j - 1] for j in f.get("jours") or [] if 1 <= j <= 7)
+    return (f"{jours} à {f.get('heure_debut', '?')}, {f.get('duree_heures', '?')} h "
+            f"({f.get('fuseau', '?')})")
+
+
+def _fmt_prevue(p: dict | None) -> str | None:
+    if not p:
+        return None
+    cibles = []
+    if p.get("plan_de_controle"):
+        cibles.append("plan de contrôle")
+    if p.get("pools"):
+        cibles.append(f"{len(p['pools'])} pool(s)")
+    txt = f"{p.get('type', '?')} {p.get('version', '?')}"
+    if cibles:
+        txt += f" ({' + '.join(cibles)})"
+    if p.get("debut_prevu"):
+        txt += f", prévue le {str(p['debut_prevu'])[:16].replace('T', ' ')}"
+    if p.get("force"):
+        txt += ", forcée"
+    if p.get("motif"):
+        txt += f" — {p['motif']}"
+    return txt
+
+
+def _render_maintenance(m: dict, cluster_id: str) -> None:
+    if not _is_table():
+        render_one(m, title="Maintenance")
+        return
+
+    def _oui(v: Any) -> str:
+        return "oui" if v else "non"
+
+    gels = ", ".join(f"{g.get('debut')} → {g.get('fin')}" for g in m.get("dates_gel") or [])
+    view = {
+        "auto_patch": _oui(m.get("auto_patch")),
+        "auto_mineure": _oui(m.get("auto_mineure")),
+        "auto_majeure": _oui(m.get("auto_majeure")),
+        "fenetre": _fmt_fenetre(m.get("fenetre")),
+        "dates_gel": gels or None,
+        "personnalise": _oui(m.get("personnalise")),
+        "fenetre_plateforme": _fmt_fenetre(m.get("fenetre_plateforme")),
+        "delai_stabilisation_jours": m.get("delai_stabilisation_jours"),
+        "delai_patch_force_jours": m.get("delai_patch_force_jours"),
+        "prochaine_execution": _fmt_prevue(m.get("prochaine_execution")),
+        "reprise_prevue": m.get("reprise_prevue"),
+        "upgrade_en_cours": _fmt_upgrade(m.get("upgrade_en_cours")),
+        "notifications": len(m.get("notifications") or []),
+    }
+    render_one(view, title=f"Maintenance du cluster {cluster_id[:8]}")
+
+
+@maintenance_app.command(name="get")
+def maintenance_get(cluster_id: str = typer.Argument(...)) -> None:
+    """Affiche les réglages de mise à jour automatique et la prochaine exécution.
+
+    Défauts : patch automatique activé, mineure et majeure désactivées, fenêtre
+    mardi→jeudi 02:00 pendant 4 h (Europe/Paris). Un patch est appliqué de force
+    30 jours après la sortie de son template, même sans auto-patch.
+    """
+    try:
+        m = client.get(f"/v1/k8s/clusters/{cluster_id}/maintenance")
+    except client.APIError as e:
+        _fail(e)
+    _render_maintenance(m, cluster_id)
+
+
+@maintenance_app.command(name="set")
+def maintenance_set(
+    cluster_id: str = typer.Argument(...),
+    auto_patch: bool | None = typer.Option(
+        None, "--auto-patch/--no-auto-patch", help="Patchs appliqués automatiquement."),
+    auto_mineure: bool | None = typer.Option(
+        None, "--auto-mineure/--no-auto-mineure",
+        help="Montées de mineure (1.31 → 1.32) automatiques."),
+    auto_majeure: bool | None = typer.Option(
+        None, "--auto-majeure/--no-auto-majeure", help="Montées de majeure automatiques."),
+    jours: str | None = typer.Option(
+        None, "--jours",
+        help="Jours de la fenêtre : 2,3,4 | 2-4 | mar,mer,jeu (1 = lundi)."),
+    heure_debut: str | None = typer.Option(None, "--heure-debut", help="Début, HH:MM."),
+    duree_heures: int | None = typer.Option(
+        None, "--duree-heures", min=4, max=24, help="Durée de la fenêtre (4 à 24 h)."),
+    fuseau: str | None = typer.Option(None, "--fuseau", help="Fuseau IANA (Europe/Paris)."),
+    gels: list[str] | None = typer.Option(
+        None, "--gel",
+        help=("Période sans mise à jour AAAA-MM-JJ:AAAA-MM-JJ (répétable, 31 jours "
+              "au plus chacune, 12 au plus). Remplace la liste existante."),
+    ),
+    sans_gel: bool = typer.Option(False, "--sans-gel", help="Vide la liste des périodes de gel."),
+) -> None:
+    """Modifie les réglages de mise à jour automatique (champ omis = inchangé).
+
+    Les options de fenêtre omises reprennent la fenêtre actuelle.
+    """
+    if gels and sans_gel:
+        rprint("[red]--gel et --sans-gel sont incompatibles.[/red]")
+        raise typer.Exit(1)
+    if heure_debut is not None and not _HEURE_RE.match(heure_debut):
+        rprint(f"[red]--heure-debut invalide : '{heure_debut}' (HH:MM attendu).[/red]")
+        raise typer.Exit(1)
+    body: dict[str, Any] = {}
+    for key, val in (("auto_patch", auto_patch), ("auto_mineure", auto_mineure),
+                     ("auto_majeure", auto_majeure)):
+        if val is not None:
+            body[key] = val
+    if gels:
+        if len(gels) > 12:
+            rprint("[red]12 périodes de gel au plus.[/red]")
+            raise typer.Exit(1)
+        body["dates_gel"] = [_parse_gel(g) for g in gels]
+    elif sans_gel:
+        body["dates_gel"] = []
+    fenetre_opts = (jours, heure_debut, duree_heures, fuseau)
+    if any(v is not None for v in fenetre_opts):
+        parsed_jours = _parse_jours(jours) if jours is not None else None
+        # L'API attend la fenêtre complète : les morceaux omis viennent de
+        # l'actuelle.
+        actuelle: dict = {}
+        if None in (parsed_jours, heure_debut, duree_heures, fuseau):
+            try:
+                actuelle = client.get(
+                    f"/v1/k8s/clusters/{cluster_id}/maintenance").get("fenetre") or {}
+            except client.APIError as e:
+                _fail(e)
+        body["fenetre"] = {
+            "jours": parsed_jours if parsed_jours is not None else actuelle.get("jours"),
+            "heure_debut": heure_debut if heure_debut is not None else actuelle.get("heure_debut"),
+            "duree_heures": duree_heures if duree_heures is not None
+            else actuelle.get("duree_heures"),
+            "fuseau": fuseau if fuseau is not None else actuelle.get("fuseau"),
+        }
+    if not body:
+        rprint("[yellow]Aucun paramètre à modifier.[/yellow]")
+        raise typer.Exit(0)
+    try:
+        m = client.put(f"/v1/k8s/clusters/{cluster_id}/maintenance", json=body)
+    except client.APIError as e:
+        _fail(e)
+    rprint("[green]✓[/green] Réglages de maintenance enregistrés.", file=sys.stderr)
+    _render_maintenance(m, cluster_id)
+
+
+# ── SSO OIDC ──────────────────────────────────────────────────────────────
+
+
+@oidc_app.command(name="get")
+def oidc_get(cluster_id: str = typer.Argument(...)) -> None:
+    """Affiche la configuration SSO (OIDC) du cluster."""
+    try:
+        c = client.get(f"/v1/k8s/clusters/{cluster_id}")
+    except client.APIError as e:
+        _fail(e)
+    o = c.get("oidc")
+    if not o:
+        if _is_table():
+            rprint("[yellow]SSO non configuré sur ce cluster (cetic k8s oidc set).[/yellow]")
+        else:
+            render_one({}, title="OIDC")
+        return
+    render_one(o, title=f"SSO du cluster {c.get('name', cluster_id)}")
+
+
+@oidc_app.command(name="set")
+def oidc_set(
+    cluster_id: str = typer.Argument(...),
+    issuer_url: str = typer.Option(
+        ..., "--issuer-url",
+        help="URL de l'émetteur OIDC (https, port 443, joignable publiquement)."),
+    client_id: str = typer.Option(..., "--client-id", help="Identifiant du client OIDC."),
+    username_claim: str = typer.Option("email", "--username-claim"),
+    username_prefix: str = typer.Option("oidc:", "--username-prefix"),
+    groups_claim: str | None = typer.Option(
+        "groups", "--groups-claim", help="Claim des groupes (cf. --no-groups)."),
+    no_groups: bool = typer.Option(
+        False, "--no-groups", help="Ne lit aucun claim de groupes."),
+    groups_prefix: str = typer.Option("oidc:", "--groups-prefix"),
+    extra_scopes: list[str] | None = typer.Option(
+        None, "--scope", help="Scope OIDC supplémentaire (répétable, 10 au plus)."),
+    ca_file: Path | None = typer.Option(
+        None, "--ca-file", exists=True, dir_okay=False, readable=True,
+        help="CA (PEM) de l'émetteur s'il n'est pas signé par une autorité publique."),
+    yes: bool = typer.Option(False, "--yes", "-y"),
+) -> None:
+    """Configure le SSO du cluster sur votre fournisseur d'identité (OIDC).
+
+    L'apiserver redémarre si la configuration change (coupure brève de l'API
+    sur le plan Starter). Ensuite : `cetic k8s kubeconfig <ID> --mode sso`, et
+    des (Cluster)RoleBinding sur vos groupes préfixés (ex. `oidc:admins`).
+    """
+    if not issuer_url.startswith("https://"):
+        rprint("[red]--issuer-url doit être en https://.[/red]")
+        raise typer.Exit(1)
+    body: dict[str, Any] = {
+        "issuer_url": issuer_url,
+        "client_id": client_id,
+        "username_claim": username_claim,
+        "username_prefix": username_prefix,
+        "groups_claim": None if no_groups else groups_claim,
+        "groups_prefix": groups_prefix,
+        "extra_scopes": list(extra_scopes or []),
+        "ca_pem": ca_file.read_text() if ca_file else None,
+    }
+    if not yes and not typer.confirm(
+        f"Configurer le SSO du cluster {cluster_id} sur {issuer_url} ? "
+        "L'apiserver redémarre si la configuration change.",
+        err=True,
+    ):
+        raise typer.Abort()
+    try:
+        client.put(f"/v1/k8s/clusters/{cluster_id}/oidc", json=body)
+    except client.APIError as e:
+        _fail(e)
+    rprint("[green]✓[/green] SSO configuré.")
+    rprint(f"[dim]Kubeconfig : cetic k8s kubeconfig {cluster_id} --mode sso[/dim]")
+    rprint(f"[dim]Droits : kubectl create clusterrolebinding … "
+           f"--group={groups_prefix}<groupe>[/dim]")
+
+
+@oidc_app.command(name="delete")
+def oidc_delete(
+    cluster_id: str = typer.Argument(...),
+    yes: bool = typer.Option(False, "--yes", "-y"),
+) -> None:
+    """Retire le SSO du cluster (idempotent ; l'apiserver redémarre s'il était
+    configuré). Le kubeconfig par certificat reste l'accès administrateur."""
+    if not yes and not typer.confirm(
+        f"Retirer le SSO du cluster {cluster_id} ?", err=True
+    ):
+        raise typer.Abort()
+    try:
+        client.delete(f"/v1/k8s/clusters/{cluster_id}/oidc")
+    except client.APIError as e:
+        _fail(e)
+    rprint("[green]✓[/green] SSO retiré.")
 
 
 @app.command(name="attach-ip")
@@ -564,8 +1319,7 @@ def attach_ip(
         c = client.post(f"/v1/k8s/clusters/{cluster_id}/attach-ip",
                         json={"public_ip_id": public_ip_id})
     except client.APIError as e:
-        rprint(f"[red]Erreur : {e.detail}[/red]")
-        raise typer.Exit(1)
+        _fail(e)
     rprint(f"[green]✓[/green] IP attachée. Apiserver : {c.get('public_ip_address', '?')}")
 
 
@@ -580,8 +1334,7 @@ def detach_ip(
     try:
         client.post(f"/v1/k8s/clusters/{cluster_id}/detach-ip")
     except client.APIError as e:
-        rprint(f"[red]Erreur : {e.detail}[/red]")
-        raise typer.Exit(1)
+        _fail(e)
     rprint("[green]✓[/green] IP détachée.")
 
 
@@ -596,8 +1349,7 @@ def delete(
     try:
         client.delete(f"/v1/k8s/clusters/{cluster_id}")
     except client.APIError as e:
-        rprint(f"[red]Erreur : {e.detail}[/red]")
-        raise typer.Exit(1)
+        _fail(e)
     rprint("[green]✓[/green] Cluster en cours de suppression.")
 
 
@@ -610,8 +1362,7 @@ def list_pools(cluster_id: str = typer.Argument(...)) -> None:
     try:
         items = client.get(f"/v1/k8s/clusters/{cluster_id}/node-pools")
     except client.APIError as e:
-        rprint(f"[red]Erreur : {e.detail}[/red]")
-        raise typer.Exit(1)
+        _fail(e)
     # Version du control plane (pour expliciter les pools en version héritée).
     # Best-effort : on n'échoue pas la liste si le cluster n'est pas lisible.
     cp_version: str | None = None
@@ -623,6 +1374,7 @@ def list_pools(cluster_id: str = typer.Argument(...)) -> None:
         {"id": p["id"], "name": p["name"], "plan": p["plan"],
          "replicas": p["replicas"],
          "version": _fmt_pool_version(p.get("k8s_version"), cp_version),
+         "disk": f"{p['disk_gb']} Go" if p.get("disk_gb") else "(plan)",
          "min": p.get("min_size") or "—",
          "max": p.get("max_size") or "—",
          "status": p["status"]}
@@ -631,7 +1383,7 @@ def list_pools(cluster_id: str = typer.Argument(...)) -> None:
     render_list(rows, title=f"Pools du cluster {cluster_id[:8]} ({len(rows)})",
                 columns=[("id", "ID"), ("name", "Nom"), ("plan", "Plan"),
                          ("replicas", "Replicas"), ("version", "Version"),
-                         ("min", "Min"), ("max", "Max"),
+                         ("disk", "Disque"), ("min", "Min"), ("max", "Max"),
                          ("status", "Statut")])
 
 
@@ -643,7 +1395,7 @@ def create(
     replicas: int = typer.Option(1, "--replicas"),
     disk_gb: int | None = typer.Option(
         None, "--disk-gb",
-        help="Taille du disque OS (Go) ; défaut = disque du plan, extensible ensuite.",
+        help=_DISK_HELP,
     ),
     k8s_version: str | None = typer.Option(
         None, "--version",
@@ -686,8 +1438,7 @@ def create(
     try:
         p = client.post(f"/v1/k8s/clusters/{cluster_id}/node-pools", json=body)
     except client.APIError as e:
-        rprint(f"[red]Erreur : {e.detail}[/red]")
-        raise typer.Exit(1)
+        _fail(e)
     rprint(f"[green]✓[/green] Pool créé : [bold]{p['id']}[/bold]")
 
 
@@ -700,7 +1451,8 @@ def update(
         None, "--version",
         help=(
             "Pin/upgrade la version Kubernetes (workers) du pool (ex: v1.31.0). "
-            "Doit être ≤ celle du control plane (le backend re-valide → 422)."
+            "Doit être ≤ celle du control plane (le backend re-valide → 422). "
+            "Pour une mise à niveau suivie : cetic k8s pool upgrade."
         ),
     ),
     min_size: int | None = typer.Option(None, "--min"),
@@ -762,9 +1514,42 @@ def update(
     try:
         p = client.patch(f"/v1/k8s/clusters/{cluster_id}/node-pools/{pool_id}", json=body)
     except client.APIError as e:
-        rprint(f"[red]Erreur : {e.detail}[/red]")
-        raise typer.Exit(1)
+        _fail(e)
     rprint(f"[green]✓[/green] Pool mis à jour : {p.get('name', pool_id)} → replicas={p.get('replicas', '?')}")
+
+
+@pool_app.command(name="upgrade")
+def upgrade_pool(
+    cluster_id: str = typer.Argument(...),
+    pool_id: str = typer.Argument(...),
+    k8s_version: str = typer.Option(
+        ..., "--version", "-v",
+        help=("Version visée (ex: v1.32.4) : > version du pool, ≤ plan de contrôle, "
+              "même mineure que le plan de contrôle."),
+    ),
+    yes: bool = typer.Option(False, "--yes", "-y"),
+) -> None:
+    """Met à niveau les nœuds d'UN pool (remplacement progressif avec drain).
+
+    À faire après `cetic k8s upgrade-version`, pool par pool. Refusé si une
+    autre mise à niveau est active sur le cluster ou si le pool n'est pas actif.
+    """
+    _validate_k8s_version(k8s_version)
+    if not yes and not typer.confirm(
+        f"Mettre à niveau le pool {pool_id} vers {k8s_version} ? "
+        "Ses nœuds sont remplacés un par un (drain).",
+        err=True,
+    ):
+        raise typer.Abort()
+    try:
+        p = client.post(f"/v1/k8s/clusters/{cluster_id}/node-pools/{pool_id}/upgrade",
+                        json={"k8s_version": k8s_version})
+    except client.APIError as e:
+        _fail(e)
+    rprint(
+        f"[green]✓[/green] Pool {p.get('name', pool_id)} → "
+        f"{p.get('k8s_version') or k8s_version} (status : {p.get('status', '?')})"
+    )
 
 
 @pool_app.command()
@@ -780,8 +1565,7 @@ def scale(
         client.patch(f"/v1/k8s/clusters/{cluster_id}/node-pools/{pool_id}",
                      json={"replicas": replicas})
     except client.APIError as e:
-        rprint(f"[red]Erreur : {e.detail}[/red]")
-        raise typer.Exit(1)
+        _fail(e)
     rprint(f"[green]✓[/green] Scale → {replicas}.")
 
 
@@ -797,6 +1581,5 @@ def delete(
     try:
         client.delete(f"/v1/k8s/clusters/{cluster_id}/node-pools/{pool_id}")
     except client.APIError as e:
-        rprint(f"[red]Erreur : {e.detail}[/red]")
-        raise typer.Exit(1)
+        _fail(e)
     rprint("[green]✓[/green] Pool supprimé.")
