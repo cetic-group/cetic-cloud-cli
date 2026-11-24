@@ -87,8 +87,8 @@ def _aide(runner, *args: str) -> str:
 
 
 def _flat(text: str) -> str:
-    """Sortie Rich sans les retours à la ligne de largeur de terminal."""
-    return " ".join(text.split())
+    """Sortie Rich sans couleur ni retours à la ligne de largeur de terminal."""
+    return " ".join(_ANSI.sub("", text).split())
 
 
 def _no_call(mock_api, method: str) -> bool:
@@ -854,3 +854,128 @@ def test_kubeconfig_sso_not_configured(runner, mock_api):
     assert "SSO non configuré" in result.stderr
     # `> ~/.kube/config` ne doit pas recevoir le message d'erreur.
     assert result.stdout == ""
+
+
+# ---------------------------------------------------------------------------
+# upgrade-cancel — annuler une mise à niveau en pause
+# ---------------------------------------------------------------------------
+
+PAUSE_MINEURE = {
+    "id": "op-2", "type": "mineure", "origine": "automatique", "statut": "en_pause",
+    "version_depart": "1.31.4", "version_cible": "1.32.0",
+    "etapes": [
+        {"type": "plan_de_controle", "version": "1.32.0", "statut": "terminee"},
+        {"type": "pool", "pool_id": PID, "pool_name": "default", "version": "1.32.0",
+         "statut": "en_attente"},
+        {"type": "pool", "pool_id": "p2", "pool_name": "gpu", "version": "1.32.0",
+         "statut": "en_attente"},
+    ],
+    "created_at": "2026-11-24T02:00:00Z",
+}
+
+
+def test_upgrade_cancel_shows_operation_and_posts(runner, mock_api):
+    mock_api.get(BASE).mock(return_value=httpx.Response(
+        200, json=_cluster(upgrade_en_cours=PAUSE_MINEURE)))
+    route = mock_api.post(f"{BASE}/upgrade-cancel")
+    cap = _capture(route, 200, _cluster(k8s_version="1.32.0", upgrade_en_cours=None))
+    result = runner.invoke(app, ["k8s", "upgrade-cancel", CID], input="y\n")
+    assert result.exit_code == 0, result.output
+    err = _flat(result.stderr)
+    assert "mineure vers 1.32.0 (automatique)" in err
+    assert "Étapes annulées : default, gpu" in err
+    assert "les étapes terminées restent en place" in err
+    # Sans corps.
+    assert cap["body"] is None
+    assert "Mise à niveau annulée" in result.stdout
+
+
+def test_upgrade_cancel_declined(runner, mock_api):
+    mock_api.get(BASE).mock(return_value=httpx.Response(
+        200, json=_cluster(upgrade_en_cours=PAUSE_MINEURE)))
+    result = runner.invoke(app, ["k8s", "upgrade-cancel", CID], input="n\n")
+    assert result.exit_code != 0
+    assert _no_call(mock_api, "POST")
+
+
+def test_upgrade_cancel_yes_skips_prompt(runner, mock_api):
+    mock_api.get(BASE).mock(return_value=httpx.Response(
+        200, json=_cluster(upgrade_en_cours=PAUSE_MINEURE)))
+    route = mock_api.post(f"{BASE}/upgrade-cancel").mock(
+        return_value=httpx.Response(200, json=_cluster()))
+    result = runner.invoke(app, ["k8s", "upgrade-cancel", CID, "--yes"])
+    assert result.exit_code == 0, result.output
+    assert route.called
+
+
+@pytest.mark.parametrize(("op", "needle"), [
+    (None, "Aucune mise à niveau en attente"),
+    (OPERATION, "pas en pause"),
+])
+def test_upgrade_cancel_refused_locally_when_not_paused(runner, mock_api, op, needle):
+    mock_api.get(BASE).mock(return_value=httpx.Response(
+        200, json=_cluster(upgrade_en_cours=op)))
+    result = runner.invoke(app, ["k8s", "upgrade-cancel", CID, "--yes"])
+    assert result.exit_code == 1
+    assert needle in _flat(result.stderr)
+    assert _no_call(mock_api, "POST")
+
+
+def test_upgrade_cancel_conflict_explained(runner, mock_api):
+    """L'opération a repris entre la lecture et l'envoi : 409 de l'API."""
+    mock_api.get(BASE).mock(return_value=httpx.Response(
+        200, json=_cluster(upgrade_en_cours=PAUSE_MINEURE)))
+    mock_api.post(f"{BASE}/upgrade-cancel").mock(return_value=httpx.Response(
+        409, json={"detail": "Aucune mise à niveau en attente."}))
+    result = runner.invoke(app, ["k8s", "upgrade-cancel", CID, "--yes"])
+    assert result.exit_code == 1
+    err = _flat(result.stderr)
+    assert "Aucune mise à niveau en attente." in err
+    assert "Seule une mise à niveau en pause s'annule" in err
+    assert f"cetic k8s upgrades {CID}" in err
+    assert result.stdout == ""
+
+
+def test_upgrade_cancel_help(runner):
+    aide = _flat(_aide(runner, "k8s", "upgrade-cancel"))
+    assert "EN PAUSE" in aide
+    assert "--yes" in aide
+
+
+def test_upgrade_patch_help_mentions_cancel(runner):
+    assert "cetic k8s upgrade-cancel" in _flat(_aide(runner, "k8s", "upgrade-patch"))
+
+
+def test_upgrade_patch_paused_other_type_points_to_cancel(runner, mock_api):
+    mock_api.get(BASE).mock(return_value=httpx.Response(
+        200, json=_cluster(patch_disponible=PATCH, upgrade_en_cours=PAUSE_MINEURE)))
+    result = runner.invoke(app, ["k8s", "upgrade-patch", CID, "--yes"])
+    assert result.exit_code == 1
+    assert f"cetic k8s upgrade-cancel {CID}" in _flat(result.stderr)
+    assert _no_call(mock_api, "POST")
+
+
+def test_upgrades_history_shows_cancelled(runner, mock_api):
+    annulee = dict(PAUSE_MINEURE, statut="annulee", error_message="Annulée par le client.",
+                   etapes=[dict(e, statut="annulee") if e["statut"] == "en_attente" else e
+                           for e in PAUSE_MINEURE["etapes"]],
+                   termine_at="2026-11-24T09:00:00Z")
+    mock_api.get(f"{BASE}/upgrades").mock(return_value=httpx.Response(200, json=[annulee]))
+    result = runner.invoke(app, ["k8s", "upgrades", CID])
+    assert result.exit_code == 0, result.output
+    out = _flat(result.stdout)
+    assert "annulée" in out
+    assert "1/3 (2 annulée(s))" in out
+    assert "Annulée par le client." in out
+
+
+def test_get_shows_cancelled_status(runner, mock_api):
+    annulee = dict(PAUSE_MINEURE, statut="annulee",
+                   etapes=[dict(e, statut="annulee") if e["statut"] == "en_attente" else e
+                           for e in PAUSE_MINEURE["etapes"]])
+    mock_api.get(BASE).mock(return_value=httpx.Response(
+        200, json=_cluster(upgrade_en_cours=annulee)))
+    result = runner.invoke(app, ["k8s", "get", CID])
+    assert result.exit_code == 0, result.output
+    assert ("mineure 1.31.4 → 1.32.0, annulée (automatique, 1/3 étapes, 2 annulée(s))"
+            in _flat(result.stdout))

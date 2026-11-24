@@ -575,6 +575,7 @@ cetic k8s upgrade-version <cluster-id> --version v1.32.0    # PLAN DE CONTRÔLE 
 cetic k8s pool upgrade <cluster-id> <pool-id> --version v1.32.0   # puis chaque pool
 cetic k8s upgrade-patch <cluster-id>  # patch disponible en un geste : plan de contrôle puis pools
 cetic k8s upgrades <cluster-id>       # historique (manuelles et automatiques)
+cetic k8s upgrade-cancel <cluster-id> # annule les étapes restantes d'une mise à niveau en pause
 cetic k8s maintenance get <cluster-id>
 cetic k8s maintenance set <cluster-id> --auto-mineure --jours sam,dim --heure-debut 03:00 \
     --gel 2026-12-20:2027-01-03       # fenêtre (options omises = inchangées), périodes de gel

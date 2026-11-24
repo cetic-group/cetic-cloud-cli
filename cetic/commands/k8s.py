@@ -267,8 +267,13 @@ _UPGRADE_STATUT = {
     "en_pause": "en pause",
     "terminee": "terminée",
     "echec": "échec",
+    "annulee": "annulée",
     "en_attente": "en attente",
 }
+
+
+def _etapes_annulees(etapes: list[dict]) -> int:
+    return sum(1 for e in etapes if e.get("statut") == "annulee")
 
 
 def _fmt_patch_disponible(p: dict | None) -> str | None:
@@ -300,6 +305,8 @@ def _fmt_upgrade(op: dict | None) -> str | None:
     extra = [op["origine"]] if op.get("origine") else []
     if etapes:
         extra.append(f"{faites}/{len(etapes)} étapes")
+        if _etapes_annulees(etapes):
+            extra.append(f"{_etapes_annulees(etapes)} annulée(s)")
     return (
         f"{_UPGRADE_TYPE.get(op.get('type', ''), op.get('type') or '?')} "
         f"{op.get('version_depart') or '?'} → {op.get('version_cible', '?')}, "
@@ -986,8 +993,10 @@ def upgrade_patch(
 ) -> None:
     """Applique le patch disponible en un geste : plan de contrôle puis pools.
 
-    Une mise à niveau EN PAUSE (fenêtre de maintenance terminée) est proposée
-    à la reprise immédiate.
+    Une mise à niveau de PATCH en pause (fenêtre de maintenance terminée) est
+    proposée à la reprise immédiate. Une mise à niveau en pause d'un autre type
+    (plan de contrôle, pool, mineure) n'est pas reprise ici : annulez-la avec
+    `cetic k8s upgrade-cancel`.
 
     La cible est le patch affiché par `cetic k8s get` (`patch_disponible`) :
     plan de contrôle d'abord, puis chaque pool de la même mineure, l'un après
@@ -1001,6 +1010,13 @@ def upgrade_patch(
         _fail(e)
     op_courante = c.get("upgrade_en_cours")
     if op_courante and op_courante.get("statut") == "en_pause":
+        if op_courante.get("type") != "patch":
+            # L'API refuse (409) : seule une opération de patch se reprend ici.
+            rprint(f"[red]Mise à niveau en pause d'un autre type : "
+                   f"{_fmt_upgrade(op_courante)}.[/red]", file=sys.stderr)
+            rprint("[dim]Elle n'est pas reprise par la mise à jour de patch : annulez-la "
+                   f"d'abord (cetic k8s upgrade-cancel {cluster_id}).[/dim]", file=sys.stderr)
+            raise typer.Exit(1)
         if not yes and not typer.confirm(
             f"Mise à niveau en pause : {_fmt_upgrade(op_courante)}. La reprendre "
             "maintenant ?",
@@ -1047,6 +1063,63 @@ def upgrade_patch(
         rprint(f"[dim]Suivre avec : cetic k8s upgrades {cluster_id}[/dim]")
 
 
+@app.command(name="upgrade-cancel")
+def upgrade_cancel(
+    cluster_id: str = typer.Argument(...),
+    yes: bool = typer.Option(False, "--yes", "-y"),
+) -> None:
+    """Annule les étapes restantes d'une mise à niveau EN PAUSE.
+
+    Les étapes en attente passent « annulée » et la version qu'elles devaient
+    poser est restaurée ; les étapes déjà terminées restent en place (aucun
+    retour arrière). Une étape en cours se termine toujours : seule une mise à
+    niveau en pause s'annule. Un pool laissé sur une mineure plus ancienne ne
+    peut plus créer de nœud avant d'être mis à niveau.
+    """
+    try:
+        c = client.get(f"/v1/k8s/clusters/{cluster_id}")
+    except client.APIError as e:
+        _fail(e)
+    op = c.get("upgrade_en_cours")
+    if not op or op.get("statut") != "en_pause":
+        if op:
+            rprint(f"[red]Mise à niveau en cours, pas en pause : {_fmt_upgrade(op)}.[/red]",
+                   file=sys.stderr)
+            rprint("[dim]Une étape en cours se termine toujours ; seule une mise à niveau "
+                   "en pause s'annule.[/dim]", file=sys.stderr)
+        else:
+            rprint("[red]Aucune mise à niveau en attente sur ce cluster.[/red]",
+                   file=sys.stderr)
+        raise typer.Exit(1)
+    restantes = [
+        (e.get("pool_name") or e.get("pool_id") or "pool") if e.get("type") == "pool"
+        else "plan de contrôle"
+        for e in op.get("etapes") or [] if e.get("statut") == "en_attente"
+    ]
+    rprint(
+        f"Mise à niveau en pause : "
+        f"{_UPGRADE_TYPE.get(op.get('type', ''), op.get('type') or '?')} vers "
+        f"{op.get('version_cible', '?')} ({op.get('origine') or '?'}).\n"
+        f"Étapes annulées : {', '.join(restantes) or 'aucune'} ; les étapes terminées "
+        "restent en place.",
+        file=sys.stderr,
+    )
+    if not yes and not typer.confirm("Annuler cette mise à niveau ?", err=True):
+        raise typer.Abort()
+    try:
+        c = client.post(f"/v1/k8s/clusters/{cluster_id}/upgrade-cancel")
+    except client.APIError as e:
+        if e.status_code == 409:
+            rprint(f"[red]Erreur : {e.detail}[/red]", file=sys.stderr)
+            rprint("[dim]Seule une mise à niveau en pause s'annule ; état actuel : "
+                   f"cetic k8s upgrades {cluster_id}.[/dim]", file=sys.stderr)
+            raise typer.Exit(1) from None
+        _fail(e)
+    rprint(f"[green]✓[/green] Mise à niveau annulée (version du plan de contrôle : "
+           f"{c.get('k8s_version', '?')}, status : {c.get('status', '?')}).")
+    rprint(f"[dim]Historique : cetic k8s upgrades {cluster_id}[/dim]")
+
+
 @app.command(name="upgrades")
 def list_upgrades(
     cluster_id: str = typer.Argument(...),
@@ -1071,7 +1144,9 @@ def list_upgrades(
             "origine": op.get("origine"),
             "versions": f"{op.get('version_depart') or '?'} → {op.get('version_cible', '?')}",
             "statut": _UPGRADE_STATUT.get(op.get("statut", ""), op.get("statut")),
-            "etapes": f"{faites}/{len(etapes)}" if etapes else "—",
+            "etapes": (f"{faites}/{len(etapes)}"
+                       + (f" ({_etapes_annulees(etapes)} annulée(s))"
+                          if _etapes_annulees(etapes) else "")) if etapes else "—",
             "fin": (op.get("termine_at") or "")[:16].replace("T", " ") or "—",
             "erreur": op.get("error_message"),
         })
