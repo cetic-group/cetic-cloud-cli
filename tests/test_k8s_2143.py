@@ -3,6 +3,7 @@ des pools (cetic-cloud-platform#2143)."""
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import httpx
@@ -72,6 +73,17 @@ def _capture(mock_route, status: int = 200, payload: Any = None) -> dict[str, An
 
     mock_route.mock(side_effect=_side)
     return captured
+
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _aide(runner, *args: str) -> str:
+    """Aide Typer/Rich en texte brut : la CI force la couleur, et Rich découpe
+    alors `--plan` en plusieurs segments colorés."""
+    result = runner.invoke(app, [*args, "--help"], env={"COLUMNS": "200", "NO_COLOR": "1"})
+    assert result.exit_code == 0, result.output
+    return _ANSI.sub("", result.stdout)
 
 
 def _flat(text: str) -> str:
@@ -186,12 +198,11 @@ def test_create_tier_dev_sent_with_plan_for_old_api(runner, mock_api):
 
 
 def test_create_help_documents_plan_and_disk_default(runner):
-    result = runner.invoke(app, ["k8s", "create", "--help"], env={"COLUMNS": "200"})
-    assert result.exit_code == 0
-    assert "--plan" in result.stdout
-    assert "starter" in result.stdout
-    assert "DÉPRÉCIÉ" in result.stdout
-    assert "20 Go" in result.stdout
+    aide = _aide(runner, "k8s", "create")
+    assert "--plan" in aide
+    assert "starter" in aide
+    assert "DÉPRÉCIÉ" in aide
+    assert "20 Go" in aide
 
 
 # ---------------------------------------------------------------------------
@@ -301,9 +312,7 @@ def test_pool_list_shows_disk(runner, mock_api):
 
 
 def test_pool_create_help_mentions_default_disk(runner):
-    result = runner.invoke(app, ["k8s", "pool", "create", "--help"], env={"COLUMNS": "200"})
-    assert result.exit_code == 0
-    assert "20 Go" in result.stdout
+    assert "20 Go" in _aide(runner, "k8s", "pool", "create")
 
 
 # ---------------------------------------------------------------------------
@@ -397,8 +406,7 @@ def test_upgrade_version_posts_control_plane_only(runner, mock_api):
 
 
 def test_upgrade_version_help_says_control_plane_only(runner):
-    result = runner.invoke(app, ["k8s", "upgrade-version", "--help"], env={"COLUMNS": "200"})
-    assert "PLAN DE CONTRÔLE seul" in result.stdout
+    assert "PLAN DE CONTRÔLE seul" in _aide(runner, "k8s", "upgrade-version")
 
 
 def test_upgrade_version_invalid_version(runner, mock_api):
