@@ -946,3 +946,12 @@ def test_create_survives_unreadable_vnet_list(runner, mock_api):
     result = runner.invoke(app, _create_args())
     assert result.exit_code == 0, result.stdout
     assert "Cluster créé" in result.stdout
+
+
+def test_os_rocky10_accepte_rocky9_garde_pour_l_existant() -> None:
+    """cetic-cloud-platform#2145 : Rocky Linux 10 proposé ; `rocky9` reste
+    accepté (clusters existants)."""
+    from cetic.commands import k8s as k8s_cmd
+
+    assert "rocky10" in k8s_cmd.VALID_OS and "rocky9" in k8s_cmd.VALID_OS
+    assert k8s_cmd._fmt_os("rocky10") == "Rocky Linux 10"
