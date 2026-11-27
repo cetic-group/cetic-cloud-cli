@@ -6,7 +6,7 @@ Official command-line interface for [CETIC Cloud Platform](https://docs.cloud.ce
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue)](LICENSE)
 
 ```bash
-cetic auth login
+cetic auth login --sso github
 cetic vm create --name web-01 --region RNN --plan small
 cetic k8s kubeconfig <cluster-id> > ~/.kube/config
 cetic db pg create --name app-db --region RNN --vnet <VNET> --plan small
@@ -53,7 +53,7 @@ The CLI reads configuration from environment variables (priority over the config
 
 | Variable | Description | Default |
 |---|---|---|
-| `CCP_API_KEY` | API key (Bearer token) | — *(required)* |
+| `CCP_API_KEY` | API key (Bearer token) | — *(optional, overrides the stored credential)* |
 | `CCP_API_URL` | API base URL | `https://api.cloud.cetic-group.com` |
 | `CCP_REGION` | Active region | `RNN` |
 | `CCP_OUTPUT` | Output format | `table` *(table / json / yaml)* |
@@ -61,7 +61,7 @@ The CLI reads configuration from environment variables (priority over the config
 
 > Upgrading from a previous version? Your old config (`~/.config/cetic/config.toml`) is migrated automatically to `~/.ccp/config` on first run.
 
-Generate an API key in the CETIC Cloud console under **Settings → API Keys**, or use `cetic auth login` for interactive authentication.
+Generate an API key in the CETIC Cloud console under **Settings → API Keys**, then `cetic auth login --api-key` to store it, or use `cetic auth login --sso github|google` for browser authentication. Email and password login is not available in the CLI: it requires the console login page's anti-bot check.
 
 > **Trousseau système** : les mots de passe admin des registries de conteneurs (`cetic registry`) sont stockés dans le trousseau système via la lib `keyring` (Keychain macOS, libsecret/GNOME Keyring Linux, Credential Manager Windows). Le CLI propose la sauvegarde à la création — vous pouvez aussi répondre `n` et fournir le mot de passe au login interactif.
 
@@ -497,8 +497,10 @@ Cf. [docs/iam](https://docs.cloud.cetic-group.com/services/iam) pour le détail 
 
 ```bash
 # Authentication
-cetic auth login                  # interactive (email + password)
 cetic auth login --sso github     # SSO via le navigateur (github | google) — depuis v0.34.0
+cetic auth login --api-key        # store an API key created in the console (read from stdin)
+# Email + password: not available in the CLI (console anti-bot check).
+# CCP_API_KEY, when set, takes precedence over the stored credential.
 cetic auth whoami                 # show current identity
 
 # Compute

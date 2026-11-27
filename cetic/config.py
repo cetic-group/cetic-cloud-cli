@@ -15,7 +15,10 @@ Variables d'environnement (prioritaires sur le fichier) :
   CCP_API_URL    — surcharge URL API (dev uniquement)
 """
 
+import json
 import os
+import re
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -56,8 +59,17 @@ def _migrate_legacy_if_needed() -> None:
     if not old.exists():
         return
     try:
-        config_dir().mkdir(parents=True, exist_ok=True)
-        new.write_text(old.read_text(encoding="utf-8"), encoding="utf-8")
+        # Le fichier porte jeton d'accès et refresh token : 0700 / 0600 dès la
+        # copie, pas à la prochaine écriture.
+        # Lire AVANT de créer : un ancien fichier illisible (encodage, droits)
+        # ne doit pas laisser un fichier vide, qui empêcherait toute nouvelle
+        # tentative. Écriture par temporaire 0600 puis `os.link`
+        # (échoue si la cible existe, comme `O_EXCL`), donc jamais partielle.
+        contenu = old.read_text(encoding="utf-8")
+        dossier = config_dir()
+        dossier.mkdir(mode=0o700, parents=True, exist_ok=True)
+        _restreindre(dossier, 0o700)
+        _ecrire_atomique(new, contenu, remplacer=False)
     except Exception:
         pass  # best-effort — un échec de migration ne bloque pas la CLI
 
@@ -89,12 +101,102 @@ def get(key: str) -> str | None:
 
 
 def set_value(key: str, value: str) -> None:
-    """Persiste une clé dans le fichier de config TOML."""
-    config_dir().mkdir(parents=True, exist_ok=True)
-    data = _load_file()
-    data[key] = value
-    lines = [f'{k} = "{v}"' for k, v in data.items()]
-    config_file().write_text("\n".join(lines) + "\n", encoding="utf-8")
+    """Persiste une clé dans le fichier de config TOML.
+
+    Le fichier peut porter une clé d'API qui n'expire pas (`cetic auth login
+    --api-key`) : dossier en 0700, fichier en 0600, même s'ils existaient avec
+    les droits de l'umask. Le reste du fichier est conservé tel quel
+    (`_nouveau_contenu`)."""
+    _migrate_legacy_if_needed()
+    contenu = _nouveau_contenu(key, value)
+    if contenu is None:
+        # SystemExit : message sur stderr et code 1, sans trace Python.
+        raise SystemExit(
+            f"Erreur : {config_file()} ne peut pas être réécrit sans perdre des "
+            f"valeurs (clé `{key}` sur plusieurs lignes ou entre guillemets ?). "
+            "Rien n'a été modifié : corrigez le fichier à la main.")
+    dossier = config_dir()
+    dossier.mkdir(mode=0o700, parents=True, exist_ok=True)
+    _restreindre(dossier, 0o700)
+    _ecrire_atomique(config_file(), contenu, remplacer=True)
+
+
+def reecrivable(*keys: str) -> bool:
+    """Vrai si `set_value` peut écrire ces clés. À vérifier AVANT un effet
+    côté serveur qu'on ne peut pas rejouer : le refresh token tourne à
+    chaque rafraîchissement, et un nouveau jeton non enregistré ferait
+    rejouer l'ancien, ce que la plateforme traite comme un vol (toutes les
+    sessions du compte révoquées)."""
+    try:
+        return all(_nouveau_contenu(k, "x") is not None for k in keys)
+    except Exception:
+        return False
+
+
+def _nouveau_contenu(key: str, value: str) -> str | None:
+    """Contenu du fichier avec `key = value`, ou None s'il ne peut pas être
+    produit sans perdre de valeur.
+
+    Seule la ligne `key = …` du niveau racine est remplacée (ou ajoutée) : les
+    tables, dates et commentaires ajoutés à la main restent tels quels.
+    `json.dumps` produit une chaîne TOML valide (un `"` ou un `\\` rendait le
+    fichier illisible). Un fichier déjà illisible est remplacé, comme avant."""
+    path = config_file()
+    try:
+        texte = path.read_text(encoding="utf-8") if path.exists() else ""
+        avant = tomllib.loads(texte)
+    except Exception:
+        texte, avant = "", {}
+    lignes = texte.splitlines()
+    fin_racine = next(
+        (i for i, ligne in enumerate(lignes) if ligne.lstrip().startswith("[")), len(lignes))
+    motif = re.compile(rf"^\s*{re.escape(key)}\s*=")
+    ligne = f"{key} = {json.dumps(value, ensure_ascii=False)}"
+    idx = next((i for i in range(fin_racine) if motif.match(lignes[i])), None)
+    if idx is None:
+        while fin_racine > 0 and not lignes[fin_racine - 1].strip():
+            fin_racine -= 1  # avant les lignes vides qui précèdent une table
+        lignes.insert(fin_racine, ligne)
+    else:
+        lignes[idx] = ligne
+    contenu = "\n".join(lignes) + "\n"
+    # Contrôle : le résultat se relit à l'identique, la clé en plus. Sinon
+    # (valeur sur plusieurs lignes, clé entre guillemets…), ne rien écrire.
+    try:
+        apres = tomllib.loads(contenu)
+    except Exception:
+        return None
+    avant[key] = value
+    return contenu if apres == avant else None
+
+
+def _ecrire_atomique(chemin: Path, contenu: str, *, remplacer: bool) -> None:
+    """Fichier temporaire 0600 puis `os.replace` (ou `os.link` sans
+    remplacement). Une interruption ne laisse jamais de fichier partiel, et un
+    lien symbolique posé sur le fichier n'est pas suivi."""
+    tmp = chemin.with_name(f".{chemin.name}.{os.getpid()}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(contenu)
+        if remplacer:
+            os.replace(tmp, chemin)
+        else:
+            os.link(tmp, chemin)
+            tmp.unlink()
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    _restreindre(chemin, 0o600)
+
+
+def _restreindre(chemin: Path, mode: int) -> None:
+    """Droits du propriétaire seul (best-effort : sans effet sous Windows)."""
+    try:
+        if stat.S_IMODE(chemin.stat().st_mode) != mode:
+            chemin.chmod(mode)
+    except OSError:
+        pass
 
 
 def get_api_url() -> str:

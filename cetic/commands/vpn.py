@@ -39,6 +39,7 @@ from rich import print as rprint
 
 from cetic import client
 from cetic.commands._render import render_list, render_one
+from cetic._auth_hint import NON_AUTHENTIFIE
 
 
 VPN_PATH = "/v1/vpn/gateways"
@@ -66,7 +67,7 @@ app.add_typer(policy_app, name="policy")
 
 def _format_api_error(e: client.APIError) -> str:
     if e.status_code == 401:
-        return "Non authentifié — vérifiez `cetic auth login` ou `CCP_API_KEY`."
+        return NON_AUTHENTIFIE
     if e.status_code == 403:
         return "Accès refusé — droits insuffisants pour gérer le VPN."
     if e.status_code == 404:

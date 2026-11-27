@@ -28,6 +28,7 @@ from cetic._secrets import (
     save_sa_token,
 )
 from cetic.commands._render import render_list, render_one
+from cetic._auth_hint import NON_AUTHENTIFIE
 
 
 SA_PATH = "/v1/service-accounts"
@@ -42,7 +43,7 @@ app = typer.Typer(help="Service Accounts CETIC Cloud (tokens ccp_sa_)")
 
 def _format_api_error(e: client.APIError) -> str:
     if e.status_code == 401:
-        return "Non authentifié — vérifiez `cetic auth login` ou `CCP_API_KEY`."
+        return NON_AUTHENTIFIE
     if e.status_code == 403:
         return "Accès refusé — droits insuffisants (admin requis)."
     if e.status_code == 404:

@@ -38,6 +38,7 @@ from rich import print as rprint
 from cetic import client
 from cetic._resolve import resolve_id
 from cetic.commands._render import render_list, render_one
+from cetic._auth_hint import NON_AUTHENTIFIE
 
 
 SECRET_PATH = "/v1/secrets"
@@ -59,7 +60,7 @@ app = typer.Typer(help="Gestion des secrets CETIC Cloud (Secret Manager)")
 
 def _format_api_error(e: client.APIError) -> str:
     if e.status_code == 401:
-        return "Non authentifié — vérifiez `cetic auth login` ou `CCP_API_KEY`."
+        return NON_AUTHENTIFIE
     if e.status_code == 403:
         return "Accès refusé — droits insuffisants (action secrets:*)."
     if e.status_code == 404:
