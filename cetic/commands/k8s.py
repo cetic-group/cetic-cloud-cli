@@ -1015,10 +1015,18 @@ def update_cluster(
         c = client.patch(f"/v1/k8s/clusters/{cluster_id}", json={"os_image": os_norm})
     except client.APIError as e:
         _fail(e)
+    # Une API antérieure à cetic-cloud-platform#2155 ignore `os_image` dans le
+    # PATCH et renvoie l'OS inchangé : c'est un échec, pas un succès.
+    if c.get("os_image") != os_norm:
+        rprint(f"[red]Erreur : la plateforme n'a pas appliqué le changement "
+               f"(OS par défaut toujours {_fmt_os(c.get('os_image'))}). Cette "
+               "modification demande l'API de cetic-cloud-platform#2155.[/red]",
+               file=sys.stderr)
+        raise typer.Exit(1)
     if _emit_machine(c):
         return
     rprint(f"[green]✓[/green] OS par défaut des nouveaux pools : "
-           f"[bold]{_fmt_os(c.get('os_image') or os_norm)}[/bold]")
+           f"[bold]{_fmt_os(os_norm)}[/bold]")
 
 
 @app.command(name="upgrade-version")

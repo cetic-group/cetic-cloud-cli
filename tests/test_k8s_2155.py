@@ -119,6 +119,17 @@ def test_update_os_api_refusal(runner, mock_api):
     assert "Aucun template Flatcar" in result.stderr
 
 
+def test_update_os_ignored_by_older_api_is_an_error(runner, mock_api):
+    """Avant #2155, l'API ignore `os_image` dans le PATCH : pas de faux succès."""
+    mock_api.get(BASE).mock(return_value=httpx.Response(200, json=_cluster()))
+    _capture_patch(mock_api, payload=_cluster())
+    result = runner.invoke(app, ["k8s", "update", CID, "--os", "flatcar", "-y"])
+    assert result.exit_code == 1, result.output
+    err = _flat(result.stderr)
+    assert "n'a pas appliqué" in err and "#2155" in err
+    assert "✓" not in result.output
+
+
 def test_update_os_json_output(runner, mock_api, monkeypatch):
     monkeypatch.setenv("CCP_OUTPUT", "json")
     mock_api.get(BASE).mock(return_value=httpx.Response(200, json=_cluster()))
