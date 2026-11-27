@@ -60,7 +60,7 @@ def get(key_id: str = typer.Argument(...)) -> None:
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
-    k = next((i for i in items if i.get("id") == key_id), None)
+    k = next((i for i in items if str(i.get("id", "")).lower() == key_id.strip().lower()), None)
     if k is None:
         rprint(f"[red]Erreur : clé API introuvable : {key_id}[/red]")
         raise typer.Exit(1)

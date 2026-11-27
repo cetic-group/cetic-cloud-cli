@@ -158,7 +158,7 @@ def get(ip_id: str = typer.Argument(...)) -> None:
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
-    ip = next((p for p in items if p.get("id") == ip_id), None)
+    ip = next((p for p in items if _meme_uuid(p.get("id"), ip_id)), None)
     if ip is None:
         # La liste ne rend que les IP allouées ou attachées.
         rprint(f"[red]Erreur : IP publique introuvable ou libérée : {ip_id}[/red]")
@@ -240,7 +240,14 @@ _DETACH_PAR_RESSOURCE = (
     ("app_gateway_id", "/v1/app-gateways/{}/detach-ip"),
     ("bastion_id", "/v1/bastions/{}/detach-ip"),
     ("vpn_gateway_id", "/v1/vpn/gateways/{}/detach-ip"),
+    ("k8s_cluster_id", "/v1/k8s/clusters/{}/detach-ip"),
 )
+
+
+def _meme_uuid(a: object, b: str) -> bool:
+    """Compare un UUID de l'API (minuscules) à l'argument, sans tenir compte de
+    la casse : l'API, elle, parsait l'UUID (revue)."""
+    return isinstance(a, str) and a.lower() == b.strip().lower()
 
 
 @app.command()
@@ -253,7 +260,15 @@ def detach(ip_id: str = typer.Argument(...)) -> None:
         # Même chose pour toute ressource qui référence l'IP par une clé
         # étrangère (gateway, bastion, VPN) : la route générique ne la nettoie
         # pas, et l'IP serait libérée alors que la ressource la tient encore.
-        ip = next((p for p in client.get("/v1/public-ips") if p.get("id") == ip_id), None)
+        ip = next((p for p in client.get("/v1/public-ips") if _meme_uuid(p.get("id"), ip_id)), None)
+        if ip and ip.get("db_instance_id"):
+            # Le moteur ne se déduit pas de l'IP et la route générique laisserait
+            # `db_instances.public_ip_id` pointer sur une IP libérée (revue).
+            nom = ip.get("db_instance_name") or ip["db_instance_id"]
+            rprint(f"[red]Cette IP est attachée à la base de données {nom}.[/red] "
+                   "Détachez-la par : [cyan]cetic db <moteur> detach-ip "
+                   f"{ip['db_instance_id']}[/cyan] (moteur : pg, mysql, valkey ou ferretdb).")
+            raise typer.Exit(1)
         chemin = next(
             (route.format(ip[champ]) for champ, route in _DETACH_PAR_RESSOURCE if ip and ip.get(champ)),
             f"/v1/public-ips/{ip_id}/detach",

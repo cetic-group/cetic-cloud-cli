@@ -103,6 +103,7 @@ def test_ip_detach_d_une_ip_de_lb_passe_par_le_lb(runner, mock_api):
     ("app_gateway_id", "/v1/app-gateways/{}/detach-ip"),
     ("bastion_id", "/v1/bastions/{}/detach-ip"),
     ("vpn_gateway_id", "/v1/vpn/gateways/{}/detach-ip"),
+    ("k8s_cluster_id", "/v1/k8s/clusters/{}/detach-ip"),
 ])
 def test_ip_detach_passe_par_la_ressource_qui_tient_l_ip(runner, mock_api, champ, route):
     """Une IP tenue par une gateway, un bastion ou une passerelle VPN (clé
@@ -115,3 +116,36 @@ def test_ip_detach_passe_par_la_ressource_qui_tient_l_ip(runner, mock_api, champ
     result = runner.invoke(app, ["ip", "detach", IP])
     assert result.exit_code == 0, result.stdout + result.stderr
     assert res.called and not gen.called
+
+
+
+def test_ip_detach_d_une_ip_de_base_refuse_et_oriente(runner, mock_api):
+    """Revue : la route générique laissait `db_instances.public_ip_id` pointer
+    sur une IP libérée ; la CLI renvoie vers `cetic db <moteur> detach-ip`."""
+    mock_api.get("/v1/public-ips").mock(return_value=httpx.Response(200, json=[
+        {"id": IP, "db_instance_id": CIBLE, "db_instance_name": "app-db"}]))
+    gen = mock_api.post(f"/v1/public-ips/{IP}/detach").mock(return_value=httpx.Response(200, json={}))
+    result = runner.invoke(app, ["ip", "detach", IP])
+    assert result.exit_code == 1
+    assert "detach-ip" in result.stdout and "app-db" in result.stdout
+    assert not gen.called
+
+
+def test_ip_detach_uuid_en_majuscules_passe_par_le_lb(runner, mock_api):
+    """Revue : un UUID en majuscules retombait en silence sur la route
+    générique (détachement incomplet d'une IP de LB)."""
+    mock_api.get("/v1/public-ips").mock(return_value=httpx.Response(200, json=[
+        {"id": IP, "load_balancer_id": CIBLE}]))
+    lb = mock_api.post(f"/v1/load-balancers/{CIBLE}/detach-ip").mock(
+        return_value=httpx.Response(200, json={}))
+    result = runner.invoke(app, ["ip", "detach", IP.upper()])
+    assert result.exit_code == 0, result.stdout + result.stderr
+    assert lb.called
+
+
+def test_bucket_key_revoke_sans_bucket_404_indique_bucket(runner, mock_api):
+    mock_api.delete("/v1/object-storage/keys/k1").mock(
+        return_value=httpx.Response(404, json={"detail": "Clé introuvable"}))
+    result = runner.invoke(app, ["bucket", "key", "revoke", "k1", "--yes"])
+    assert result.exit_code == 1
+    assert "--bucket" in result.stdout

@@ -170,6 +170,10 @@ def revoke(
             client.delete(f"/v1/object-storage/keys/{key_id}")
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
+        if e.status_code == 404 and not bucket:
+            # Sans --bucket, seule une ancienne clé d'organisation est cherchée ;
+            # les nouvelles clés appartiennent à un bucket (revue).
+            rprint("[yellow]Clé d'un bucket ? Relancez avec --bucket <UUID>.[/yellow]")
         raise typer.Exit(1)
     rprint("[green]✓[/green] Clé révoquée.")
 
