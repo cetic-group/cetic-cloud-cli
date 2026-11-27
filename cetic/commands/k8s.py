@@ -12,7 +12,7 @@ from rich import print as rprint
 
 from cetic import client, config
 from cetic.commands._catalog import render_compute_plans
-from cetic.commands._render import render_list, render_one, filter_region
+from cetic.commands._render import filter_region, render_list, render_one
 
 
 def _parse_label_arg(label_str: str) -> tuple[str, str]:
