@@ -21,6 +21,27 @@ def test_secret_tags_et_ancien_label(runner, mock_api):
     assert "labels" not in body
 
 
+def test_ancien_label_invalide_ignore_avec_avertissement(runner, mock_api):
+    """Revue : `--label "owner=Jean Dupont"` passait (l'API ignorait les
+    labels) ; converti en tag invalide, il ferait échouer la commande en 422.
+    Il est ignoré avec un avertissement, les autres tags partent."""
+    route = mock_api.post("/v1/secrets").mock(return_value=httpx.Response(201, json={
+        "id": "s1", "name": "db", "version": 1}))
+    result = runner.invoke(app, ["secret", "create", "db", "--data", "p=x",
+                                 "--label", "owner=Jean Dupont", "--label", "App=Web"])
+    assert result.exit_code == 0, result.stdout + result.stderr
+    body = json.loads(route.calls.last.request.content)
+    assert body["tags"] == ["app:web"]
+    assert "ignoré" in result.stdout
+
+
+def test_ancien_label_sans_egal_refuse(runner, mock_api):
+    route = mock_api.post("/v1/secrets").mock(return_value=httpx.Response(201, json={}))
+    result = runner.invoke(app, ["secret", "create", "db", "--data", "p=x", "--label", "foo"])
+    assert result.exit_code != 0
+    assert not route.called
+
+
 def test_secret_list_affiche_les_tags(runner, mock_api):
     mock_api.get("/v1/secrets").mock(return_value=httpx.Response(200, json=[{
         "id": "s1", "name": "db", "version": 1, "tags": ["env:prod"],

@@ -826,26 +826,38 @@ def create(
         try:
             templates = client.get("/v1/k8s/templates", params={"region": region})
         except client.APIError as e:
-            _fail(e)
+            if not os_template_key:
+                _fail(e)
+            # Avec `--template`, la liste ne sert qu'à lire la version et l'OS
+            # du template : son échec (droit IAM manquant…) n'empêche pas une
+            # création qui donne `--version` (revue).
+            templates = []
         if os_template_key:
             # `--template` fourni : sa version (pas la plus récente de la
-            # région, revue) et son OS. Les `matchTags` du cluster
-            # dérivent de `os_image` : le défaut `flatcar` avec un template
-            # ubuntu créait le cluster sur une autre famille (ou était refusé).
-            entree = next((t for t in templates if t.get("os_key") == os_template_key), None)
-            if entree is None:
-                rprint(f"[red]Template inconnu dans la région {region} : {os_template_key}. "
-                       f"Voir : cetic k8s templates --region {region}.[/red]")
-                raise typer.Exit(1)
-            os_template = entree.get("os")
+            # région) et son OS. ⚠️ `os_key` (`kube-v1-34-8`) ne porte PAS
+            # l'OS : flatcar, ubuntu et rocky10 en 1.34.8 partagent la même
+            # clé. L'entrée se cherche donc sur le couple (clé, OS) (revue).
+            entrees = [t for t in templates if t.get("os_key") == os_template_key]
             if os_norm is None:
-                os_norm = os_template or "flatcar"
-            elif os_template and os_template != os_norm:
-                rprint(f"[red]--os {os_norm} ne correspond pas au template {os_template_key} "
-                       f"({_fmt_os(os_template)}). Retirez --os ou choisissez un template "
-                       f"{_fmt_os(os_norm)}.[/red]")
+                oses = {t.get("os") or "flatcar" for t in entrees}
+                # Une seule famille pour cette clé : la sienne. Sinon, le
+                # défaut `flatcar` (l'OS ne se déduit pas de la clé).
+                os_norm = oses.pop() if len(oses) == 1 else "flatcar"
+            entree = next((t for t in entrees if (t.get("os") or "flatcar") == os_norm), None)
+            if entree is None and entrees:
+                dispo = ", ".join(sorted(_fmt_os(t.get("os") or "flatcar") for t in entrees))
+                rprint(f"[red]Le template {os_template_key} n'existe pas en {_fmt_os(os_norm)} "
+                       f"dans la région {region} (disponible : {dispo}). "
+                       "Choisissez --os en conséquence.[/red]")
                 raise typer.Exit(1)
             if k8s_version is None:
+                if entree is None:
+                    # Liste vide (région sans prérequis CCKS, liste illisible)
+                    # ou clé absente : la version ne peut pas être lue.
+                    rprint(f"[red]Template inconnu dans la région {region} : {os_template_key}, "
+                           "sa version ne peut pas être lue. Passez --version, ou voir : "
+                           f"cetic k8s templates --region {region}.[/red]")
+                    raise typer.Exit(1)
                 k8s_version = (entree.get("k8s_version") or "").lstrip("vV") or None
                 if k8s_version is None:
                     rprint(f"[red]Le template {os_template_key} n'indique pas sa version : "

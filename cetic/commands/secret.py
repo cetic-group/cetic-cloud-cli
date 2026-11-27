@@ -102,12 +102,31 @@ def _read_file_value(path: str) -> str:
         return base64.b64encode(raw).decode("ascii")
 
 
+_TAG_RE = re.compile(r"^[a-z0-9._:/-]{1,50}$")
+
+
 def _tags(tag: list[str], label: list[str]) -> list[str]:
     """Tags du secret : l'API attend `tags: list[str]` (minuscules, chiffres,
-    `. _ : / -`). `--label key=value`, l'ancienne option, était ignoré par
-    l'API ; il reste accepté et devient le tag
-    `key:value`."""
-    return [*tag, *(item.replace("=", ":", 1) for item in label)]
+    `. _ : / -`, 50 caractères au plus). `--label key=value`, l'ancienne
+    option, était ignoré par l'API ; il reste accepté et devient le tag
+    `key:value`.
+
+    Compatibilité (revue) : un label qui ne donne pas un tag valide
+    (`owner=Jean Dupont`, `url=https://x?y`) est ignoré avec un avertissement,
+    comme l'API l'ignorait, au lieu de faire échouer la commande en 422 ; et
+    `--label` sans `=` reste refusé, comme avant."""
+    convertis: list[str] = []
+    for item in label:
+        if "=" not in item:
+            raise typer.BadParameter(f"--label '{item}' : format attendu 'key=value'.")
+        candidat = item.replace("=", ":", 1).strip().lower()
+        if _TAG_RE.fullmatch(candidat):
+            convertis.append(candidat)
+        else:
+            rprint(f"[yellow]⚠ --label '{item}' ignoré : un tag n'accepte que lettres "
+                   "minuscules, chiffres et `. _ : / -` (50 caractères au plus). "
+                   "Utilisez --tag.[/yellow]")
+    return [*tag, *convertis]
 
 
 def _parse_kv(items: list[str], *, allow_file_ref: bool = False) -> dict[str, str]:

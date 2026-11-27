@@ -1052,7 +1052,7 @@ def test_create_template_sans_os_prend_l_os_du_template(runner, mock_api):
     template (le défaut `flatcar` faisait dériver d'autres `matchTags`)."""
     captured: dict[str, Any] = {}
     mock_api.get("/v1/k8s/templates").mock(return_value=httpx.Response(200, json=[
-        _template("ubuntu", "kube-v1-34-8-u", "1.34.8")]))
+        _template("ubuntu", "kube-v1-34-8", "1.34.8")]))
 
     def _capture(request: httpx.Request) -> httpx.Response:
         captured["body"] = json.loads(request.content)
@@ -1060,21 +1060,22 @@ def test_create_template_sans_os_prend_l_os_du_template(runner, mock_api):
 
     mock_api.post("/v1/k8s/clusters").mock(side_effect=_capture)
     result = runner.invoke(app, ["k8s", "create", "--name", "ccks-prod", "--region", "fr-par-1",
-                                 "--vpc", VPC_ID, "--vnet", VNET_ID, "--template", "kube-v1-34-8-u",
+                                 "--vpc", VPC_ID, "--vnet", VNET_ID, "--template", "kube-v1-34-8",
                                  "--version", "1.34.8"])
     assert result.exit_code == 0, result.stdout + result.stderr
     assert captured["body"]["os_image"] == "ubuntu"
 
 
 def test_create_template_et_os_incompatibles(runner, mock_api):
+    """La clé n'existe qu'en Ubuntu dans la région : `--os flatcar` est refusé."""
     mock_api.get("/v1/k8s/templates").mock(return_value=httpx.Response(200, json=[
-        _template("ubuntu", "kube-v1-34-8-u", "1.34.8")]))
+        _template("ubuntu", "kube-v1-34-8", "1.34.8")]))
     post = mock_api.post("/v1/k8s/clusters").mock(return_value=httpx.Response(201, json={}))
     result = runner.invoke(app, ["k8s", "create", "--name", "ccks-prod", "--region", "fr-par-1",
-                                 "--vpc", VPC_ID, "--vnet", VNET_ID, "--template", "kube-v1-34-8-u",
+                                 "--vpc", VPC_ID, "--vnet", VNET_ID, "--template", "kube-v1-34-8",
                                  "--os", "flatcar"])
     assert result.exit_code == 1
-    assert "ne correspond pas" in result.stdout
+    assert "n'existe pas en Flatcar" in result.stdout
     assert not post.called
 
 
@@ -1085,3 +1086,79 @@ def test_os_rocky10_accepte_rocky9_garde_pour_l_existant() -> None:
 
     assert "rocky10" in k8s_cmd.VALID_OS and "rocky9" in k8s_cmd.VALID_OS
     assert k8s_cmd._fmt_os("rocky10") == "Rocky Linux 10"
+
+
+
+def _multi_os() -> list[dict[str, Any]]:
+    """Format réel de l'API : la même clé `kube-v1-34-8` pour chaque OS, liste
+    triée par (région, version, OS)."""
+    return [_template("flatcar", "kube-v1-34-8", "1.34.8"),
+            _template("rocky9", "kube-v1-34-8", "1.34.8"),
+            _template("ubuntu", "kube-v1-34-8", "1.34.8")]
+
+
+def test_create_template_partage_et_os_ubuntu_sans_version(runner, mock_api):
+    """Revue : `--template kube-v1-34-8 --os ubuntu` sans `--version` était
+    refusé (la première entrée, Flatcar, était prise)."""
+    captured: dict[str, Any] = {}
+    mock_api.get("/v1/k8s/templates").mock(return_value=httpx.Response(200, json=_multi_os()))
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(201, json=_cluster(status="Provisioning"))
+
+    mock_api.post("/v1/k8s/clusters").mock(side_effect=_capture)
+    result = runner.invoke(app, ["k8s", "create", "--name", "ccks-prod", "--region", "fr-par-1",
+                                 "--vpc", VPC_ID, "--vnet", VNET_ID, "--template", "kube-v1-34-8",
+                                 "--os", "ubuntu"])
+    assert result.exit_code == 0, result.stdout + result.stderr
+    assert captured["body"]["os_image"] == "ubuntu"
+    assert captured["body"]["os_template_key"] == "kube-v1-34-8"
+    assert captured["body"]["k8s_version"] == "1.34.8"
+
+
+def test_create_template_partage_sans_os_garde_flatcar(runner, mock_api):
+    """Clé partagée par plusieurs OS, sans `--os` : défaut Flatcar (l'OS ne se
+    déduit pas de la clé), jamais « le premier de la liste »."""
+    captured: dict[str, Any] = {}
+    liste = list(reversed(_multi_os()))  # ubuntu en premier : l'ordre ne doit pas compter
+    mock_api.get("/v1/k8s/templates").mock(return_value=httpx.Response(200, json=liste))
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(201, json=_cluster(status="Provisioning"))
+
+    mock_api.post("/v1/k8s/clusters").mock(side_effect=_capture)
+    result = runner.invoke(app, ["k8s", "create", "--name", "ccks-prod", "--region", "fr-par-1",
+                                 "--vpc", VPC_ID, "--vnet", VNET_ID, "--template", "kube-v1-34-8"])
+    assert result.exit_code == 0, result.stdout + result.stderr
+    assert captured["body"]["os_image"] == "flatcar"
+
+
+def test_create_template_liste_vide_avec_version_passe(runner, mock_api):
+    """Revue : région sans prérequis CCKS (liste vide) ou liste illisible :
+    `--template` + `--version` suffit, comme avant."""
+    captured: dict[str, Any] = {}
+    mock_api.get("/v1/k8s/templates").mock(return_value=httpx.Response(403, json={"detail": "x"}))
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(201, json=_cluster(status="Provisioning"))
+
+    mock_api.post("/v1/k8s/clusters").mock(side_effect=_capture)
+    result = runner.invoke(app, ["k8s", "create", "--name", "ccks-prod", "--region", "fr-par-1",
+                                 "--vpc", VPC_ID, "--vnet", VNET_ID, "--template", "ccks-capi-x",
+                                 "--version", "1.34.8"])
+    assert result.exit_code == 0, result.stdout + result.stderr
+    assert captured["body"]["os_template_key"] == "ccks-capi-x"
+    assert captured["body"]["os_image"] == "flatcar"
+
+
+def test_create_template_liste_vide_sans_version_demande_version(runner, mock_api):
+    mock_api.get("/v1/k8s/templates").mock(return_value=httpx.Response(200, json=[]))
+    post = mock_api.post("/v1/k8s/clusters").mock(return_value=httpx.Response(201, json={}))
+    result = runner.invoke(app, ["k8s", "create", "--name", "ccks-prod", "--region", "fr-par-1",
+                                 "--vpc", VPC_ID, "--vnet", VNET_ID, "--template", "ccks-capi-x"])
+    assert result.exit_code == 1
+    assert "Passez --version" in result.stdout
+    assert not post.called
