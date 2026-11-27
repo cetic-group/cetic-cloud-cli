@@ -129,6 +129,12 @@ def test_ip_detach_d_une_ip_de_base_refuse_et_oriente(runner, mock_api):
     assert result.exit_code == 1
     assert "detach-ip" in result.stdout and "app-db" in result.stdout
     assert not gen.called
+    # Les moteurs cités sont les sous-commandes réelles de `cetic db`, pas les
+    # segments de route de l'API (`valkey`, `ferretdb`).
+    from cetic.commands.db import app as db_app
+    sous_commandes = {g.name for g in db_app.registered_groups}
+    cites = result.stdout.split("moteur :")[1].split(")")[0].replace(" ou ", ",").split(",")
+    assert {c.strip() for c in cites} == sous_commandes
 
 
 def test_ip_detach_uuid_en_majuscules_passe_par_le_lb(runner, mock_api):

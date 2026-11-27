@@ -129,7 +129,7 @@ def _resoudre_utilisateur(rid: str, user: str) -> tuple[str, str]:
     except client.APIError as e:
         raise _bail(e) from e
     for u in items:
-        # UUID sans tenir compte de la casse (revue) ; nom d'utilisateur exact.
+        # UUID sans tenir compte de la casse ; nom d'utilisateur exact.
         if user == u.get("username") or str(u.get("id", "")).lower() == user.strip().lower():
             return u["id"], u["username"]
     rprint(f"[red]Utilisateur introuvable dans cette registry : {user}[/red]")

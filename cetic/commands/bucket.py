@@ -172,7 +172,7 @@ def revoke(
         rprint(f"[red]Erreur : {e.detail}[/red]")
         if e.status_code == 404 and not bucket:
             # Sans --bucket, seule une ancienne clé d'organisation est cherchée ;
-            # les nouvelles clés appartiennent à un bucket (revue).
+            # les nouvelles clés appartiennent à un bucket.
             rprint("[yellow]Clé d'un bucket ? Relancez avec --bucket <UUID>.[/yellow]")
         raise typer.Exit(1)
     rprint("[green]✓[/green] Clé révoquée.")

@@ -246,7 +246,7 @@ _DETACH_PAR_RESSOURCE = (
 
 def _meme_uuid(a: object, b: str) -> bool:
     """Compare un UUID de l'API (minuscules) à l'argument, sans tenir compte de
-    la casse : l'API, elle, parsait l'UUID (revue)."""
+    la casse : l'API, elle, parsait l'UUID."""
     return isinstance(a, str) and a.lower() == b.strip().lower()
 
 
@@ -263,11 +263,11 @@ def detach(ip_id: str = typer.Argument(...)) -> None:
         ip = next((p for p in client.get("/v1/public-ips") if _meme_uuid(p.get("id"), ip_id)), None)
         if ip and ip.get("db_instance_id"):
             # Le moteur ne se déduit pas de l'IP et la route générique laisserait
-            # `db_instances.public_ip_id` pointer sur une IP libérée (revue).
+            # `db_instances.public_ip_id` pointer sur une IP libérée.
             nom = ip.get("db_instance_name") or ip["db_instance_id"]
             rprint(f"[red]Cette IP est attachée à la base de données {nom}.[/red] "
                    "Détachez-la par : [cyan]cetic db <moteur> detach-ip "
-                   f"{ip['db_instance_id']}[/cyan] (moteur : pg, mysql, valkey ou ferretdb).")
+                   f"{ip['db_instance_id']}[/cyan] (moteur : pg, mysql, redis ou mongo).")
             raise typer.Exit(1)
         chemin = next(
             (route.format(ip[champ]) for champ, route in _DETACH_PAR_RESSOURCE if ip and ip.get(champ)),
