@@ -549,7 +549,8 @@ def _template(
     return {
         "os": os_slug,
         "os_key": os_key,
-        "os_label": {"flatcar": "Flatcar", "ubuntu": "Ubuntu", "rocky9": "Rocky Linux 9"}[os_slug],
+        "os_label": {"flatcar": "Flatcar", "ubuntu": "Ubuntu", "rocky10": "Rocky Linux 10",
+                     "rocky9": "Rocky Linux 9"}[os_slug],
         "display_name": f"Kubernetes {k8s_version} ({os_slug})",
         "k8s_version": k8s_version,
         "region": region,
@@ -590,19 +591,27 @@ def test_create_os_case_insensitive(runner, mock_api):
 
     def _capture(request: httpx.Request) -> httpx.Response:
         captured["body"] = json.loads(request.content)
-        return httpx.Response(201, json=_cluster(os_image="rocky9"))
+        return httpx.Response(201, json=_cluster(os_image="rocky10"))
 
     mock_api.post("/v1/k8s/clusters").mock(side_effect=_capture)
-    result = runner.invoke(app, _create_args("--os", "ROCKY9"))
+    result = runner.invoke(app, _create_args("--os", "ROCKY10"))
     assert result.exit_code == 0, result.stdout
-    assert captured["body"]["os_image"] == "rocky9"
+    assert captured["body"]["os_image"] == "rocky10"
 
 
 def test_create_os_invalid_rejected(runner, mock_api):
     result = runner.invoke(app, _create_args("--os", "windows"))
     assert result.exit_code == 1
-    assert "invalide" in result.stdout.lower()
+    assert "invalide" in result.stderr.lower()
     assert not any(call.request.method == "POST" for call in mock_api.calls)
+
+
+def test_create_os_rocky9_refused(runner, mock_api):
+    """cetic-cloud-platform#2155 : Rocky Linux 9 retiré, refusé avec un message clair."""
+    result = runner.invoke(app, _create_args("--os", "Rocky9"))
+    assert result.exit_code == 1
+    assert "Rocky Linux 9 est retiré" in " ".join(result.stderr.split())
+    assert not mock_api.calls
 
 
 def test_create_resolves_template_from_os_and_version(runner, mock_api):
@@ -613,7 +622,7 @@ def test_create_resolves_template_from_os_and_version(runner, mock_api):
         return_value=httpx.Response(200, json=[
             _template("flatcar", "kube-v1-31-0-flatcar"),
             _template("ubuntu", "kube-v1-31-0-ubuntu"),
-            _template("rocky9", "kube-v1-31-0-rocky9"),
+            _template("rocky10", "kube-v1-31-0-rocky10"),
         ])
     )
 
@@ -647,7 +656,7 @@ def test_create_no_matching_template_errors(runner, mock_api):
         "--region", "fr-par-1",
         "--vpc", VPC_ID,
         "--vnet", VNET_ID,
-        "--os", "rocky9",
+        "--os", "rocky10",
     ]
     result = runner.invoke(app, args)
     assert result.exit_code == 1
@@ -671,11 +680,12 @@ def test_resolve_os_template_key_unit():
     ) is None
     # OS absent → None.
     assert _resolve_os_template_key(
-        templates, region="fr-par-1", k8s_version="v1.31.0", os_slug="rocky9"
+        templates, region="fr-par-1", k8s_version="v1.31.0", os_slug="rocky10"
     ) is None
 
 
 def test_list_shows_os_column(runner, mock_api):
+    # `rocky9` lu en base (retiré en écriture, #2155) : affiché tel quel.
     mock_api.get("/v1/k8s/clusters").mock(
         return_value=httpx.Response(200, json=[
             _cluster(CLUSTER_ID, "ccks-ubuntu", os_image="ubuntu"),
@@ -948,10 +958,11 @@ def test_create_survives_unreadable_vnet_list(runner, mock_api):
     assert "Cluster créé" in result.stdout
 
 
-def test_os_rocky10_accepte_rocky9_garde_pour_l_existant() -> None:
-    """cetic-cloud-platform#2145 : Rocky Linux 10 proposé ; `rocky9` reste
-    accepté (clusters existants)."""
+def test_os_rocky9_retire_mais_lisible() -> None:
+    """cetic-cloud-platform#2155 : Rocky Linux 9 retiré des valeurs autorisées ;
+    une valeur `rocky9` lue garde son libellé."""
     from cetic.commands import k8s as k8s_cmd
 
-    assert "rocky10" in k8s_cmd.VALID_OS and "rocky9" in k8s_cmd.VALID_OS
+    assert k8s_cmd.VALID_OS == ("flatcar", "ubuntu", "rocky10")
     assert k8s_cmd._fmt_os("rocky10") == "Rocky Linux 10"
+    assert k8s_cmd._fmt_os("rocky9") == "Rocky Linux 9"

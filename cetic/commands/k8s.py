@@ -145,15 +145,32 @@ VALID_KUBECONFIG_MODES = ("private", "public", "sso", "sso-private")
 _SSO_KUBECONFIG_MODES = ("sso", "sso-private")
 
 # Familles d'OS proposées pour les nœuds K8s (slug backend `os_image`).
-# `rocky9` reste accepté pour les clusters existants : la plateforme ne
-# construit plus de gabarits Rocky Linux 9 (cetic-cloud-platform#2145).
-VALID_OS = ("flatcar", "ubuntu", "rocky10", "rocky9")
+# Rocky Linux 9 est retiré de la plateforme (cetic-cloud-platform#2155) : refusé
+# en écriture, mais une valeur `rocky9` lue (cluster ou pool existant) reste
+# affichée avec son libellé.
+VALID_OS = ("flatcar", "ubuntu", "rocky10")
+_OS_RETIRES = {"rocky9": "Rocky Linux 9"}
 _OS_LABEL = {
     "flatcar": "Flatcar",
     "ubuntu": "Ubuntu",
     "rocky10": "Rocky Linux 10",
     "rocky9": "Rocky Linux 9",
 }
+
+
+def _normalize_os(os_slug: str, option: str = "--os") -> str:
+    """Slug d'OS validé (insensible à la casse) ; sort en 1 sinon."""
+    os_norm = os_slug.strip().lower()
+    if os_norm in _OS_RETIRES:
+        rprint(f"[red]{option} {os_norm} : {_OS_RETIRES[os_norm]} est retiré de la "
+               f"plateforme. Valeurs autorisées : {', '.join(VALID_OS)}.[/red]",
+               file=sys.stderr)
+        raise typer.Exit(1)
+    if os_norm not in VALID_OS:
+        rprint(f"[red]{option} invalide : '{os_slug}'. "
+               f"Valeurs autorisées : {', '.join(VALID_OS)}.[/red]", file=sys.stderr)
+        raise typer.Exit(1)
+    return os_norm
 
 
 def _fmt_os(os_slug: str | None) -> str:
@@ -747,7 +764,9 @@ def create(
     os_image: str = typer.Option(
         "flatcar",
         "--os",
-        help="Famille d'OS des nœuds : flatcar (défaut) | ubuntu | rocky10.",
+        help=("OS des nœuds du pool initial, et OS par défaut des nouveaux pools : "
+              "flatcar (défaut) | ubuntu | rocky10. Modifiable ensuite : "
+              "cetic k8s update --os."),
         case_sensitive=False,
     ),
     os_template_key: str | None = typer.Option(
@@ -817,13 +836,7 @@ def create(
             plan_norm = _PLAN_FROM_TIER[tier_norm]
         _warn(f"--tier est déprécié : utilisez --plan {plan_norm}.")
 
-    os_norm = os_image.lower()
-    if os_norm not in VALID_OS:
-        rprint(
-            f"[red]--os invalide : '{os_image}'. "
-            f"Valeurs autorisées : {', '.join(VALID_OS)}.[/red]"
-        )
-        raise typer.Exit(1)
+    os_norm = _normalize_os(os_image)
 
     # Résolution du template : si --template n'est pas fourni, on cherche le
     # template buildé qui matche région + version + OS choisi et on envoie son
@@ -954,6 +967,58 @@ def set_plan(
         f"[green]✓[/green] Plan du cluster : [bold]{_cluster_plan(c) or plan_norm}[/bold] "
         f"(status : {c.get('status', '?')})"
     )
+
+
+@app.command(name="update")
+def update_cluster(
+    cluster_id: str = typer.Argument(...),
+    os_image: str | None = typer.Option(
+        None, "--os",
+        help=("OS par défaut des nouveaux pools : flatcar | ubuntu | rocky10. Les "
+              "pools existants gardent leur OS."),
+        case_sensitive=False,
+    ),
+    yes: bool = typer.Option(False, "--yes", "-y"),
+) -> None:
+    """Modifie un cluster : OS par défaut des nouveaux pools (`--os`).
+
+    Un pool créé sans `--os` prend l'OS par défaut du cluster. Le changer ne
+    touche à aucun nœud : les pools qui en héritaient sont d'abord fixés sur
+    leur OS actuel. Refusé (422) si l'OS n'a pas de template pour la version du
+    cluster dans sa région, ou si le chart du cluster ne le rend pas.
+    """
+    if os_image is None:
+        rprint("[yellow]Aucun paramètre à modifier (--os).[/yellow]", file=sys.stderr)
+        raise typer.Exit(0)
+    os_norm = _normalize_os(os_image)
+    try:
+        c = client.get(f"/v1/k8s/clusters/{cluster_id}")
+    except client.APIError as e:
+        _fail(e)
+    actuel = c.get("os_image")
+    if actuel == os_norm:
+        rprint(f"[yellow]OS par défaut des nouveaux pools déjà {_fmt_os(os_norm)} : "
+               "rien à changer.[/yellow]", file=sys.stderr)
+        raise typer.Exit(0)
+    heritiers = [p.get("name") or p.get("id") or "?" for p in c.get("node_pools") or []
+                 if isinstance(p, dict) and not p.get("os_image")]
+    rprint(f"OS par défaut des nouveaux pools du cluster {c.get('name', cluster_id)} : "
+           f"{_fmt_os(actuel)} → {_fmt_os(os_norm)}.", file=sys.stderr)
+    if heritiers:
+        rprint(f"Pools fixés sur {_fmt_os(actuel)} (ils en héritaient) : "
+               f"{', '.join(heritiers)}. Aucun nœud ne change.", file=sys.stderr)
+    else:
+        rprint("Les pools existants gardent leur OS : aucun nœud ne change.", file=sys.stderr)
+    if not yes and not typer.confirm("Appliquer ?", err=True):
+        raise typer.Abort()
+    try:
+        c = client.patch(f"/v1/k8s/clusters/{cluster_id}", json={"os_image": os_norm})
+    except client.APIError as e:
+        _fail(e)
+    if _emit_machine(c):
+        return
+    rprint(f"[green]✓[/green] OS par défaut des nouveaux pools : "
+           f"[bold]{_fmt_os(c.get('os_image') or os_norm)}[/bold]")
 
 
 @app.command(name="upgrade-version")

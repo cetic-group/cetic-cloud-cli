@@ -555,7 +555,8 @@ cetic appgw plans                     # plans Application Gateway (appgw-small/m
 # Kubernetes
 cetic k8s list
 cetic k8s create --name prod --region RNN --pool-plan medium --pool-min 1 --pool-max 5
-cetic k8s create --name prod --region RNN --os ubuntu   # OS des nœuds : flatcar (défaut)|ubuntu|rocky9
+cetic k8s create --name prod --region RNN --os ubuntu   # OS des nœuds : flatcar (défaut)|ubuntu|rocky10
+cetic k8s update <cluster-id> --os ubuntu   # OS par défaut des nouveaux pools (les pools existants gardent le leur)
 cetic k8s create --name prod --region RNN --version v1.32.0 --pool-version v1.31.0  # --version=control plane, --pool-version=workers du pool initial (≤ CP, omis=hérite)
 cetic k8s kubeconfig <cluster-id> > ~/.kube/config
 cetic k8s plans                       # plans node pool (restriction CCKS appliquée)
@@ -614,6 +615,14 @@ cetic k8s dns clear <cluster-id>      # vide le DNS personnalisé (les zones DNS
 > - `cetic k8s list -o json` : `tier` est la valeur brute (`dev`/`prod`, plus de balisage
 >   Rich) ; nouvelles clés `plan`, `patch_disponible`, `upgrade_en_cours`.
 > - Les erreurs de l'API des commandes `cetic k8s` sont écrites sur stderr.
+
+> **OS des nœuds (cetic-cloud-platform#2155)**
+> - L'OS du cluster (`os_image`) est l'**OS par défaut des nouveaux pools** :
+>   `cetic k8s update <cluster> --os <os>` le change sans recréer le cluster. Les
+>   pools qui en héritaient sont d'abord fixés sur leur OS actuel : aucun nœud ne
+>   change.
+> - Rocky Linux 9 (`rocky9`) est retiré : `--os rocky9` est refusé. Un cluster ou
+>   un pool qui le porterait encore reste affiché tel quel.
 
 ```bash
 # Planificateur marche/arrêt (depuis v0.41.0) — éteindre nuits + week-ends
