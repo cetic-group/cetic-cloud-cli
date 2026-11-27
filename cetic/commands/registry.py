@@ -19,6 +19,7 @@ from urllib.parse import unquote
 
 import typer
 from rich import print as rprint
+from rich.console import Console
 
 from cetic import client, config
 from cetic._resolve import resolve_id
@@ -31,6 +32,8 @@ from cetic._secrets import (
 )
 from cetic.commands._registry_cleanup import cleanup_app
 from cetic.commands._render import render_list, render_one
+
+_err = Console(stderr=True)
 
 REGISTRIES_PATH = "/v1/registries"
 
@@ -111,16 +114,26 @@ def _parse_link_header(link: str | None) -> str | None:
     return m.group(1) if m else None
 
 
-def _parse_kv_tags(values: list[str]) -> dict[str, str]:
-    """Parse `--tag KEY=VALUE` répétés en dict."""
-    out: dict[str, str] = {}
-    for v in values:
-        if "=" not in v:
-            rprint(f"[red]Tag invalide '{v}' — format attendu KEY=VALUE.[/red]")
-            raise typer.Exit(1)
-        k, val = v.split("=", 1)
-        out[k.strip()] = val.strip()
-    return out
+def _tags(values: list[str]) -> list[str]:
+    """Tags de la registry : l'API attend `list[str]` (un dictionnaire était
+    refusé en 422). `env=prod` reste un tag valide."""
+    return [v.strip() for v in values if v.strip()]
+
+
+def _resoudre_utilisateur(rid: str, user: str) -> tuple[str, str]:
+    """`(uuid, nom)` d'un utilisateur de la registry à partir de son UUID ou de
+    son nom : les routes `users/{id}` et les ACL attendent l'UUID, le
+    trousseau range le mot de passe sous le nom."""
+    try:
+        items = client.get(f"{REGISTRIES_PATH}/{rid}/users")
+    except client.APIError as e:
+        raise _bail(e) from e
+    for u in items:
+        # UUID sans tenir compte de la casse ; nom d'utilisateur exact.
+        if user == u.get("username") or str(u.get("id", "")).lower() == user.strip().lower():
+            return u["id"], u["username"]
+    rprint(f"[red]Utilisateur introuvable dans cette registry : {user}[/red]")
+    raise typer.Exit(1)
 
 
 # ---------------------------------------------------------------------------
@@ -148,7 +161,7 @@ def create(
         None, "--storage-gb",
         help="Taille du volume de stockage (Go) ; défaut serveur si omis, extensible ensuite.",
     ),
-    tags: list[str] = typer.Option([], "--tag", help="Tag KEY=VALUE (répéter)"),
+    tags: list[str] = typer.Option([], "--tag", help="Tag (répéter)"),
 ) -> None:
     """Crée une nouvelle registry (Distribution + auth JWT cesanta).
 
@@ -177,7 +190,7 @@ def create(
     if storage_gb is not None:
         body["storage_gb"] = storage_gb
     if tags:
-        body["tags"] = _parse_kv_tags(tags)
+        body["tags"] = _tags(tags)
     try:
         reg = client.post(REGISTRIES_PATH, json=body)
     except client.APIError as e:
@@ -210,7 +223,7 @@ def update(
     ),
     tags: str | None = typer.Option(
         None, "--tags",
-        help="Liste de tags CSV `KEY=VALUE,KEY2=VALUE2` (remplace les tags existants)",
+        help="Liste de tags CSV `prod,team-core` (remplace les tags existants ; vide pour tout retirer)",
     ),
 ) -> None:
     """Modifie une registry existante : toggle expose ou édite les tags.
@@ -230,12 +243,7 @@ def update(
     if private is not None:
         body["expose_private"] = private
     if tags is not None:
-        if tags.strip() == "":
-            body["tags"] = {}
-        else:
-            body["tags"] = _parse_kv_tags(
-                [item.strip() for item in tags.split(",") if item.strip()]
-            )
+        body["tags"] = _tags(tags.split(","))
     rid = _resolve_registry(id_or_name)
     try:
         reg = client.patch(f"{REGISTRIES_PATH}/{rid}", json=body)
@@ -576,10 +584,10 @@ def user_list(
         raise _bail(e) from e
     rows = [
         {
+            "id": u["id"],
             "username": u["username"],
-            "kind": u.get("kind", "—"),
             "created": (u.get("created_at") or "—")[:10],
-            "last_used": (u.get("last_used_at") or "—")[:10],
+            "last_login": (u.get("last_login_at") or "—")[:10],
         }
         for u in items
     ]
@@ -587,10 +595,10 @@ def user_list(
         rows,
         title=f"Utilisateurs ({len(rows)})",
         columns=[
+            ("id", "ID"),
             ("username", "Utilisateur"),
-            ("kind", "Type"),
             ("created", "Créé le"),
-            ("last_used", "Dernière utilisation"),
+            ("last_login", "Dernière connexion"),
         ],
     )
 
@@ -598,7 +606,7 @@ def user_list(
 @user_app.command(name="reset")
 def user_reset(
     id_or_name: str = typer.Argument(..., metavar="ID|NAME"),
-    username: str = typer.Argument(..., help="Utilisateur dont le mot de passe est réinitialisé"),
+    username: str = typer.Argument(..., help="Utilisateur (nom ou UUID) dont le mot de passe est réinitialisé"),
     yes: bool = typer.Option(False, "--yes", "-y"),
 ) -> None:
     """Réinitialise le mot de passe d'un utilisateur. Nouveau mdp affiché 1×."""
@@ -608,7 +616,8 @@ def user_reset(
     ):
         raise typer.Abort()
     try:
-        u = client.post(f"{REGISTRIES_PATH}/{rid}/users/{username}/reset-password")
+        uid, username = _resoudre_utilisateur(rid, username)
+        u = client.post(f"{REGISTRIES_PATH}/{rid}/users/{uid}/reset-password")
     except client.APIError as e:
         raise _bail(e) from e
     pwd = u.get("password")
@@ -623,7 +632,7 @@ def user_reset(
 @user_app.command(name="delete")
 def user_delete(
     id_or_name: str = typer.Argument(..., metavar="ID|NAME"),
-    username: str = typer.Argument(...),
+    username: str = typer.Argument(..., help="Utilisateur (nom ou UUID)"),
     yes: bool = typer.Option(False, "--yes", "-y"),
 ) -> None:
     """Supprime un compte utilisateur."""
@@ -631,7 +640,8 @@ def user_delete(
     if not yes and not typer.confirm(f"Supprimer l'utilisateur {username} ?"):
         raise typer.Abort()
     try:
-        client.delete(f"{REGISTRIES_PATH}/{rid}/users/{username}")
+        uid, username = _resoudre_utilisateur(rid, username)
+        client.delete(f"{REGISTRIES_PATH}/{rid}/users/{uid}")
     except client.APIError as e:
         raise _bail(e) from e
     delete_admin_password(rid, username)
@@ -649,28 +659,45 @@ def acl_set(
     repo: str = typer.Option(..., "--repo", help="Pattern repo (ex: myapp/*)"),
     actions: str = typer.Option(
         ..., "--actions",
-        help="Actions séparées par virgule : pull,push,delete",
+        help="Actions séparées par virgule : pull, push, all",
     ),
     user: str | None = typer.Option(
-        None, "--user", help="Utilisateur ciblé (default: admin)"
+        None, "--user", help="Utilisateur ciblé (nom ou UUID) ; sans --user : règle globale"
     ),
 ) -> None:
-    """Crée ou met à jour une règle ACL (PUT idempotent)."""
+    """Crée ou met à jour la règle ACL de (utilisateur, motif) — idempotent."""
     rid = _resolve_registry(id_or_name)
     actions_list = [a.strip() for a in actions.split(",") if a.strip()]
     if not actions_list:
         rprint("[red]--actions ne peut pas être vide.[/red]")
         raise typer.Exit(1)
-    body: dict[str, Any] = {"repo": repo, "actions": actions_list}
-    if user:
-        body["username"] = user
+    # Contrat de l'API : POST (pas de PUT), `repo_pattern` et `user_id`
+    # (`repo`/`username` en PUT étaient refusés).
+    body: dict[str, Any] = {"repo_pattern": repo, "actions": actions_list}
     try:
-        a = client.put(f"{REGISTRIES_PATH}/{rid}/acls", json=body)
+        if user:
+            body["user_id"] = _resoudre_utilisateur(rid, user)[0]
+        # L'API n'a pas de PUT idempotent : POST insère une ligne à chaque
+        # appel. Une règle existante de même (utilisateur, motif) est donc
+        # modifiée par PATCH, sinon créée.
+        memes = [x for x in client.get(f"{REGISTRIES_PATH}/{rid}/acls")
+                 if x.get("repo_pattern") == repo and x.get("user_id") == body.get("user_id")]
+        if memes:
+            a = client.patch(f"{REGISTRIES_PATH}/{rid}/acls/{memes[0]['id']}", json=body)
+            # Doublons créés avant cette correction (console, API, ancien
+            # `acl set` en POST) : le registre accorde l'UNION des règles, un
+            # retrait de droit ne prendrait donc pas effet. Ils sont supprimés.
+            for doublon in memes[1:]:
+                client.delete(f"{REGISTRIES_PATH}/{rid}/acls/{doublon['id']}")
+            if len(memes) > 1:
+                rprint(f"[yellow]{len(memes) - 1} règle(s) en double pour ce motif supprimée(s).[/yellow]")
+        else:
+            a = client.post(f"{REGISTRIES_PATH}/{rid}/acls", json=body)
     except client.APIError as e:
         raise _bail(e) from e
     rprint(
         f"[green]✓[/green] ACL appliquée : "
-        f"[bold]{a.get('username', '—')}[/bold] → {repo} ({','.join(actions_list)})"
+        f"[bold]{a.get('username') or 'tous les utilisateurs'}[/bold] → {repo} ({','.join(actions_list)})"
     )
 
 
@@ -687,8 +714,8 @@ def acl_list(
     rows = [
         {
             "id": a["id"],
-            "username": a.get("username", "—"),
-            "repo": a.get("repo", "—"),
+            "username": a.get("username") or "—",
+            "repo": a.get("repo_pattern", "—"),
             "actions": ",".join(a.get("actions", [])),
         }
         for a in items
@@ -906,12 +933,47 @@ def tag_delete(
     tag: str = typer.Argument(..., help="Tag à supprimer"),
     yes: bool = typer.Option(False, "--yes", "-y"),
 ) -> None:
-    """Supprime un tag (le blob est récupéré au prochain GC)."""
+    """Supprime un tag (le blob est récupéré au prochain GC).
+
+    L'image désignée par le tag est supprimée : les autres tags qui pointent
+    sur la même image disparaissent aussi."""
     rid = _resolve_registry(id_or_name)
     if not yes and not typer.confirm(f"Supprimer le tag {repo}:{tag} ?"):
         raise typer.Abort()
+    # Avertissement seulement : l'index des tags est rafraîchi toutes les
+    # 5 min, il peut dater. Le digest supprimé est lu par l'API AUPRÈS DU
+    # REGISTRE : jamais celui de l'index, qui
+    # pouvait désigner l'image d'un AUTRE tag.
+    index = _index_des_tags(rid, repo)
+    digest_index = index.get(tag)
+    autres = sorted(n for n, d in index.items() if d and d == digest_index and n != tag)
+    if autres and not yes and not typer.confirm(
+        f"D'après l'index (jusqu'à 5 min de retard), les tags {', '.join(autres)} pointent "
+        "sur la même image et seront supprimés aussi. Continuer ?"
+    ):
+        raise typer.Abort()
     try:
-        client.delete(f"{REGISTRIES_PATH}/{rid}/repositories/{repo}/tags/{tag}")
+        # `…/repositories/{repo}/tags/{tag}` tombait sur la route de
+        # suppression du DÉPÔT (`{name:path}`) : le tag se supprime par son
+        # manifest.
+        rep = client.delete(f"{REGISTRIES_PATH}/{rid}/repositories/{repo}/manifests/{tag}") or {}
     except client.APIError as e:
         raise _bail(e) from e
-    rprint("[green]✓[/green] Tag supprimé. Le blob sera recyclé au prochain GC.")
+    digest = rep.get("digest") if isinstance(rep, dict) else None
+    rprint("[green]✓[/green] Tag supprimé"
+           + (f" (image {digest[:19]}…)" if digest else "")
+           + ". Le blob sera recyclé au prochain GC.")
+    if digest and digest_index and digest != digest_index:
+        _err.print("[yellow]L'index des tags était en retard : la suppression a porté sur "
+                   "l'image actuelle du tag, pas sur celle de l'index.[/yellow]")
+
+
+def _index_des_tags(rid: str, repo: str) -> dict[str, str | None]:
+    """{tag: digest} d'après l'index de l'API ; vide s'il est illisible (il
+    ne sert qu'à prévenir)."""
+    try:
+        data = client.get(f"{REGISTRIES_PATH}/{rid}/repositories/{repo}/tags")
+    except client.APIError:
+        return {}
+    items = data if isinstance(data, list) else (data or {}).get("tags", [])
+    return {t.get("name"): t.get("digest") for t in items if isinstance(t, dict) and t.get("name")}

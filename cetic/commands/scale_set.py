@@ -30,7 +30,7 @@ def _list(endpoint: str, kind: str, show_os: bool = False) -> None:
     rows = [
         {"id": s["id"], "name": s["name"], "region": s["region"],
          "os": "Windows" if s.get("os_family") == "windows" else "Linux",
-         "plan": s["plan"], "replicas": s.get("desired_replicas") or s.get("replicas", 0),
+         "plan": s["plan"], "replicas": s.get("desired_instances", 0),
          "status": s["status"]}
         for s in items
     ]
@@ -43,7 +43,9 @@ def _list(endpoint: str, kind: str, show_os: bool = False) -> None:
 
 def _scale(endpoint: str, replicas: int) -> None:
     try:
-        client.post(f"{endpoint}/scale", json={"desired_replicas": replicas})
+        # Pas de route `/scale` : la taille se règle par PATCH de
+        # `desired_instances`.
+        client.patch(endpoint, json={"desired_instances": replicas})
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)

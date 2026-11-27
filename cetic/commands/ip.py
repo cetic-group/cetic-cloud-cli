@@ -151,10 +151,17 @@ def allocate(
 @app.command()
 def get(ip_id: str = typer.Argument(...)) -> None:
     """Détails d'une IP."""
+    # Pas de route `GET /v1/public-ips/{id}` : l'IP est lue dans la liste de
+    # l'organisation.
     try:
-        ip = client.get(f"/v1/public-ips/{ip_id}")
+        items = client.get("/v1/public-ips")
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
+        raise typer.Exit(1)
+    ip = next((p for p in items if _meme_uuid(p.get("id"), ip_id)), None)
+    if ip is None:
+        # La liste ne rend que les IP allouées ou attachées.
+        rprint(f"[red]Erreur : IP publique introuvable ou libérée : {ip_id}[/red]")
         raise typer.Exit(1)
     render_one(ip, title=f"IP {ip.get('ip_address', ip_id)}")
 
@@ -207,26 +214,66 @@ def attach(
     lb: str | None = typer.Option(None, "--lb"),
 ) -> None:
     """Attache l'IP à un container, VM ou LB."""
-    body = {}
-    if container: body["container_id"] = container
-    if vm: body["vm_id"] = vm
-    if lb: body["load_balancer_id"] = lb
-    if not body:
-        rprint("[red]Préciser --container, --vm ou --lb[/red]")
+    cibles = [c for c in (container, vm, lb) if c]
+    if len(cibles) != 1:
+        rprint("[red]Préciser une seule cible : --container, --vm ou --lb[/red]")
         raise typer.Exit(1)
     try:
-        client.post(f"/v1/public-ips/{ip_id}/attach", json=body)
+        if lb:
+            # L'IP d'un load balancer s'attache par la route du LB.
+            client.post(f"/v1/load-balancers/{lb}/attach-ip", json={"public_ip_id": ip_id})
+        else:
+            # Contrat de l'API : `resource_type` + `resource_id`.
+            body = ({"resource_type": "container", "resource_id": container} if container
+                    else {"resource_type": "vm_instance", "resource_id": vm})
+            client.post(f"/v1/public-ips/{ip_id}/attach", json=body)
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
     rprint("[green]✓[/green] Attachement demandé.")
 
 
+# Champ de l'IP → route de détachement de la ressource qui la tient
+# (symétriques de `ip attach --lb`, des fiches gateway, bastion et VPN).
+_DETACH_PAR_RESSOURCE = (
+    ("load_balancer_id", "/v1/load-balancers/{}/detach-ip"),
+    ("app_gateway_id", "/v1/app-gateways/{}/detach-ip"),
+    ("bastion_id", "/v1/bastions/{}/detach-ip"),
+    ("vpn_gateway_id", "/v1/vpn/gateways/{}/detach-ip"),
+    ("k8s_cluster_id", "/v1/k8s/clusters/{}/detach-ip"),
+)
+
+
+def _meme_uuid(a: object, b: str) -> bool:
+    """Compare un UUID de l'API (minuscules) à l'argument, sans tenir compte de
+    la casse : l'API, elle, parsait l'UUID."""
+    return isinstance(a, str) and a.lower() == b.strip().lower()
+
+
 @app.command()
 def detach(ip_id: str = typer.Argument(...)) -> None:
     """Détache l'IP."""
     try:
-        client.post(f"/v1/public-ips/{ip_id}/detach")
+        # L'IP d'un load balancer se détache par la route du LB, symétrique de
+        # `ip attach --lb` : la route de l'IP passait l'IP en `allocated` sans
+        # nettoyer le LB.
+        # Même chose pour toute ressource qui référence l'IP par une clé
+        # étrangère (gateway, bastion, VPN) : la route générique ne la nettoie
+        # pas, et l'IP serait libérée alors que la ressource la tient encore.
+        ip = next((p for p in client.get("/v1/public-ips") if _meme_uuid(p.get("id"), ip_id)), None)
+        if ip and ip.get("db_instance_id"):
+            # Le moteur ne se déduit pas de l'IP et la route générique laisserait
+            # `db_instances.public_ip_id` pointer sur une IP libérée.
+            nom = ip.get("db_instance_name") or ip["db_instance_id"]
+            rprint(f"[red]Cette IP est attachée à la base de données {nom}.[/red] "
+                   "Détachez-la par : [cyan]cetic db <moteur> detach-ip "
+                   f"{ip['db_instance_id']}[/cyan] (moteur : pg, mysql, redis ou mongo).")
+            raise typer.Exit(1)
+        chemin = next(
+            (route.format(ip[champ]) for champ, route in _DETACH_PAR_RESSOURCE if ip and ip.get(champ)),
+            f"/v1/public-ips/{ip_id}/detach",
+        )
+        client.post(chemin)
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)

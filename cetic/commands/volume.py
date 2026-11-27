@@ -20,7 +20,7 @@ def list_volumes(region: str | None = typer.Option(None, "--region", "-r")) -> N
     rows = [
         {"id": v["id"], "name": v["name"], "region": v["region"],
          "size_gb": v["size_gb"], "status": v["status"],
-         "attached_to": (v.get("attached_to_container_id") or v.get("attached_to_vm_id") or "—")}
+         "attached_to": (v.get("attached_to_name") or v.get("attached_to_id") or "—")}
         for v in items
     ]
     render_list(rows, title=f"Volumes ({len(rows)})",
@@ -77,12 +77,12 @@ def attach(
     vm: str | None = typer.Option(None, "--vm", help="UUID VM cible"),
 ) -> None:
     """Attache un volume à un container ou VM."""
-    if not container and not vm:
-        rprint("[red]Erreur : préciser --container ou --vm[/red]")
+    if bool(container) == bool(vm):
+        rprint("[red]Erreur : préciser --container ou --vm (un seul)[/red]")
         raise typer.Exit(1)
-    body = {}
-    if container: body["container_id"] = container
-    if vm: body["vm_id"] = vm
+    # Contrat de l'API : `resource_type` + `resource_id`.
+    body = ({"resource_type": "container", "resource_id": container} if container
+            else {"resource_type": "vm", "resource_id": vm})
     try:
         client.post(f"/v1/volumes/{volume_id}/attach", json=body)
     except client.APIError as e:

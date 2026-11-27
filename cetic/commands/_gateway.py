@@ -139,3 +139,29 @@ def validate_created_replica_count(item: dict[str, Any], requested: int) -> None
             f"(valeur retournée : {actual}). Mettez la plateforme à jour avant "
             "de recréer la ressource ; vérifiez celle déjà créée."
         )
+
+
+def render_acme_providers(data: object, *, cle: str = "name", identifiants: str = "credentials",
+                          titre: str = "Providers DNS-01 disponibles") -> None:
+    """Affiche le catalogue DNS-01 partagé LB / application gateway
+    (`{clé: {label, fields}}`). Un seul parseur pour les deux commandes ; la
+    lecture (et la gestion d'erreur propre à chaque commande) reste à
+    l'appelant.
+
+    `cle`, `identifiants` et `titre` gardent la forme de sortie de chaque
+    commande : `cetic lb acme-providers -o json` rendait `key` / `fields`, et
+    un script qui lit `.[].key` ne doit pas recevoir `null` après une version
+    corrective."""
+    from cetic.commands._render import render_list  # noqa: PLC0415
+
+    rows = []
+    for key, spec in (data or {}).items():  # type: ignore[union-attr]
+        spec = spec or {}
+        rows.append({
+            cle: key,
+            "label": spec.get("label") or "—",
+            identifiants: ", ".join(str(f) for f in spec.get("fields") or []) or "—",
+        })
+    render_list(rows, title=f"{titre} ({len(rows)})",
+                columns=[(cle, "Identifiant"), ("label", "Libellé"),
+                         (identifiants, "Credentials requis")])

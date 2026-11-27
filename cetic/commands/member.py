@@ -40,7 +40,11 @@ def invite(
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
     rprint(f"[green]✓[/green] Invitation envoyée à {email} (rôle: {role}).")
-    rprint(f"[dim]ID: {m['id']}[/dim]")
+    # Réponse `{email, memberships: [...]}` (OrgMemberBatchResponse) : un
+    # membership par organisation (`m['id']` levait
+    # un KeyError APRÈS l'envoi de l'invitation).
+    for ms in m.get("memberships", []):
+        rprint(f"[dim]ID: {ms.get('id')}[/dim]")
 
 
 @app.command(name="set-role")
@@ -49,21 +53,13 @@ def set_role(
     role: str = typer.Option(..., "--role", "-r", help="admin | member | viewer"),
 ) -> None:
     """Change le rôle d'un membre."""
+    # L'API expose `PATCH /v1/members/{id}` seulement (le POST répondait 405,
+    # et l'erreur du POST masquait celle du repli).
     try:
-        client.post(f"/v1/members/{member_id}", json={"role": role})
+        client.patch(f"/v1/members/{member_id}", json={"role": role})
     except client.APIError as e:
-        # Fallback PATCH
-        try:
-            import httpx
-            from cetic import config
-            url = config.get_api_url().rstrip("/") + f"/v1/members/{member_id}"
-            with httpx.Client() as h:
-                resp = h.patch(url, headers={"Authorization": f"Bearer {config.get('api_key') or ''}"},
-                               json={"role": role})
-                resp.raise_for_status()
-        except Exception:
-            rprint(f"[red]Erreur : {e.detail}[/red]")
-            raise typer.Exit(1)
+        rprint(f"[red]Erreur : {e.detail}[/red]")
+        raise typer.Exit(1)
     rprint(f"[green]✓[/green] Rôle mis à jour → {role}.")
 
 

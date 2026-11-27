@@ -34,6 +34,13 @@ def list_tickets(
                          ("priority", "Priorité"), ("status", "Statut"), ("updated", "MAJ")])
 
 
+_AUTEURS = {
+    "customer": "[bold cyan]Vous[/bold cyan]",
+    "admin": "[bold yellow]Support CETIC[/bold yellow]",
+    "system": "[dim]Système[/dim]",
+}
+
+
 @app.command()
 def get(ticket_id: str = typer.Argument(...)) -> None:
     """Détails d'un ticket avec messages."""
@@ -45,7 +52,10 @@ def get(ticket_id: str = typer.Argument(...)) -> None:
     rprint(f"[bold]{t['subject']}[/bold] · {t['status']} · {t.get('priority', 'normal')}")
     rprint(f"[dim]Catégorie : {t.get('category')} · Créé le {t.get('created_at', '')[:10]}[/dim]\n")
     for msg in t.get("messages", []):
-        author = "[bold cyan]Vous[/bold cyan]" if msg["author_type"] == "tenant" else "[bold yellow]Support CETIC[/bold yellow]"
+        # L'API distingue `customer`, `admin` et `system`
+        # (la comparaison à `tenant` étiquetait
+        # tous les messages « Support CETIC »).
+        author = _AUTEURS.get(msg.get("author_type"), "[bold yellow]Support CETIC[/bold yellow]")
         rprint(f"{author} · {msg.get('created_at', '')[:16]}")
         rprint(f"  {msg.get('body', '')}\n")
 
@@ -54,8 +64,8 @@ def get(ticket_id: str = typer.Argument(...)) -> None:
 def create(
     subject: str = typer.Option(..., "--subject", "-s"),
     body: str = typer.Option(..., "--body", "-b"),
-    category: str = typer.Option("question", "--category", "-c",
-                                  help="bug | feature | billing | network | infra | question"),
+    category: str = typer.Option("other", "--category", "-c",
+                                  help="technical | billing | abuse | feature_request | other"),
     priority: str = typer.Option("normal", "--priority", "-p",
                                   help="low | normal | high | urgent"),
 ) -> None:
@@ -68,7 +78,11 @@ def create(
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
-    rprint(f"[green]✓[/green] Ticket créé : [bold]{t['id']}[/bold]")
+    # Réponse `{ticket: …, upgrade_message?}` (TicketGatedResponse).
+    ticket = t.get("ticket", t)
+    rprint(f"[green]✓[/green] Ticket créé : [bold]{ticket['id']}[/bold]")
+    if t.get("upgrade_message"):
+        rprint(f"[yellow]{t['upgrade_message']}[/yellow]")
 
 
 @app.command()
@@ -187,8 +201,13 @@ def subscribe(
     try:
         sub = client.post("/v1/support/subscribe", json={"plan_key": key})
     except client.APIError as e:
-        if getattr(e, "status", None) == 402:
-            rprint("[yellow]Ajoutez un moyen de paiement d'abord :[/yellow] `cetic billing add-card`")
+        # `APIError` porte `status_code` (pas `status`) : la branche ne se
+        # déclenchait jamais, et `cetic billing add-card` n'existe pas.
+        # La carte s'ajoute dans la console.
+        if e.status_code == 402:
+            rprint(f"[yellow]{e.detail}[/yellow]")
+            rprint("[yellow]Ajoutez un moyen de paiement dans la console (Facturation), "
+                   "puis relancez la commande.[/yellow]")
             raise typer.Exit(2)
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)

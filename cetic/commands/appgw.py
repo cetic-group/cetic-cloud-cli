@@ -31,6 +31,7 @@ from cetic.commands._appgw_security import policy_bail, policy_payload, prepare_
 from cetic._resolve import resolve_id
 from cetic.commands._catalog import render_compute_plans
 from cetic.commands._gateway import (
+    render_acme_providers,
     cert_expiry_label,
     network_label,
     read_cert_pair,
@@ -1576,43 +1577,7 @@ def acme_providers() -> None:
         data = client.get(f"{APPGW_PATH}/acme/dns-providers")
     except client.APIError as e:
         raise _bail(e) from e
-
-    # Tolérant à 2 formes : liste plate de strings/dicts, ou dict {"providers": [...]}.
-    items: list[Any]
-    if isinstance(data, dict):
-        items = data.get("providers") or data.get("items") or []
-    elif isinstance(data, list):
-        items = data
-    else:
-        items = []
-
-    rows: list[dict[str, Any]] = []
-    for entry in items:
-        if isinstance(entry, str):
-            rows.append({"name": entry, "label": "—", "credentials": "—"})
-        elif isinstance(entry, dict):
-            creds = entry.get("required_credentials") or entry.get("credentials") or []
-            if isinstance(creds, list):
-                creds_str = ", ".join(str(c) for c in creds) or "—"
-            else:
-                creds_str = str(creds)
-            rows.append(
-                {
-                    "name": entry.get("name") or entry.get("id") or "—",
-                    "label": entry.get("label") or entry.get("display_name") or "—",
-                    "credentials": creds_str,
-                }
-            )
-
-    render_list(
-        rows,
-        title=f"Providers DNS-01 disponibles ({len(rows)})",
-        columns=[
-            ("name", "Identifiant"),
-            ("label", "Libellé"),
-            ("credentials", "Credentials requis"),
-        ],
-    )
+    render_acme_providers(data)
 
 
 @listener_app.command(name="update")

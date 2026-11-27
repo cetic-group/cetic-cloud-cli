@@ -42,8 +42,9 @@ def _lxc_template(key: str = "debian-12") -> dict[str, Any]:
 
 def _custom_template(
     tid: str = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-    template_type: str = "container",
+    template_type: str = "lxc",
 ) -> dict[str, Any]:
+    # `template_type` vaut `lxc` ou `vm` côté API (jamais `container`).
     return {
         "id": tid,
         "name": f"snap-{template_type}",
@@ -241,24 +242,24 @@ FULL_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
 
 def test_container_custom_templates_filters_container_type(runner, mock_api):
-    payload = [_custom_template(FULL_ID, "container"), _custom_template("ffffffff-1111-2222-3333-444444444444", "vm")]
+    payload = [_custom_template(FULL_ID, "lxc"), _custom_template("ffffffff-1111-2222-3333-444444444444", "vm")]
     mock_api.get("/v1/custom-templates").mock(return_value=httpx.Response(200, json=payload))
     result = runner.invoke(app, ["container", "custom-templates"])
     assert result.exit_code == 0, result.stdout
     # Seul le container apparaît ; pas le vm.
-    assert "snap-container" in result.stdout
+    assert "snap-lxc" in result.stdout
     assert "snap-vm" not in result.stdout
     # ID complet, jamais tronqué (table).
     assert FULL_ID in result.stdout
 
 
 def test_vm_custom_templates_filters_vm_type(runner, mock_api):
-    payload = [_custom_template(FULL_ID, "container"), _custom_template("ffffffff-1111-2222-3333-444444444444", "vm")]
+    payload = [_custom_template(FULL_ID, "lxc"), _custom_template("ffffffff-1111-2222-3333-444444444444", "vm")]
     mock_api.get("/v1/custom-templates").mock(return_value=httpx.Response(200, json=payload))
     result = runner.invoke(app, ["vm", "custom-templates"])
     assert result.exit_code == 0, result.stdout
     assert "snap-vm" in result.stdout
-    assert "snap-container" not in result.stdout
+    assert "snap-lxc" not in result.stdout
 
 
 # ---------------------------------------------------------------------------

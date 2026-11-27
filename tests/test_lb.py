@@ -293,3 +293,22 @@ def test_get_shows_listener_table(runner, mock_api) -> None:
     assert "443" in result.output
     assert "https" in result.output
     assert "www.example.com" in result.output
+
+
+@pytest.mark.parametrize("commande,chemin,cle,identifiants", [
+    ("lb", "/v1/load-balancers/acme/dns-providers", "key", "fields"),
+    ("appgw", "/v1/app-gateways/acme/dns-providers", "name", "credentials"),
+])
+def test_acme_providers_forme_json_inchangee(runner, mock_api, monkeypatch, commande, chemin,
+                                             cle, identifiants):
+    """Le parseur commun garde la forme JSON de chaque commande : un script
+    qui lit `.[].key` sur `lb acme-providers` ne reçoit pas `null`."""
+    import json
+
+    mock_api.get(chemin).mock(return_value=httpx.Response(200, json={
+        "cloudflare": {"label": "Cloudflare", "fields": ["api_token"]}}))
+    monkeypatch.setenv("CCP_OUTPUT", "json")
+    result = runner.invoke(app, [commande, "acme-providers"])
+    assert result.exit_code == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout) == [
+        {cle: "cloudflare", "label": "Cloudflare", identifiants: "api_token"}]

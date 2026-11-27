@@ -148,7 +148,7 @@ def delete(
 def start(container_id: str = typer.Argument(...)) -> None:
     """Démarre un container."""
     try:
-        client.post(f"/v1/containers/{container_id}/start")
+        client.post(f"/v1/containers/{container_id}/actions", json={"action": "start"})
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
@@ -159,7 +159,7 @@ def start(container_id: str = typer.Argument(...)) -> None:
 def stop(container_id: str = typer.Argument(...)) -> None:
     """Stoppe un container."""
     try:
-        client.post(f"/v1/containers/{container_id}/stop")
+        client.post(f"/v1/containers/{container_id}/actions", json={"action": "stop"})
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
@@ -170,7 +170,7 @@ def stop(container_id: str = typer.Argument(...)) -> None:
 def reboot(container_id: str = typer.Argument(...)) -> None:
     """Redémarre un container."""
     try:
-        client.post(f"/v1/containers/{container_id}/reboot")
+        client.post(f"/v1/containers/{container_id}/actions", json={"action": "restart"})
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
@@ -212,7 +212,7 @@ def templates() -> None:
 @app.command(name="custom-templates")
 def custom_templates() -> None:
     """Liste les templates custom container de l'organisation (snapshots réutilisables)."""
-    render_custom_templates(template_type="container")
+    render_custom_templates(template_type="lxc")
 
 
 # ── Snapshots ─────────────────────────────────────────────────────────────
