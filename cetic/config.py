@@ -60,13 +60,15 @@ def _migrate_legacy_if_needed() -> None:
     try:
         # Le fichier porte jeton d'accès et refresh token : 0700 / 0600 dès la
         # copie, pas à la prochaine écriture.
+        # Lire AVANT de créer : un ancien fichier illisible (encodage, droits)
+        # ne doit pas laisser un fichier vide, qui empêcherait toute nouvelle
+        # tentative (revue). Écriture par temporaire 0600 puis `os.link`
+        # (échoue si la cible existe, comme `O_EXCL`), donc jamais partielle.
+        contenu = old.read_text(encoding="utf-8")
         dossier = config_dir()
         dossier.mkdir(mode=0o700, parents=True, exist_ok=True)
         _restreindre(dossier, 0o700)
-        fd = os.open(new, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(old.read_text(encoding="utf-8"))
-        _restreindre(new, 0o600)
+        _ecrire_atomique(new, contenu, remplacer=False)
     except Exception:
         pass  # best-effort — un échec de migration ne bloque pas la CLI
 
@@ -110,17 +112,35 @@ def set_value(key: str, value: str) -> None:
     _restreindre(dossier, 0o700)
     data = _load_file()
     data[key] = value
+    # `json.dumps` n'écrit du TOML valide que pour les chaînes, les entiers et
+    # les booléens. Une table ou une date ajoutée à la main rendait le fichier
+    # illisible, donc TOUTE la configuration perdue : refuser d'écrire plutôt
+    # que de la détruire (revue).
+    inconnues = [k for k, v in data.items() if not isinstance(v, (str, bool, int, float))]
+    if inconnues:
+        # SystemExit : message sur stderr et code 1, sans trace Python.
+        raise SystemExit(
+            f"Erreur : {config_file()} contient des valeurs que la CLI ne sait pas "
+            f"réécrire ({', '.join(inconnues)}). Rien n'a été modifié : retirez-les "
+            "ou modifiez le fichier à la main.")
     lines = [f"{k} = {json.dumps(v, ensure_ascii=False)}" for k, v in data.items()]
-    chemin = config_file()
-    # Écriture atomique : fichier temporaire 0600 puis `os.replace`. Une
-    # interruption après `O_TRUNC` perdait toute la configuration, et un lien
-    # symbolique posé sur le fichier était suivi.
+    _ecrire_atomique(config_file(), "\n".join(lines) + "\n", remplacer=True)
+
+
+def _ecrire_atomique(chemin: Path, contenu: str, *, remplacer: bool) -> None:
+    """Fichier temporaire 0600 puis `os.replace` (ou `os.link` sans
+    remplacement). Une interruption ne laisse jamais de fichier partiel, et un
+    lien symbolique posé sur le fichier n'est pas suivi."""
     tmp = chemin.with_name(f".{chemin.name}.{os.getpid()}.tmp")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write("\n".join(lines) + "\n")
-        os.replace(tmp, chemin)
+            f.write(contenu)
+        if remplacer:
+            os.replace(tmp, chemin)
+        else:
+            os.link(tmp, chemin)
+            tmp.unlink()
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise

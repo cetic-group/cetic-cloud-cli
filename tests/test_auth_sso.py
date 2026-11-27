@@ -236,7 +236,7 @@ def test_rafraichissement_hors_environnement_temoin(mock_api, monkeypatch: pytes
 
 def test_login_api_key_403_enregistre_avec_avertissement(
         runner, mock_api, monkeypatch: pytest.MonkeyPatch):
-    """un 403 sur le profil (clé sans scope `read`, compte
+    """Un 403 sur le profil (clé sans scope `read`, compte
     de service sans `auth:GetProfile`) n'est pas « clé refusée » : la clé est
     authentique, elle est enregistrée avec un avertissement."""
     import httpx
@@ -253,7 +253,7 @@ def test_login_api_key_403_enregistre_avec_avertissement(
 
 
 def test_migration_legacy_en_0600(tmp_path, monkeypatch: pytest.MonkeyPatch):
-    """le fichier migré (jeton + refresh token) naît en
+    """Le fichier migré (jeton + refresh token) naît en
     0600 dans un dossier 0700, même si l'ancien était en 0644."""
     import os
     import stat
@@ -292,3 +292,60 @@ def test_ecriture_atomique_ne_suit_pas_un_lien(tmp_path, monkeypatch: pytest.Mon
     assert cible.read_text() == "intact\n"
     assert not (tmp_path / ".ccp" / "config").is_symlink()
     assert tomllib.loads((tmp_path / ".ccp" / "config").read_text()) == {"region": "PAR"}
+
+
+
+def test_migration_illisible_ne_laisse_pas_de_fichier_vide(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    """Revue : un ancien fichier illisible (octet non UTF-8) ne doit pas laisser
+    un `~/.ccp/config` vide, qui empêcherait toute nouvelle tentative. Une fois
+    l'ancien fichier corrigé, la migration réussit."""
+    from cetic import config
+
+    ancien = tmp_path / "legacy" / "config.toml"
+    ancien.parent.mkdir()
+    ancien.write_bytes(b'api_key = "\xff"\n')
+    monkeypatch.setattr(config, "config_dir", lambda: tmp_path / ".ccp")
+    monkeypatch.setattr(config, "config_file", lambda: tmp_path / ".ccp" / "config")
+    monkeypatch.setattr(config, "_legacy_config_file", lambda: ancien)
+    config._migrate_legacy_if_needed()
+    assert not (tmp_path / ".ccp" / "config").exists()
+    ancien.write_text('api_key = "jeton"\n')
+    config._migrate_legacy_if_needed()
+    assert (tmp_path / ".ccp" / "config").read_text() == 'api_key = "jeton"\n'
+
+
+def test_valeur_non_reecrivable_refusee_sans_toucher_le_fichier(
+        tmp_path, monkeypatch: pytest.MonkeyPatch):
+    """Revue : une table ajoutée à la main (`[profiles]`) ne se réécrit pas en
+    TOML par `json.dumps` ; `set_value` refuse au lieu de rendre le fichier
+    illisible (et toute la configuration perdue)."""
+    import tomllib
+
+    from cetic import config
+
+    (tmp_path / ".ccp").mkdir(mode=0o700)
+    fichier = tmp_path / ".ccp" / "config"
+    contenu = 'region = "PAR"\n\n[profiles]\nx = "y"\n'
+    fichier.write_text(contenu)
+    monkeypatch.setattr(config, "config_dir", lambda: tmp_path / ".ccp")
+    monkeypatch.setattr(config, "config_file", lambda: fichier)
+    monkeypatch.setattr(config, "_load_file", lambda: tomllib.loads(fichier.read_text()))
+    with pytest.raises(SystemExit):
+        config.set_value("output", "json")
+    assert fichier.read_text() == contenu
+
+
+def test_login_api_key_403_email_non_verifie_refuse(runner, mock_api, monkeypatch: pytest.MonkeyPatch):
+    """Revue : un 403 `email_non_verifie` refuserait TOUTES les commandes : la
+    clé n'est pas enregistrée et le message de l'API est affiché."""
+    import httpx
+
+    stored: dict[str, str] = {}
+    monkeypatch.setattr(auth_cmd.config, "set_value", lambda k, v: stored.__setitem__(k, v))
+    monkeypatch.delenv("CCP_API_KEY", raising=False)
+    mock_api.get("/v1/tenants/me").mock(return_value=httpx.Response(403, json={"detail": {
+        "code": "email_non_verifie", "message": "Vérifiez votre adresse e-mail pour continuer."}}))
+    result = runner.invoke(app, ["auth", "login", "--api-key"], input=f"{CLE}\n")
+    assert result.exit_code == 1
+    assert "Vérifiez votre adresse e-mail" in result.stderr
+    assert stored == {}

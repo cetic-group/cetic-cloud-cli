@@ -61,9 +61,8 @@ def login(
     # La connexion par e-mail et mot de passe exige la vérification anti-robot
     # de la page de connexion de la console : l'API la refuse toujours en
     # production à un client qui n'est pas un navigateur (403 « Vérification
-    # anti-robot échouée »). La CLI ne la propose donc plus
-    #. Message sur stderr : la sortie standard
-    # reste propre pour un script.
+    # anti-robot échouée »). La CLI ne la propose donc plus. Message sur
+    # stderr : la sortie standard reste propre pour un script.
     _err.print(
         "[red]La connexion par e-mail et mot de passe n'est pas disponible "
         "dans la CLI.[/red] Elle exige la vérification anti-robot de la page "
@@ -104,9 +103,6 @@ def _login_api_key() -> None:
     config.set_value("refresh_token", "")
     if email is None:
         rprint("[green]Clé d'API enregistrée.[/green]")
-        _err.print("[yellow]⚠ La clé est authentique mais n'a pas le droit de lire le profil "
-                   "du compte (scope ou rôle restreint) : les commandes hors de ses droits "
-                   "seront refusées.[/yellow]")
     else:
         rprint(f"[green]Clé d'API enregistrée[/green] (compte {escape(email)}).")
 
@@ -131,8 +127,17 @@ def _verifier_cle(cle: str) -> str | None:
                    "vérifiée. Rien n'a été enregistré.[/red]")
         raise typer.Exit(1) from None
     if resp.status_code == 403:
-        # Authentifiée mais pas autorisée à lire le profil : la clé est valide
-        #, `export CCP_API_KEY=…` fonctionnerait.
+        detail = _detail_403(resp)
+        if detail[0] == "email_non_verifie":
+            # Toutes les commandes seraient refusées tant que l'adresse n'est
+            # pas vérifiée : ne rien enregistrer, et dire quoi faire (revue).
+            _err.print(f"[red]Clé refusée : {escape(detail[1])}[/red] Rien n'a été enregistré.")
+            raise typer.Exit(1)
+        # Authentifiée mais pas autorisée à lire le profil : la clé est
+        # valide, `export CCP_API_KEY=…` fonctionnerait.
+        _err.print("[yellow]⚠ La clé est authentique mais n'a pas le droit de lire le profil "
+                   f"du compte ({escape(detail[1])}) : les commandes hors de ses droits "
+                   "seront refusées.[/yellow]")
         return None
     if resp.status_code == 401:
         _err.print("[red]Clé refusée par l'API[/red] (inconnue, révoquée ou expirée). "
@@ -148,10 +153,24 @@ def _verifier_cle(cle: str) -> str | None:
         return "?"
 
 
+def _detail_403(resp: httpx.Response) -> tuple[str | None, str]:
+    """(code, message) du `detail` d'un 403 ; message par défaut si le corps
+    n'est pas lisible."""
+    from cetic.client import _normalize_detail  # noqa: PLC0415 — évite un cycle d'import
+
+    try:
+        detail = resp.json().get("detail")
+    except (ValueError, AttributeError):
+        detail = None
+    code = detail.get("code") if isinstance(detail, dict) else None
+    message = _normalize_detail(detail) if detail else "scope ou rôle restreint"
+    return code, message
+
+
 def _avertir_si_env() -> None:
     """`CCP_API_KEY` est lue avant le fichier de configuration : la signaler,
-    sinon l'identifiant qui vient d'être enregistré serait ignoré en silence
-   ."""
+    sinon l'identifiant qui vient d'être enregistré serait ignoré en
+    silence."""
     if os.environ.get("CCP_API_KEY"):
         _err.print("[yellow]⚠ La variable CCP_API_KEY est définie : elle prime sur "
                    "l'identifiant enregistré. `unset CCP_API_KEY` pour utiliser celui-ci.[/yellow]")
