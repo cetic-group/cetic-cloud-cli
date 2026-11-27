@@ -1,4 +1,4 @@
-"""cetic-cloud-platform#2004 — validations alignées sur l'API."""
+"""Validations alignées sur l'API."""
 from __future__ import annotations
 
 import json

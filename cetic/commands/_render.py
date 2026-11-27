@@ -98,7 +98,7 @@ def render_table(
 
 def filter_region(items: list, region: str | None) -> list:
     """Filtre côté CLI sur la région, sans tenir compte de la casse : plusieurs
-    listes de l'API ignorent `?region=` (cetic-cloud-platform#2004). Un seul
+    listes de l'API ignorent `?region=`. Un seul
     endroit à retirer le jour où l'API filtrera."""
     if not region:
         return items

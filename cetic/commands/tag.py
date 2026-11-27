@@ -10,7 +10,7 @@ app = typer.Typer(help="Tags libres sur les ressources CETIC Cloud")
 
 # Types acceptés par `PUT /v1/tags` (`ResourceType` de l'API, 13 types).
 # La liste n'en comptait que 10, n'était utilisée nulle part et l'aide en
-# affichait 6 (cetic-cloud-platform#2004).
+# affichait 6.
 RESOURCE_TYPES = ["container", "container_scale_set", "vm_instance", "vm_scale_set",
                   "vpc", "vnet", "volume", "bucket", "load_balancer", "db_instance",
                   "secret", "bastion", "vpn_gateway"]

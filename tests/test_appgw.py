@@ -173,8 +173,7 @@ def test_create_happy_path(runner, mock_api):
     assert captured["body"]["name"] == "web-edge"
     assert captured["body"]["region"] == "RNN"
     assert captured["body"]["plan"] == "small"
-    # L'API déduit le VPC du VNet : `vpc_id` n'est plus envoyé
-    # (cetic-cloud-platform#2004).
+    # L'API déduit le VPC du VNet : `vpc_id` n'est plus envoyé.
     assert "vpc_id" not in captured["body"]
     assert captured["body"]["vnet_id"] == VNET_ID
     assert "public_ip_id" not in captured["body"]
@@ -1438,7 +1437,7 @@ def test_route_update_basic_auth_disable(runner, mock_api):
     )
     assert result.exit_code == 0, result.stdout
     # L'API désactive sur une liste vide ; `basic_auth_secret_ref: null`
-    # était ignoré (cetic-cloud-platform#2004).
+    # était ignoré.
     assert captured["body"] == {"basic_auth_users": []}
 
 

@@ -208,7 +208,7 @@ def list_gateways(
         items = client.get(APPGW_PATH, params={"region": region} if region else None)
     except client.APIError as e:
         raise _bail(e) from e
-    items = filter_region(items, region)  # l'API ignore ?region= (cetic-cloud-platform#2004)
+    items = filter_region(items, region)  # l'API ignore ?region=
     rows = [
         {
             "id": gw["id"],
@@ -336,8 +336,8 @@ def create(
         help="Plan tarifaire : small / medium / large",
     ),
     # L'API déduit le VPC du VNet (`AppGwCreate` n'a pas de `vpc_id`) : --vpc
-    # était obligatoire mais ignoré, et seul l'UUID est accepté pour --vnet
-    # (cetic-cloud-platform#2004). --vpc reste accepté, masqué.
+    # était obligatoire mais ignoré, et seul l'UUID est accepté pour --vnet.
+    # --vpc reste accepté, masqué.
     vpc: str | None = typer.Option(None, "--vpc", hidden=True, help="Ignoré : le VPC est celui du VNet"),
     vnet: str = typer.Option(..., "--vnet", help="UUID du VNet"),
     public_ip: str | None = typer.Option(
@@ -1519,7 +1519,7 @@ def route_update(
     elif no_basic_auth:
         # L'API désactive sur `basic_auth_users: []` ; `basic_auth_secret_ref:
         # null` vaut « pas de changement » : la commande annonçait un succès
-        # sans rien changer (cetic-cloud-platform#2004).
+        # sans rien changer.
         body["basic_auth_users"] = []
 
     body.update(security_policies)

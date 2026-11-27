@@ -100,8 +100,8 @@ def list_vpcs() -> None:
     render_list(rows, title=f"VPCs ({len(rows)})",
                 columns=[("id", "ID"), ("name", "Nom"), ("region", "Région"),
                          # Pas de colonne VNets : la liste de l'API ne porte pas
-                         # les VNets (la colonne valait toujours 0,
-                         # cetic-cloud-platform#2004) → `cetic vpc vnet list <vpc>`.
+                         # les VNets (la colonne valait toujours 0)
+                         # → `cetic vpc vnet list <vpc>`.
                          ("cidr", "CIDR"), ("status", "Statut"),
                          ("egress", "Sortie internet")])
 

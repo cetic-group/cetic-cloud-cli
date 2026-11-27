@@ -196,7 +196,7 @@ def _mint_ephemeral_cert(
 
 def _serie(serial: int | None) -> str:
     """Numéro de série du certificat, à passer à `cetic bastion revoke
-    --serial` : il n'était affiché nulle part (cetic-cloud-platform#2004)."""
+    --serial` : il n'était affiché nulle part."""
     return f", n° de série {serial}" if serial is not None else ""
 
 
@@ -240,7 +240,7 @@ def ssh(  # noqa: PLR0913
     tmpdir = tempfile.mkdtemp(prefix="cetic-ssh-")
     try:
         # Le bastion est résolu AVANT la signature : sans bastion, aucun
-        # certificat n'est émis pour rien (cetic-cloud-platform#2004).
+        # certificat n'est émis pour rien.
         bastion_host = _resolve_bastion_host(bastion, target)
         key_path, cert_path, serial = _mint_ephemeral_cert(
             tmpdir, target=target, login=login, ttl=ttl)

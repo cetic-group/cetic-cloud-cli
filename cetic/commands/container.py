@@ -75,7 +75,7 @@ def create(
         None, "--cloud-init",
         exists=True, file_okay=True, dir_okay=False, readable=True,
         # Un conteneur n'a pas cloud-init : l'API exécute le fichier avec bash
-        # (un #cloud-config y échoue, cetic-cloud-platform#2004).
+        # (un #cloud-config y échoue).
         help="Script shell exécuté par bash au premier démarrage (pas de #cloud-config sur un conteneur).",
     ),
     bastion_access: bool = typer.Option(

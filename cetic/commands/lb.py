@@ -175,7 +175,7 @@ def list_lbs(region: str | None = typer.Option(None, "--region", "-r")) -> None:
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")
         raise typer.Exit(1)
-    items = filter_region(items, region)  # l'API ignore ?region= (cetic-cloud-platform#2004)
+    items = filter_region(items, region)  # l'API ignore ?region=
     rows = [
         {"id": lb["id"], "name": lb["name"], "region": lb["region"],
          "plan": lb.get("plan") or "—",

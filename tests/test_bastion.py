@@ -383,8 +383,7 @@ def test_ssh_signs_and_connects(runner, mock_api, fake_ssh_tooling):
     assert "ubuntu@bastion.par.cloud.cetic-group.com" in ssh_cmd
     assert "host=10.0.1.42" in ssh_cmd
     assert "IdentitiesOnly=yes" in ssh_cmd
-    # Numéro de série affiché, pour `cetic bastion revoke --serial`
-    # (cetic-cloud-platform#2004).
+    # Numéro de série affiché, pour `cetic bastion revoke --serial`.
     assert "n° de série 99" in result.stdout
     # Anti-leak : aucun jargon infra.
     assert "LXC" not in result.stdout
@@ -433,6 +432,5 @@ def test_ssh_no_bastion_available(runner, mock_api, fake_ssh_tooling):
     result = runner.invoke(app, ["ssh", "10.0.1.42"])
     assert result.exit_code == 1
     assert "Aucun bastion" in result.stdout
-    # Sans bastion, aucun certificat n'est signé pour rien
-    # (cetic-cloud-platform#2004).
+    # Sans bastion, aucun certificat n'est signé pour rien.
     assert not any(call.request.url.path == "/v1/ssh/sign" for call in mock_api.calls)

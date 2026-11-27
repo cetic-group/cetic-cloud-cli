@@ -326,7 +326,7 @@ def commit_cancel(commit_id: str = typer.Argument(...)) -> None:
     """Annule un engagement. La remise s'arrête immédiatement.
 
     (L'aide annonçait une remise maintenue jusqu'à l'échéance : l'API l'arrête
-    dès l'annulation, cetic-cloud-platform#2004.)
+    dès l'annulation.)
     """
     try:
         client.post(f"/v1/billing/commits/{commit_id}/cancel")

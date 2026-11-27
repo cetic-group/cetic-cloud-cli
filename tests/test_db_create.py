@@ -112,7 +112,7 @@ def test_pg_options_shown_for_pg() -> None:
 
 
 def test_vpc_obligatoire(runner, mock_api):
-    """cetic-cloud-platform#2004 : l'API exige `vpc_id` (422 sans lui)."""
+    """L'API exige `vpc_id` (422 sans lui)."""
     result = runner.invoke(app, ["db", "pg", "create", "--name", "app-db", "--region", "RNN",
                                  "--vnet", "vnet-1"])
     assert result.exit_code == 2

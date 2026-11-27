@@ -155,7 +155,7 @@ def _validate_k8s_version(version: str) -> str:
     """Valide le format `vX.Y.Z` / `X.Y.Z`. Raise typer.BadParameter sinon."""
     if not _K8S_VERSION_RE.match(version):
         raise typer.BadParameter(
-            f"Version Kubernetes invalide : '{version}'. Format attendu : vX.Y.Z (ex: v1.32.0)."
+            f"Version Kubernetes invalide : '{version}'. Format attendu : X.Y.Z (ex: 1.34.8)."
         )
     return version
 
@@ -336,7 +336,7 @@ def list_clusters(region: str | None = typer.Option(None, "--region", "-r")) -> 
         items = client.get("/v1/k8s/clusters", params={"region": region} if region else None)
     except client.APIError as e:
         _fail(e)
-    items = filter_region(items, region)  # l'API ignore ?region= (cetic-cloud-platform#2004)
+    items = filter_region(items, region)  # l'API ignore ?region=
     rows = [
         {"id": c["id"], "name": c["name"], "region": c["region"],
          "k8s_version": c.get("k8s_version", "—"),
@@ -698,7 +698,7 @@ def _resolve_os_template_key(
 def _derniere_version(templates: list[dict], *, region: str, os_slug: str) -> str | None:
     """Version la plus récente buildée pour la région et l'OS : défaut de
     `--version`. L'ancien défaut figé (`v1.31.0`) ne correspondait à aucun
-    build en service (cetic-cloud-platform#2004)."""
+    build en service."""
     versions = [
         (t.get("k8s_version") or "").lstrip("vV")
         for t in templates
@@ -829,7 +829,7 @@ def create(
             _fail(e)
         if os_template_key:
             # `--template` fourni : sa version (pas la plus récente de la
-            # région, revue de la PR #87) et son OS. Les `matchTags` du cluster
+            # région, revue) et son OS. Les `matchTags` du cluster
             # dérivent de `os_image` : le défaut `flatcar` avec un template
             # ubuntu créait le cluster sur une autre famille (ou était refusé).
             entree = next((t for t in templates if t.get("os_key") == os_template_key), None)
@@ -862,7 +862,7 @@ def create(
                 )
                 raise typer.Exit(1)
     # L'API refuse le préfixe « v » à la création d'un cluster (422), alors que
-    # les pools et `upgrade-version` le retirent (cetic-cloud-platform#2004).
+    # les pools et `upgrade-version` le retirent.
     k8s_version = k8s_version.lstrip("vV")
     if not resolved_template_key:
         resolved_template_key = _resolve_os_template_key(

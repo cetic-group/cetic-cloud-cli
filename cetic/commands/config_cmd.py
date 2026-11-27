@@ -46,8 +46,8 @@ def get(
     if val is None:
         rprint(f"[yellow]Clé '{key}' non définie.[/yellow]")
         raise typer.Exit(1)
-    # Le jeton s'affichait en clair (historique du terminal, partage d'écran,
-    # cetic-cloud-platform#2004) : masqué comme dans `config view` (`***`).
+    # Le jeton s'affichait en clair (historique du terminal, partage d'écran) :
+    # masqué comme dans `config view` (`***`).
     if key in _SECRETES and not reveal:
         rprint("*** [dim](masqué : --reveal pour l'afficher)[/dim]")
         return
@@ -81,7 +81,7 @@ def set_cmd(
     config.set_value(key, value)
     rprint(f"[green]{key}[/green] → {value}")
     # Ces deux réglages sont enregistrés mais aucune commande ne les lit
-    # encore (cetic-cloud-platform#2004) : le dire plutôt que laisser croire
+    # encore : le dire plutôt que laisser croire
     # qu'ils s'appliquent.
     if key == "lang":
         rprint("[yellow]La CLI n'est disponible qu'en français : ce réglage est sans effet.[/yellow]")

@@ -340,7 +340,7 @@ def get(
 
     L'API ne renvoie aucun secret ici : le mot de passe admin n'est affiché
     qu'à la création. `--reveal-secrets` est gardé, masqué, pour compatibilité
-    (il était sans effet, cetic-cloud-platform#2004)."""
+    (il était sans effet)."""
     rid = _resolve_registry(id_or_name)
     try:
         reg = client.get(f"{REGISTRIES_PATH}/{rid}")

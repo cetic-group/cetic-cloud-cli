@@ -1,4 +1,4 @@
-"""cetic-cloud-platform#2004 — options qui étaient sans effet."""
+"""Options qui étaient sans effet."""
 from __future__ import annotations
 
 import json
@@ -93,7 +93,7 @@ def test_config_get_masque_le_jeton(runner):
     assert "test-token" in result.stdout
 
 
-# ── Revue de la PR #87 ───────────────────────────────────────────────────────
+# ── Revue ───────────────────────────────────────────────────────
 
 
 def test_quota_status_insensible_a_la_casse(runner, mock_api):
@@ -117,7 +117,7 @@ def test_config_get_masque_entierement(runner):
 
 
 def test_service_account_expires_in_days_et_expires_at_exclusifs(runner, mock_api):
-    """La date était ignorée sans message, même invalide (revue de la PR #87)."""
+    """La date était ignorée sans message, même invalide."""
     post = mock_api.post("/v1/service-accounts").mock(return_value=httpx.Response(201, json={}))
     result = runner.invoke(app, ["service-account", "create", "--name", "ci",
                                  "--expires-in-days", "30", "--expires-at", "2027-01-01T00:00:00Z"])

@@ -55,10 +55,10 @@ def _create_args(*extra: str) -> list[str]:
         "--vnet", VNET_ID,
         "--template", "clks-capi-debian-13",
         # Version explicite : sans elle, la CLI lit la dernière version
-        # disponible (cetic-cloud-platform#2004).
+        # disponible.
         *([] if "--version" in extra else ["--version", "1.31.0"]),
         # OS explicite : avec --template et sans --os, la CLI lit l'OS du
-        # template (revue de la PR #87).
+        # template.
         *([] if "--os" in extra else ["--os", "flatcar"]),
         *extra,
     ]
@@ -738,8 +738,7 @@ def test_create_pool_version_sent_in_initial_pool(runner, mock_api):
     mock_api.post("/v1/k8s/clusters").mock(side_effect=_capture)
     result = runner.invoke(app, _create_args("--version", "v1.32.0", "--pool-version", "v1.31.0"))
     assert result.exit_code == 0, result.stdout
-    # L'API refuse le « v » à la création du cluster : la CLI le retire
-    # (cetic-cloud-platform#2004) ; les pools l'acceptent.
+    # L'API refuse le « v » à la création du cluster : la CLI le retire ; les pools l'acceptent.
     assert captured["body"]["k8s_version"] == "1.32.0"
     assert captured["body"]["initial_pool"]["k8s_version"] == "v1.31.0"
 
@@ -961,7 +960,7 @@ def test_create_survives_unreadable_vnet_list(runner, mock_api):
 
 
 def test_create_sans_version_prend_la_plus_recente_sans_v(runner, mock_api):
-    """cetic-cloud-platform#2004 : l'ancien défaut `v1.31.0` ne correspondait
+    """L'ancien défaut `v1.31.0` ne correspondait
     à aucun build, et l'API refuse le « v » à la création d'un cluster."""
     captured: dict[str, Any] = {}
     mock_api.get("/v1/k8s/templates").mock(return_value=httpx.Response(200, json=[
@@ -1000,7 +999,7 @@ def test_create_version_avec_v_envoyee_sans_v(runner, mock_api):
 
 
 def test_create_template_sans_version_prend_la_version_du_template(runner, mock_api):
-    """Revue de la PR #87 : avec --template, la version est celle du template,
+    """Avec --template, la version est celle du template,
     pas la plus récente de la région (la casse de la région est couverte par
     `test_create_sans_version_region_insensible_a_la_casse`)."""
     captured: dict[str, Any] = {}

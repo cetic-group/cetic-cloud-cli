@@ -105,7 +105,7 @@ def _read_file_value(path: str) -> str:
 def _tags(tag: list[str], label: list[str]) -> list[str]:
     """Tags du secret : l'API attend `tags: list[str]` (minuscules, chiffres,
     `. _ : / -`). `--label key=value`, l'ancienne option, était ignoré par
-    l'API (cetic-cloud-platform#2004) ; il reste accepté et devient le tag
+    l'API ; il reste accepté et devient le tag
     `key:value`."""
     return [*tag, *(item.replace("=", ":", 1) for item in label)]
 

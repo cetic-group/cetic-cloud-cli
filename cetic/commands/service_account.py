@@ -143,7 +143,7 @@ def get(id_or_name: str = typer.Argument(..., metavar="ID|NAME")) -> None:
 def _jours_jusqua(date_iso: str) -> int:
     """Nombre de jours entre aujourd'hui (UTC) et `date_iso`, une DATE
     AAAA-MM-JJ : l'API ne prend que des jours entiers, une heure serait perdue
-    ou ferait refuser une échéance du jour (revue de la PR #87). Refus si la
+    ou ferait refuser une échéance du jour. Refus si la
     date n'est pas entre demain et 3650 jours (bornes de l'API)."""
     from datetime import UTC, date, datetime  # noqa: PLC0415
 
@@ -184,7 +184,7 @@ def create(
     """
     if expires_in_days is not None and expires_at:
         # L'une des deux, comme l'annonce l'usage : la date était ignorée sans
-        # message, même invalide (revue de la PR #87).
+        # message, même invalide.
         _err.print("[red]--expires-in-days ou --expires-at, pas les deux.[/red]")
         raise typer.Exit(2)
     body: dict[str, Any] = {"name": name}
@@ -194,7 +194,7 @@ def create(
         body["expires_in_days"] = expires_in_days
     elif expires_at:
         # L'API n'accepte que `expires_in_days` : `expires_at` était ignoré et
-        # le compte ne s'expirait jamais (cetic-cloud-platform#2004).
+        # le compte ne s'expirait jamais.
         body["expires_in_days"] = _jours_jusqua(expires_at)
     try:
         sa = client.post(SA_PATH, json=body)
