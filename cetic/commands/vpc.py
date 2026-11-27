@@ -89,7 +89,6 @@ def list_vpcs() -> None:
         {"id": v["id"], "name": v["name"], "region": v["region"],
          "cidr": v.get("cidr") or "—",
          "status": v.get("status", "—"),
-         "vnets": len(v.get("vnets", [])),
          # Champs bruts de l'API (exploitables en JSON/YAML) ; `egress` en est
          # le libellé lisible, seul affiché en table.
          "dedicated_egress_ip": bool(v.get("dedicated_egress_ip")),
@@ -100,7 +99,10 @@ def list_vpcs() -> None:
     ]
     render_list(rows, title=f"VPCs ({len(rows)})",
                 columns=[("id", "ID"), ("name", "Nom"), ("region", "Région"),
-                         ("cidr", "CIDR"), ("status", "Statut"), ("vnets", "VNets"),
+                         # Pas de colonne VNets : la liste de l'API ne porte pas
+                         # les VNets (la colonne valait toujours 0)
+                         # → `cetic vpc vnet list <vpc>`.
+                         ("cidr", "CIDR"), ("status", "Statut"),
                          ("egress", "Sortie internet")])
 
 
@@ -360,7 +362,7 @@ def create(
     position: int | None = typer.Option(None, "--pos", help="Position (ordre d'évaluation)"),
     enabled: bool = typer.Option(True, "--enabled/--disabled"),
 ) -> None:
-    """Crée une règle de firewall sur un VNet (isolation doit être activée)."""
+    """Crée une règle de firewall sur un VNet (avec ou sans isolation activée)."""
     body: dict = {"direction": direction, "action": action, "enabled": enabled}
     if proto:
         body["proto"] = proto

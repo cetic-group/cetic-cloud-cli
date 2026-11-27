@@ -148,7 +148,8 @@ def _bind_engine(typer_app: typer.Typer, engine: str) -> None:
             help="1 (sans redondance, défaut de la plateforme) ou 3 (haute disponibilité)."),
         plan: str = typer.Option("nano", "--plan", "-p"),
         vnet_id: str = typer.Option(..., "--vnet"),
-        vpc_id: str | None = typer.Option(None, "--vpc"),
+        # Obligatoire côté API pour tous les moteurs (422 sans lui).
+        vpc_id: str = typer.Option(..., "--vpc", help="UUID du VPC du VNet"),
         storage_gb: int = typer.Option(20, "--storage-gb", help="Taille du volume persistant (Go)"),
         engine_version: str | None = typer.Option(
             None, "--engine-version",

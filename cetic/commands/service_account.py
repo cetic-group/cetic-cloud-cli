@@ -8,7 +8,7 @@ via `--save-keyring`.
 Sous-commandes :
     cetic service-account list
     cetic service-account get ID|NAME
-    cetic service-account create --name NAME [--expires-at ISO] [--save-keyring]
+    cetic service-account create --name NAME [--expires-at AAAA-MM-JJ | --expires-in-days N] [--save-keyring]
     cetic service-account rotate ID|NAME [--save-keyring]
     cetic service-account revoke ID|NAME [--yes]
 
@@ -19,6 +19,7 @@ from typing import Any
 
 import typer
 from rich import print as rprint
+from rich.console import Console
 
 from cetic import client
 from cetic._resolve import resolve_id
@@ -28,6 +29,8 @@ from cetic._secrets import (
     save_sa_token,
 )
 from cetic.commands._render import render_list, render_one
+
+_err = Console(stderr=True)
 
 
 SA_PATH = "/v1/service-accounts"
@@ -137,6 +140,25 @@ def get(id_or_name: str = typer.Argument(..., metavar="ID|NAME")) -> None:
     render_one(sa, title=f"Service account {sa.get('name', sid)}")
 
 
+def _jours_jusqua(date_iso: str) -> int:
+    """Nombre de jours entre aujourd'hui (UTC) et `date_iso`, une DATE
+    AAAA-MM-JJ : l'API ne prend que des jours entiers, une heure serait perdue
+    ou ferait refuser une échéance du jour. Refus si la
+    date n'est pas entre demain et 3650 jours (bornes de l'API)."""
+    from datetime import UTC, date, datetime  # noqa: PLC0415
+
+    try:
+        cible = date.fromisoformat(date_iso)
+    except ValueError:
+        rprint(f"[red]Date invalide : {date_iso} (format attendu AAAA-MM-JJ, sans heure).[/red]")
+        raise typer.Exit(1) from None
+    jours = (cible - datetime.now(UTC).date()).days
+    if not 1 <= jours <= 3650:
+        rprint("[red]La date d'expiration doit être entre demain et 3650 jours.[/red]")
+        raise typer.Exit(1)
+    return jours
+
+
 @app.command()
 def create(
     name: str = typer.Option(..., "--name", "-n", help="Nom du service account"),
@@ -147,8 +169,8 @@ def create(
     ),
     expires_at: str | None = typer.Option(
         None, "--expires-at",
-        help="(Alias informatif) Le champ canonique côté API est --expires-in-days ; "
-        "passez une date ISO si votre version d'API la supporte.",
+        help="Date d'expiration AAAA-MM-JJ (jour UTC), convertie en jours pour l'API ; "
+             "l'heure n'est pas acceptée (l'API compte des jours entiers).",
     ),
     save_keyring: bool = typer.Option(
         False, "--save-keyring",
@@ -160,15 +182,20 @@ def create(
     Optionnellement, `--save-keyring` stocke le token dans le trousseau
     système (Keychain macOS, libsecret Linux, Credential Manager Windows).
     """
+    if expires_in_days is not None and expires_at:
+        # L'une des deux, comme l'annonce l'usage : la date était ignorée sans
+        # message, même invalide.
+        _err.print("[red]--expires-in-days ou --expires-at, pas les deux.[/red]")
+        raise typer.Exit(2)
     body: dict[str, Any] = {"name": name}
     if description is not None:
         body["description"] = description
     if expires_in_days is not None:
         body["expires_in_days"] = expires_in_days
     elif expires_at:
-        # Le contrat API expose `expires_in_days` — on passe `expires_at` brut au
-        # cas où le serveur l'accepte (rétro-compat) ; sinon 422 explicite.
-        body["expires_at"] = expires_at
+        # L'API n'accepte que `expires_in_days` : `expires_at` était ignoré et
+        # le compte ne s'expirait jamais.
+        body["expires_in_days"] = _jours_jusqua(expires_at)
     try:
         sa = client.post(SA_PATH, json=body)
     except client.APIError as e:

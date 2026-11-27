@@ -172,4 +172,4 @@ def whoami() -> None:
     if me.get("company_name"):
         rprint(f"[bold]Société[/bold]    : {me['company_name']}")
     rprint(f"[bold]Statut[/bold]     : {me['status']}")
-    rprint(f"[bold]Région active[/bold]: {config.get_region()}")
+    rprint(f"[bold]Région enregistrée[/bold]: {config.get_region()} [dim](les commandes demandent --region)[/dim]")

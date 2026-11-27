@@ -74,7 +74,9 @@ def create(
     cloud_init: Path = typer.Option(
         None, "--cloud-init",
         exists=True, file_okay=True, dir_okay=False, readable=True,
-        help="Fichier cloud-init (cloud-config) appliqué au premier démarrage.",
+        # Un conteneur n'a pas cloud-init : l'API exécute le fichier avec bash
+        # (un #cloud-config y échoue).
+        help="Script shell exécuté par bash au premier démarrage (pas de #cloud-config sur un conteneur).",
     ),
     bastion_access: bool = typer.Option(
         False, "--bastion-access",

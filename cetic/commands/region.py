@@ -31,7 +31,8 @@ def list_regions() -> None:
     table.add_column("Nom", style="white")
     table.add_column("Localisation", style="dim")
     table.add_column("Disponible", justify="center")
-    table.add_column("Active", justify="center")
+    # « Enregistrée » : les commandes ne lisent pas encore cette région.
+    table.add_column("Enregistrée", justify="center")
 
     for r in regions:
         available = "[green]✓[/green]" if r["available"] else "[red]✗[/red]"

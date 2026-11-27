@@ -245,7 +245,7 @@ def update(
     render_one(_redact(reg), title=f"Registry {reg.get('name', rid)}")
 
 
-@app.command(name="attach-ip")
+@app.command(name="attach-ip", hidden=True)
 def attach_ip_deprecated(
     id_or_name: str = typer.Argument(..., metavar="ID|NAME"),
 ) -> None:
@@ -259,7 +259,7 @@ def attach_ip_deprecated(
     raise typer.Exit(2)
 
 
-@app.command(name="detach-ip")
+@app.command(name="detach-ip", hidden=True)
 def detach_ip_deprecated(
     id_or_name: str = typer.Argument(..., metavar="ID|NAME"),
 ) -> None:
@@ -332,11 +332,15 @@ def list_registries(
 def get(
     id_or_name: str = typer.Argument(..., metavar="ID|NAME"),
     reveal_secrets: bool = typer.Option(
-        False, "--reveal-secrets",
+        False, "--reveal-secrets", hidden=True,
         help="Révèle les secrets (password admin, clés S3) — masqués par défaut",
     ),
 ) -> None:
-    """Détails d'une registry. Secrets masqués sauf `--reveal-secrets`."""
+    """Détails d'une registry.
+
+    L'API ne renvoie aucun secret ici : le mot de passe admin n'est affiché
+    qu'à la création. `--reveal-secrets` est gardé, masqué, pour compatibilité
+    (il était sans effet)."""
     rid = _resolve_registry(id_or_name)
     try:
         reg = client.get(f"{REGISTRIES_PATH}/{rid}")

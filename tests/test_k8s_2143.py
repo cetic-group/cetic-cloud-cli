@@ -124,8 +124,11 @@ def test_api_error_plain_detail_has_no_code(mock_api):
 
 
 def _create_args(*extra: str) -> list[str]:
+    # Version et OS explicites : avec --template seul, la CLI lit le template
+    # pour en prendre la version et l'OS.
     return ["k8s", "create", "--name", "ccks", "--region", "RNN", "--vpc", VPC_ID,
-            "--vnet", VNET_ID, "--template", "kube-v1-31-0", *extra]
+            "--vnet", VNET_ID, "--template", "kube-v1-31-0", "--version", "1.31.0",
+            "--os", "flatcar", *extra]
 
 
 def test_create_plan_pro_sent(runner, mock_api):

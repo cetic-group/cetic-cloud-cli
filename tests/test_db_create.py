@@ -9,7 +9,7 @@ import pytest
 
 from cetic.main import app
 
-BASE = ["--name", "app-db", "--region", "RNN", "--vnet", "vnet-1"]
+BASE = ["--name", "app-db", "--region", "RNN", "--vnet", "vnet-1", "--vpc", "vpc-1"]
 
 
 def _capture(cap: dict):
@@ -109,3 +109,11 @@ def test_pg_options_hidden_from_other_engines_help(group) -> None:
 def test_pg_options_shown_for_pg() -> None:
     hidden = _hidden_options("pg")
     assert not hidden["--pgbouncer"] and not hidden["--database"]
+
+
+def test_vpc_obligatoire(runner, mock_api):
+    """L'API exige `vpc_id` (422 sans lui)."""
+    result = runner.invoke(app, ["db", "pg", "create", "--name", "app-db", "--region", "RNN",
+                                 "--vnet", "vnet-1"])
+    assert result.exit_code == 2
+    assert not mock_api.calls

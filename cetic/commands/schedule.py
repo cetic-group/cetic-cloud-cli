@@ -506,7 +506,7 @@ def create(
         None,
         "--timezone",
         "--tz",
-        help="Fuseau IANA (ex : Europe/Paris). Par défaut : fuseau de l'organisation.",
+        help="Fuseau IANA (ex : Africa/Abidjan). Par défaut : Europe/Paris.",
     ),
     disabled: bool = typer.Option(
         False, "--disabled", help="Crée le planning inactif (aucune transition appliquée)."

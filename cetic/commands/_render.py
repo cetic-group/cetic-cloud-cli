@@ -94,3 +94,12 @@ def render_table(
 ) -> None:
     """Affiche une liste avec colonnes identifiées par leur clé (sans label alternatif)."""
     render_list(items, title=title, columns=[(c, c) for c in columns])
+
+
+def filter_region(items: list, region: str | None) -> list:
+    """Filtre côté CLI sur la région, sans tenir compte de la casse : plusieurs
+    listes de l'API ignorent `?region=`. Un seul
+    endroit à retirer le jour où l'API filtrera."""
+    if not region:
+        return items
+    return [x for x in items if (x.get("region") or "").upper() == region.upper()]

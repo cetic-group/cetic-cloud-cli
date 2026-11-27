@@ -131,3 +131,36 @@ def test_scp_rejects_two_local_paths(runner):
 def test_scp_rejects_two_remote_paths(runner):
     result = runner.invoke(app, ["scp", "10.0.0.1:/a", "10.0.0.2:/b"])
     assert result.exit_code == 1
+
+
+# ── ordre : bastion résolu AVANT la signature ────────────────────────────────
+@pytest.mark.parametrize("argv", [
+    ["ssh", "10.111.0.53"],
+    ["scp", "./fichier", "10.111.0.53:/tmp/"],
+])
+def test_sans_bastion_aucun_certificat_n_est_signe(runner, mock_api, monkeypatch, argv):
+    """Si aucun bastion ne dessert la cible, `/v1/ssh/sign` n'est jamais
+    appelé : un certificat émis pour rien consommerait un numéro de série et
+    laisserait une trace d'émission sans connexion (revue)."""
+    import subprocess
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(ssh_cmd, "_require_bin", lambda name: f"/usr/bin/{name}")
+
+    def faux_run(cmd, **_k):  # noqa: ANN001, ANN202 — ssh-keygen simulé, rien d'autre
+        if cmd[0].endswith("ssh-keygen"):
+            cle = Path(cmd[cmd.index("-f") + 1])
+            cle.write_text("priv")
+            cle.with_suffix(".pub").write_text("ssh-ed25519 AAAA cetic-ephemeral")
+            return SimpleNamespace(returncode=0, stderr="")
+        raise AssertionError(f"commande inattendue : {cmd}")
+
+    monkeypatch.setattr(subprocess, "run", faux_run)
+    mock_api.get("/v1/bastions").mock(return_value=httpx.Response(200, json=[]))
+    signe = mock_api.post("/v1/ssh/sign").mock(
+        return_value=httpx.Response(200, json={"certificate": "x", "serial": 1}))
+    result = runner.invoke(app, argv)
+    assert result.exit_code == 1, result.stdout
+    assert "Aucun bastion disponible" in (result.stdout + result.stderr)
+    assert not signe.called

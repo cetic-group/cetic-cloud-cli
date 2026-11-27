@@ -39,7 +39,7 @@ from cetic.commands._gateway import (
     target_label,
     validate_created_replica_count,
 )
-from cetic.commands._render import render_list, render_one
+from cetic.commands._render import render_list, render_one, filter_region
 
 APPGW_PATH = "/v1/app-gateways"
 
@@ -208,6 +208,7 @@ def list_gateways(
         items = client.get(APPGW_PATH, params={"region": region} if region else None)
     except client.APIError as e:
         raise _bail(e) from e
+    items = filter_region(items, region)  # l'API ignore ?region=
     rows = [
         {
             "id": gw["id"],
@@ -334,8 +335,11 @@ def create(
         "small", "--plan", "-p",
         help="Plan tarifaire : small / medium / large",
     ),
-    vpc: str = typer.Option(..., "--vpc", help="UUID ou nom du VPC"),
-    vnet: str = typer.Option(..., "--vnet", help="UUID ou nom du VNet"),
+    # L'API déduit le VPC du VNet (`AppGwCreate` n'a pas de `vpc_id`) : --vpc
+    # était obligatoire mais ignoré, et seul l'UUID est accepté pour --vnet.
+    # --vpc reste accepté, masqué.
+    vpc: str | None = typer.Option(None, "--vpc", hidden=True, help="Ignoré : le VPC est celui du VNet"),
+    vnet: str = typer.Option(..., "--vnet", help="UUID du VNet"),
     public_ip: str | None = typer.Option(
         None, "--public-ip",
         help="UUID d'une IP publique pré-allouée à attacher (optionnel)",
@@ -349,20 +353,20 @@ def create(
 
     Exemples :
       cetic appgw create --name web-edge --region RNN --plan small \\
-        --vpc prod --vnet web-tier
+        --vnet <VNET_UUID>
 
       cetic appgw create -n api-gw -r PAR -p medium \\
-        --vpc <vpc-uuid> --vnet <vnet-uuid> --public-ip <ip-uuid>
+        --vnet <VNET_UUID> --public-ip <IP_UUID>
 
     Le provisioning prend ~3-5 minutes. L'état passe `creating` → `active`.
     """
+    _ = vpc  # accepté pour compatibilité, sans effet
     security_policies = policy_payload(l4_policy=(l4_policy_file, False), l7_policy=(l7_policy_file, False), client_ip_policy=(client_ip_policy_file, False))
     body: dict[str, Any] = {
         "name": name,
         "region": region,
         "plan": plan,
         "replica_count": replica_count,
-        "vpc_id": vpc,
         "vnet_id": vnet,
     }
     if cache_enabled is not None:
@@ -1513,9 +1517,10 @@ def route_update(
     if basic_auth_user:
         body["basic_auth_users"] = _parse_basic_auth_users(list(basic_auth_user))
     elif no_basic_auth:
-        # Convention v1 : le backend accepte basic_auth_secret_ref=null pour
-        # désactiver (le payload AppgwRouteUpdate l'expose explicitement).
-        body["basic_auth_secret_ref"] = None
+        # L'API désactive sur `basic_auth_users: []` ; `basic_auth_secret_ref:
+        # null` vaut « pas de changement » : la commande annonçait un succès
+        # sans rien changer.
+        body["basic_auth_users"] = []
 
     body.update(security_policies)
     if not body:
