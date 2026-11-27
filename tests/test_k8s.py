@@ -1,4 +1,4 @@
-"""Tests pour `cetic k8s` — create --tier, list (colonne Tier), kubeconfig --mode.
+"""Tests pour `cetic k8s` — create --plan/--tier, list (colonne Plan), kubeconfig --mode.
 
 Cascade côté CLI v0.17.0 d'une feature CCKS HA livrée par CCP api v2.6.9 :
 - POST /v1/k8s/clusters accepte body `tier: dev|prod`
@@ -64,7 +64,7 @@ def _create_args(*extra: str) -> list[str]:
     ]
 
 
-def test_create_default_tier_is_dev(runner, mock_api):
+def test_create_default_leaves_plan_to_server(runner, mock_api):
     captured: dict[str, Any] = {}
 
     def _capture(request: httpx.Request) -> httpx.Response:
@@ -74,10 +74,14 @@ def test_create_default_tier_is_dev(runner, mock_api):
     mock_api.post("/v1/k8s/clusters").mock(side_effect=_capture)
     result = runner.invoke(app, _create_args())
     assert result.exit_code == 0, result.stdout
-    assert captured["body"]["tier"] == "dev"
+    # Ni --plan ni --tier : le serveur applique son défaut (starter).
+    assert "plan" not in captured["body"]
+    assert "tier" not in captured["body"]
+    assert "déprécié" not in result.output
+    assert "plan : starter" in result.stdout
 
 
-def test_create_tier_prod(runner, mock_api):
+def test_create_tier_prod_maps_to_standard_with_warning(runner, mock_api):
     captured: dict[str, Any] = {}
 
     def _capture(request: httpx.Request) -> httpx.Response:
@@ -87,8 +91,14 @@ def test_create_tier_prod(runner, mock_api):
     mock_api.post("/v1/k8s/clusters").mock(side_effect=_capture)
     result = runner.invoke(app, _create_args("--tier", "prod"))
     assert result.exit_code == 0, result.stdout
+    # `tier` transmis avec `plan` : une API antérieure à #2143 ignore `plan`.
+    assert captured["body"]["plan"] == "standard"
     assert captured["body"]["tier"] == "prod"
     assert "Cluster créé" in result.stdout
+    # Avertissement de dépréciation sur stderr, pas dans stdout.
+    assert "déprécié" in result.stderr
+    assert "--plan standard" in result.stderr
+    assert "déprécié" not in result.stdout
 
 
 def test_create_tier_case_insensitive(runner, mock_api):
@@ -101,7 +111,7 @@ def test_create_tier_case_insensitive(runner, mock_api):
     mock_api.post("/v1/k8s/clusters").mock(side_effect=_capture)
     result = runner.invoke(app, _create_args("--tier", "PROD"))
     assert result.exit_code == 0, result.stdout
-    # Normalisé en lowercase avant d'être envoyé.
+    assert captured["body"]["plan"] == "standard"
     assert captured["body"]["tier"] == "prod"
 
 
@@ -114,31 +124,25 @@ def test_create_tier_invalid_rejected(runner, mock_api):
 
 
 # ---------------------------------------------------------------------------
-# list — colonne Tier
+# list — colonne Plan (le tier, déprécié, reste dans le JSON)
 # ---------------------------------------------------------------------------
 
 
-def test_list_table_shows_tier_column(runner, mock_api):
+def test_list_table_shows_plan_column(runner, mock_api):
+    pro = _cluster("22222222-3333-4444-5555-666666666666", "ccks-prod", tier="prod")
+    pro["plan"] = "pro"
     mock_api.get("/v1/k8s/clusters").mock(
         return_value=httpx.Response(
             200,
-            json=[
-                _cluster(CLUSTER_ID, "ccks-dev", tier="dev"),
-                _cluster(
-                    "22222222-3333-4444-5555-666666666666",
-                    "ccks-prod",
-                    tier="prod",
-                ),
-            ],
+            json=[_cluster(CLUSTER_ID, "ccks-dev", tier="dev"), pro],
         )
     )
     result = runner.invoke(app, ["k8s", "list"])
     assert result.exit_code == 0, result.stdout
-    # En-tête de colonne présent.
-    assert "Tier" in result.stdout
-    # Les 2 valeurs apparaissent.
-    assert "dev" in result.stdout
-    assert "prod" in result.stdout
+    assert "Plan" in result.stdout
+    # Sans champ `plan` (API antérieure), il est déduit du tier : dev → starter.
+    assert "starter" in result.stdout
+    assert "pro" in result.stdout
     assert "ccks-dev" in result.stdout
     assert "ccks-prod" in result.stdout
 
@@ -160,14 +164,13 @@ def test_list_json_exposes_tier(runner, mock_api, monkeypatch):
     data = json.loads(result.stdout)
     assert isinstance(data, list)
     assert len(data) == 2
-    # Le rendu JSON conserve le tier brut (pas le markup Rich).
-    tiers = {row["tier"] for row in data}
-    assert "dev" in str(tiers)
-    assert "prod" in str(tiers)
+    # Le rendu JSON conserve les valeurs brutes (pas le markup Rich).
+    assert {row["tier"] for row in data} == {"dev", "prod"}
+    assert {row["plan"] for row in data} == {"starter", "standard"}
 
 
 def test_list_legacy_payload_without_tier(runner, mock_api):
-    """Backend ancien qui ne renvoie pas encore `tier` → fallback `—`."""
+    """Backend ancien qui ne renvoie ni `plan` ni `tier` → fallback `—`."""
     legacy = {
         "id": CLUSTER_ID,
         "name": "old-ccks",
@@ -178,7 +181,7 @@ def test_list_legacy_payload_without_tier(runner, mock_api):
     mock_api.get("/v1/k8s/clusters").mock(return_value=httpx.Response(200, json=[legacy]))
     result = runner.invoke(app, ["k8s", "list"])
     assert result.exit_code == 0, result.stdout
-    assert "Tier" in result.stdout
+    assert "Plan" in result.stdout
     assert "old-ccks" in result.stdout
 
 
@@ -1074,3 +1077,12 @@ def test_create_template_et_os_incompatibles(runner, mock_api):
     assert result.exit_code == 1
     assert "ne correspond pas" in result.stdout
     assert not post.called
+
+
+def test_os_rocky10_accepte_rocky9_garde_pour_l_existant() -> None:
+    """cetic-cloud-platform#2145 : Rocky Linux 10 proposé ; `rocky9` reste
+    accepté (clusters existants)."""
+    from cetic.commands import k8s as k8s_cmd
+
+    assert "rocky10" in k8s_cmd.VALID_OS and "rocky9" in k8s_cmd.VALID_OS
+    assert k8s_cmd._fmt_os("rocky10") == "Rocky Linux 10"
