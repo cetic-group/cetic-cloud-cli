@@ -1,4 +1,4 @@
-"""cetic-cloud-platform#2004 — commandes compute alignées sur les routes de l'API.
+"""Commandes compute alignées sur les routes de l'API.
 
 - start/stop/reboot : `POST /v1/{containers|vm-instances}/{id}/actions`
   (`{"action": …}` ; le redémarrage d'un conteneur s'appelle `restart`) ;

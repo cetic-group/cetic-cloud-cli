@@ -146,7 +146,7 @@ def render_acme_providers(data: object, *, cle: str = "name", identifiants: str 
     """Affiche le catalogue DNS-01 partagé LB / application gateway
     (`{clé: {label, fields}}`). Un seul parseur pour les deux commandes ; la
     lecture (et la gestion d'erreur propre à chaque commande) reste à
-    l'appelant (revue de la PR #86).
+    l'appelant.
 
     `cle`, `identifiants` et `titre` gardent la forme de sortie de chaque
     commande : `cetic lb acme-providers -o json` rendait `key` / `fields`, et

@@ -44,8 +44,7 @@ def _custom_template(
     tid: str = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
     template_type: str = "lxc",
 ) -> dict[str, Any]:
-    # `template_type` vaut `lxc` ou `vm` côté API (jamais `container`,
-    # cetic-cloud-platform#2004).
+    # `template_type` vaut `lxc` ou `vm` côté API (jamais `container`).
     return {
         "id": tid,
         "name": f"snap-{template_type}",

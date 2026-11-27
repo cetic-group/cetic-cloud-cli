@@ -41,7 +41,7 @@ def invite(
         raise typer.Exit(1)
     rprint(f"[green]✓[/green] Invitation envoyée à {email} (rôle: {role}).")
     # Réponse `{email, memberships: [...]}` (OrgMemberBatchResponse) : un
-    # membership par organisation (cetic-cloud-platform#2004 : `m['id']` levait
+    # membership par organisation (`m['id']` levait
     # un KeyError APRÈS l'envoi de l'invitation).
     for ms in m.get("memberships", []):
         rprint(f"[dim]ID: {ms.get('id')}[/dim]")
@@ -54,7 +54,7 @@ def set_role(
 ) -> None:
     """Change le rôle d'un membre."""
     # L'API expose `PATCH /v1/members/{id}` seulement (le POST répondait 405,
-    # et l'erreur du POST masquait celle du repli, cetic-cloud-platform#2004).
+    # et l'erreur du POST masquait celle du repli).
     try:
         client.patch(f"/v1/members/{member_id}", json={"role": role})
     except client.APIError as e:

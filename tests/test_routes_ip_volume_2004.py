@@ -1,4 +1,4 @@
-"""cetic-cloud-platform#2004 — IP, volumes et clés d'API alignés sur l'API.
+"""IP, volumes et clés d'API alignés sur l'API.
 
 - `ip get` / `api-key get` : pas de route GET unitaire, lecture dans la liste ;
 - `ip attach` / `volume attach` : `resource_type` + `resource_id` (422 avec
@@ -88,7 +88,7 @@ def test_api_key_get_lit_la_liste(runner, mock_api):
 
 
 def test_ip_detach_d_une_ip_de_lb_passe_par_le_lb(runner, mock_api):
-    """Symétrique de `ip attach --lb` (revue de la PR #86)."""
+    """Symétrique de `ip attach --lb`."""
     mock_api.get("/v1/public-ips").mock(return_value=httpx.Response(200, json=[
         {"id": IP, "load_balancer_id": CIBLE}]))
     lb = mock_api.post(f"/v1/load-balancers/{CIBLE}/detach-ip").mock(
@@ -107,7 +107,7 @@ def test_ip_detach_d_une_ip_de_lb_passe_par_le_lb(runner, mock_api):
 def test_ip_detach_passe_par_la_ressource_qui_tient_l_ip(runner, mock_api, champ, route):
     """Une IP tenue par une gateway, un bastion ou une passerelle VPN (clé
     étrangère) : la route générique la passait en `allocated` sans nettoyer la
-    ressource (revue de la PR #86)."""
+    ressource."""
     mock_api.get("/v1/public-ips").mock(return_value=httpx.Response(200, json=[
         {"id": IP, champ: CIBLE}]))
     res = mock_api.post(route.format(CIBLE)).mock(return_value=httpx.Response(200, json={}))

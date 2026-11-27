@@ -54,8 +54,7 @@ def create(
 @app.command()
 def get(key_id: str = typer.Argument(...)) -> None:
     """Détails d'une clé API."""
-    # Pas de route `GET /v1/api-keys/{id}` : la clé est lue dans la liste
-    # (cetic-cloud-platform#2004).
+    # Pas de route `GET /v1/api-keys/{id}` : la clé est lue dans la liste.
     try:
         items = client.get("/v1/api-keys")
     except client.APIError as e:

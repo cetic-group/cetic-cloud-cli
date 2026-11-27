@@ -1,4 +1,4 @@
-"""cetic-cloud-platform#2004 — `member invite` et `member set-role`."""
+"""`member invite` et `member set-role`."""
 from __future__ import annotations
 
 import json

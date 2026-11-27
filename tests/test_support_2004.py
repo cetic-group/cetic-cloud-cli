@@ -1,4 +1,4 @@
-"""cetic-cloud-platform#2004 — `support create` et `support get` alignés sur l'API.
+"""`support create` et `support get` alignés sur l'API.
 
 - catégories de l'API : technical | billing | abuse | feature_request | other
   (`question`, l'ancien défaut, était refusé en 422) ;

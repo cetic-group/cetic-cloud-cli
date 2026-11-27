@@ -99,7 +99,7 @@ def list_keys(
     """Liste les clés S3 d'un bucket, ou les anciennes clés de l'organisation."""
     if bucket and region:
         # Les clés d'un bucket sont dans sa région : le filtre serait ignoré
-        # en silence (revue de la PR #86).
+        # en silence.
         rprint("[red]--region ne s'applique qu'aux anciennes clés (sans --bucket).[/red]")
         raise typer.Exit(1)
     try:
@@ -134,7 +134,7 @@ def create(
 ) -> None:
     """Crée une clé S3 limitée à un bucket. Les credentials ne sont affichés qu'une seule fois."""
     # Clés scopées par bucket : `POST /v1/buckets/{id}/keys`. L'ancienne route
-    # `POST /v1/object-storage/keys` répond 410 (cetic-cloud-platform#2004).
+    # `POST /v1/object-storage/keys` répond 410.
     body: dict = {"label": label, "access_level": access_level}
     if expires_in_days:
         body["expires_in_days"] = expires_in_days

@@ -1,4 +1,4 @@
-"""cetic-cloud-platform#2004 — clés S3 par bucket.
+"""Clés S3 par bucket.
 
 `POST /v1/object-storage/keys` répond 410 depuis les clés par bucket : la
 création passe par `POST /v1/buckets/{id}/keys`. Les anciennes clés de

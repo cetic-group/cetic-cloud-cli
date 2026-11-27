@@ -1592,7 +1592,7 @@ def test_acme_providers_forme_de_l_api(runner, mock_api):
     """Forme réelle de l'API (`{clé: {label, fields}}`, catalogue partagé avec
     le LB). Les anciens tests utilisaient une liste et une enveloppe
     `{"providers": [...]}` que l'API ne rend pas : la commande affichait une
-    liste vide en vrai (cetic-cloud-platform#2004)."""
+    liste vide en vrai."""
     mock_api.get("/v1/app-gateways/acme/dns-providers").mock(
         return_value=httpx.Response(
             200,

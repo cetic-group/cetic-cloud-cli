@@ -80,7 +80,7 @@ def attach(
     if bool(container) == bool(vm):
         rprint("[red]Erreur : préciser --container ou --vm (un seul)[/red]")
         raise typer.Exit(1)
-    # Contrat de l'API : `resource_type` + `resource_id` (cetic-cloud-platform#2004).
+    # Contrat de l'API : `resource_type` + `resource_id`.
     body = ({"resource_type": "container", "resource_id": container} if container
             else {"resource_type": "vm", "resource_id": vm})
     try:

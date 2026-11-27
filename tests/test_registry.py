@@ -72,7 +72,7 @@ def test_create_happy_path_posts_body_and_offers_keyring(runner, mock_api, mock_
     assert "vpc_id" not in captured["body"]
     assert "vnet_id" not in captured["body"]
     assert "exposure" not in captured["body"]
-    # L'API attend `list[str]` (cetic-cloud-platform#2004).
+    # L'API attend `list[str]`.
     assert captured["body"]["tags"] == ["env=prod", "team=core"]
     # Le mot de passe est affiché 1× dans la sortie.
     assert "s3cr3t-pwd" in result.stdout
@@ -123,7 +123,7 @@ def test_create_quota_409_message_french(runner, mock_api):
 
 def test_create_tag_libre(runner, mock_api, mock_keyring):
     """Un tag est une chaîne libre (`list[str]` côté API) : plus de format
-    KEY=VALUE imposé (cetic-cloud-platform#2004)."""
+    KEY=VALUE imposé."""
     captured: dict[str, Any] = {}
 
     def _capture(request: httpx.Request) -> httpx.Response:
@@ -399,7 +399,7 @@ def test_user_list(runner, mock_api):
 def test_user_reset(runner, mock_api, mock_keyring):
     mock_api.get(f"/v1/registries/{REG_ID}/users").mock(
         return_value=httpx.Response(200, json=_USERS))
-    # Route par UUID (cetic-cloud-platform#2004), le nom est résolu par la liste.
+    # Route par UUID, le nom est résolu par la liste.
     mock_api.post(f"/v1/registries/{REG_ID}/users/{CI_UID}/reset-password").mock(
         return_value=httpx.Response(200, json={"password": "new-pwd"})
     )
@@ -624,10 +624,9 @@ def test_tags_signale_une_indexation_en_cours_sur_stderr(runner, mock_api):
 
 def test_tag_delete(runner, mock_api):
     """Le tag se supprime par son manifest (l'ancien chemin `…/tags/{tag}`
-    tombait sur la suppression du DÉPÔT, cetic-cloud-platform#2004). Le tag
-    est passé tel quel : l'API lit son digest AUPRÈS DU REGISTRE
-    (cetic-cloud-platform#2049), jamais celui de l'index, qui peut dater de
-    5 min (revue de la PR #86)."""
+    tombait sur la suppression du DÉPÔT). Le tag
+    est passé tel quel : l'API lit son digest AUPRÈS DU REGISTRE,
+    jamais celui de l'index, qui peut dater de 5 min."""
     mock_api.get(f"/v1/registries/{REG_ID}/repositories/myapp/api/tags").mock(
         return_value=httpx.Response(200, json={"name": "myapp/api", "tags": [
             {"name": "v1.0.0", "digest": "sha256:abc"}, {"name": "v2", "digest": "sha256:def"}]}))
@@ -921,7 +920,7 @@ def test_repos_et_tags_en_json_rendent_les_valeurs_brutes(runner, mock_api, monk
 
 
 
-# ── Revue de la PR #86 ───────────────────────────────────────────────────────
+# ── Revue ───────────────────────────────────────────────────────
 
 
 def test_acl_set_met_a_jour_la_regle_existante(runner, mock_api):

@@ -44,7 +44,7 @@ def _list(endpoint: str, kind: str, show_os: bool = False) -> None:
 def _scale(endpoint: str, replicas: int) -> None:
     try:
         # Pas de route `/scale` : la taille se règle par PATCH de
-        # `desired_instances` (cetic-cloud-platform#2004).
+        # `desired_instances`.
         client.patch(endpoint, json={"desired_instances": replicas})
     except client.APIError as e:
         rprint(f"[red]Erreur : {e.detail}[/red]")

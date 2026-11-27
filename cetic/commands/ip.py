@@ -152,7 +152,7 @@ def allocate(
 def get(ip_id: str = typer.Argument(...)) -> None:
     """Détails d'une IP."""
     # Pas de route `GET /v1/public-ips/{id}` : l'IP est lue dans la liste de
-    # l'organisation (cetic-cloud-platform#2004).
+    # l'organisation.
     try:
         items = client.get("/v1/public-ips")
     except client.APIError as e:
@@ -160,7 +160,7 @@ def get(ip_id: str = typer.Argument(...)) -> None:
         raise typer.Exit(1)
     ip = next((p for p in items if p.get("id") == ip_id), None)
     if ip is None:
-        # La liste ne rend que les IP allouées ou attachées (revue de la PR #86).
+        # La liste ne rend que les IP allouées ou attachées.
         rprint(f"[red]Erreur : IP publique introuvable ou libérée : {ip_id}[/red]")
         raise typer.Exit(1)
     render_one(ip, title=f"IP {ip.get('ip_address', ip_id)}")
@@ -223,8 +223,7 @@ def attach(
             # L'IP d'un load balancer s'attache par la route du LB.
             client.post(f"/v1/load-balancers/{lb}/attach-ip", json={"public_ip_id": ip_id})
         else:
-            # Contrat de l'API : `resource_type` + `resource_id`
-            # (cetic-cloud-platform#2004).
+            # Contrat de l'API : `resource_type` + `resource_id`.
             body = ({"resource_type": "container", "resource_id": container} if container
                     else {"resource_type": "vm_instance", "resource_id": vm})
             client.post(f"/v1/public-ips/{ip_id}/attach", json=body)
@@ -250,7 +249,7 @@ def detach(ip_id: str = typer.Argument(...)) -> None:
     try:
         # L'IP d'un load balancer se détache par la route du LB, symétrique de
         # `ip attach --lb` : la route de l'IP passait l'IP en `allocated` sans
-        # nettoyer le LB (revue de la PR #86).
+        # nettoyer le LB.
         # Même chose pour toute ressource qui référence l'IP par une clé
         # étrangère (gateway, bastion, VPN) : la route générique ne la nettoie
         # pas, et l'IP serait libérée alors que la ressource la tient encore.

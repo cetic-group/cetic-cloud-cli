@@ -116,14 +116,14 @@ def _parse_link_header(link: str | None) -> str | None:
 
 def _tags(values: list[str]) -> list[str]:
     """Tags de la registry : l'API attend `list[str]` (un dictionnaire était
-    refusé en 422, cetic-cloud-platform#2004). `env=prod` reste un tag valide."""
+    refusé en 422). `env=prod` reste un tag valide."""
     return [v.strip() for v in values if v.strip()]
 
 
 def _resoudre_utilisateur(rid: str, user: str) -> tuple[str, str]:
     """`(uuid, nom)` d'un utilisateur de la registry à partir de son UUID ou de
     son nom : les routes `users/{id}` et les ACL attendent l'UUID, le
-    trousseau range le mot de passe sous le nom (revue de la PR #86)."""
+    trousseau range le mot de passe sous le nom."""
     try:
         items = client.get(f"{REGISTRIES_PATH}/{rid}/users")
     except client.APIError as e:
@@ -671,22 +671,21 @@ def acl_set(
         rprint("[red]--actions ne peut pas être vide.[/red]")
         raise typer.Exit(1)
     # Contrat de l'API : POST (pas de PUT), `repo_pattern` et `user_id`
-    # (cetic-cloud-platform#2004 : `repo`/`username` en PUT étaient refusés).
+    # (`repo`/`username` en PUT étaient refusés).
     body: dict[str, Any] = {"repo_pattern": repo, "actions": actions_list}
     try:
         if user:
             body["user_id"] = _resoudre_utilisateur(rid, user)[0]
         # L'API n'a pas de PUT idempotent : POST insère une ligne à chaque
         # appel. Une règle existante de même (utilisateur, motif) est donc
-        # modifiée par PATCH, sinon créée (revue de la PR #86).
+        # modifiée par PATCH, sinon créée.
         memes = [x for x in client.get(f"{REGISTRIES_PATH}/{rid}/acls")
                  if x.get("repo_pattern") == repo and x.get("user_id") == body.get("user_id")]
         if memes:
             a = client.patch(f"{REGISTRIES_PATH}/{rid}/acls/{memes[0]['id']}", json=body)
             # Doublons créés avant cette correction (console, API, ancien
             # `acl set` en POST) : le registre accorde l'UNION des règles, un
-            # retrait de droit ne prendrait donc pas effet. Ils sont supprimés
-            # (revue de la PR #86).
+            # retrait de droit ne prendrait donc pas effet. Ils sont supprimés.
             for doublon in memes[1:]:
                 client.delete(f"{REGISTRIES_PATH}/{rid}/acls/{doublon['id']}")
             if len(memes) > 1:
@@ -942,8 +941,8 @@ def tag_delete(
         raise typer.Abort()
     # Avertissement seulement : l'index des tags est rafraîchi toutes les
     # 5 min, il peut dater. Le digest supprimé est lu par l'API AUPRÈS DU
-    # REGISTRE (cetic-cloud-platform#2049) : jamais celui de l'index, qui
-    # pouvait désigner l'image d'un AUTRE tag (revue de la PR #86).
+    # REGISTRE : jamais celui de l'index, qui
+    # pouvait désigner l'image d'un AUTRE tag.
     index = _index_des_tags(rid, repo)
     digest_index = index.get(tag)
     autres = sorted(n for n, d in index.items() if d and d == digest_index and n != tag)
@@ -955,7 +954,7 @@ def tag_delete(
     try:
         # `…/repositories/{repo}/tags/{tag}` tombait sur la route de
         # suppression du DÉPÔT (`{name:path}`) : le tag se supprime par son
-        # manifest (cetic-cloud-platform#2004).
+        # manifest.
         rep = client.delete(f"{REGISTRIES_PATH}/{rid}/repositories/{repo}/manifests/{tag}") or {}
     except client.APIError as e:
         raise _bail(e) from e

@@ -302,8 +302,7 @@ def test_get_shows_listener_table(runner, mock_api) -> None:
 def test_acme_providers_forme_json_inchangee(runner, mock_api, monkeypatch, commande, chemin,
                                              cle, identifiants):
     """Le parseur commun garde la forme JSON de chaque commande : un script
-    qui lit `.[].key` sur `lb acme-providers` ne reçoit pas `null` (revue de
-    la PR #86)."""
+    qui lit `.[].key` sur `lb acme-providers` ne reçoit pas `null`."""
     import json
 
     mock_api.get(chemin).mock(return_value=httpx.Response(200, json={

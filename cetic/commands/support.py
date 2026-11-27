@@ -53,7 +53,7 @@ def get(ticket_id: str = typer.Argument(...)) -> None:
     rprint(f"[dim]Catégorie : {t.get('category')} · Créé le {t.get('created_at', '')[:10]}[/dim]\n")
     for msg in t.get("messages", []):
         # L'API distingue `customer`, `admin` et `system`
-        # (cetic-cloud-platform#2004 : la comparaison à `tenant` étiquetait
+        # (la comparaison à `tenant` étiquetait
         # tous les messages « Support CETIC »).
         author = _AUTEURS.get(msg.get("author_type"), "[bold yellow]Support CETIC[/bold yellow]")
         rprint(f"{author} · {msg.get('created_at', '')[:16]}")
@@ -202,8 +202,8 @@ def subscribe(
         sub = client.post("/v1/support/subscribe", json={"plan_key": key})
     except client.APIError as e:
         # `APIError` porte `status_code` (pas `status`) : la branche ne se
-        # déclenchait jamais, et `cetic billing add-card` n'existe pas
-        # (cetic-cloud-platform#2004). La carte s'ajoute dans la console.
+        # déclenchait jamais, et `cetic billing add-card` n'existe pas.
+        # La carte s'ajoute dans la console.
         if e.status_code == 402:
             rprint(f"[yellow]{e.detail}[/yellow]")
             rprint("[yellow]Ajoutez un moyen de paiement dans la console (Facturation), "
