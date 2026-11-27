@@ -581,8 +581,27 @@ cetic k8s maintenance set <cluster-id> --auto-mineure --jours sam,dim --heure-de
     --gel 2026-12-20:2027-01-03       # fenêtre (options omises = inchangées), périodes de gel
 cetic k8s oidc set <cluster-id> --issuer-url https://sso.example.com/realms/acme --client-id kube
 cetic k8s kubeconfig <cluster-id> --mode sso > ~/.kube/config     # kubelogin (kubectl oidc-login)
+cetic k8s kubeconfig <cluster-id> --mode sso-private > ~/.kube/config   # SSO par l'endpoint privé (VPN/VNet, sans IP publique)
 cetic k8s oidc delete <cluster-id>
+
+# Kubernetes — DNS personnalisé et DNS privé (cetic-cloud-platform#2181)
+cetic k8s get <cluster-id>            # custom_dns, et private_dns : état, zones du VPC, motif d'attente
+cetic k8s dns get <cluster-id>        # détail : domaines personnalisés, zones du VPC, zones exclues, résolveur
+cetic k8s dns set <cluster-id> -d corp.example=10.0.1.10,10.0.1.11 -d lab.example=10.0.2.53
+                                      # remplace TOUTE la liste : 5 domaines au plus, 1 ou 2 serveurs
+                                      # (le second en secours) dans un sous-réseau du VPC, port 53
+cetic k8s dns clear <cluster-id>      # vide le DNS personnalisé (les zones DNS privées du VPC restent)
 ```
+
+> **DNS du cluster.** Les zones DNS privées du VPC sont ajoutées d'office au
+> CoreDNS du cluster ; `cetic k8s dns set` y ajoute vos propres domaines, résolus
+> par vos serveurs. Aucun redémarrage : CoreDNS recharge sa configuration, active
+> en 2 minutes au plus. Un refus de l'API (serveur hors du VPC, zone déjà portée
+> par le DNS privé du VPC…) est détaillé ligne par ligne.
+>
+> **Kubeconfig SSO.** `--mode sso` passe par l'endpoint public (IP publique
+> attachée) ; `--mode sso-private` par l'endpoint privé du VNet, celui de
+> `--mode private` (VPN ou VNet). Les deux imposent PKCE (`S256`).
 
 > **Changements de comportement (cetic-cloud-platform#2143)**
 > - `cetic k8s upgrade-version` (et l'ancien `cetic k8s upgrade`, désormais alias

@@ -57,6 +57,8 @@ def _parse_taint_arg(taint_str: str) -> dict[str, str | None]:
 CODE_PLAN_RECREATION = "ccks_plan_change_requires_recreation"
 CODE_PLAN_NODE_LIMIT = "ccks_plan_node_limit"
 CODE_IP_BLOCK_NOT_EXTENDABLE = "ccks_node_ip_block_not_extendable"
+#: DNS personnalisé refusé (#2181) : `detail.errors`, un motif par ligne.
+CODE_CUSTOM_DNS_INVALID = "custom_dns_invalid"
 
 
 def _error_hint(e: client.APIError) -> str | None:
@@ -81,6 +83,16 @@ def _error_hint(e: client.APIError) -> str | None:
             f"il en faut {body.get('required', '?')}. Ce cluster ne peut pas "
             "monter de plan à chaud : recréez-le avec le plan visé."
         )
+    if e.code == CODE_CUSTOM_DNS_INVALID:
+        lignes = []
+        for err in body.get("errors") or []:
+            if not isinstance(err, dict):
+                continue
+            idx = err.get("index")
+            num = f"ligne {idx + 1}" if isinstance(idx, int) else "liste"
+            dom = f" ({err['domain']})" if err.get("domain") else ""
+            lignes.append(f"  {num}{dom} : {err.get('message') or err.get('reason') or '?'}")
+        return "\n".join(lignes) or None
     if e.status_code == 402:
         url = body.get("action_url")
         return "Plafond de dépenses atteint : relevez-le avant de réessayer" + (
@@ -123,10 +135,14 @@ maintenance_app = typer.Typer(help="Mise à jour automatique d'un cluster (patch
 app.add_typer(maintenance_app, name="maintenance")
 oidc_app = typer.Typer(help="SSO (OIDC) d'un cluster : connexion kubectl par votre IdP")
 app.add_typer(oidc_app, name="oidc")
+dns_app = typer.Typer(
+    help="DNS d'un cluster : DNS personnalisé (vos serveurs) et état du DNS privé du VPC")
+app.add_typer(dns_app, name="dns")
 
 
 VALID_TIERS = ("dev", "prod")
-VALID_KUBECONFIG_MODES = ("private", "public", "sso")
+VALID_KUBECONFIG_MODES = ("private", "public", "sso", "sso-private")
+_SSO_KUBECONFIG_MODES = ("sso", "sso-private")
 
 # Familles d'OS proposées pour les nœuds K8s (slug backend `os_image`).
 # `rocky9` reste accepté pour les clusters existants : la plateforme ne
@@ -411,6 +427,10 @@ def _cluster_table_view(c: dict) -> dict:
     if "oidc" in c:
         o = c.get("oidc")
         out["oidc"] = f"{o.get('issuer_url')} (client {o.get('client_id')})" if o else None
+    if "custom_dns" in c:
+        out["custom_dns"] = _fmt_custom_dns(c.get("custom_dns"))
+    if "private_dns" in c:
+        out["private_dns"] = _fmt_private_dns(c.get("private_dns"))
     if isinstance(c.get("node_pools"), list):
         out["node_pools"] = " ; ".join(
             _fmt_pool_line(p, c.get("k8s_version")) for p in c["node_pools"]
@@ -427,7 +447,8 @@ def kubeconfig(
         help=(
             "Endpoint du kubeconfig : private (VNet, défaut) | public (Gateway) | "
             "sso (endpoint public, connexion par votre fournisseur d'identité via "
-            "kubelogin — cf. cetic k8s oidc set)."
+            "kubelogin — cf. cetic k8s oidc set) | sso-private (SSO sur l'endpoint "
+            "privé du VNet : VPN ou VNet, sans IP publique)."
         ),
         case_sensitive=False,
     ),
@@ -437,7 +458,11 @@ def kubeconfig(
     `private` / `public` : kubeconfig admin par certificat client.
     `sso` : aucun certificat ; `kubectl` lance `kubectl oidc-login` (plugin
     kubelogin, à installer) et les droits viennent des (Cluster)RoleBinding
-    posés sur vos groupes (préfixe `oidc:` par défaut).
+    posés sur vos groupes (préfixe `oidc:` par défaut). Endpoint public : le
+    cluster doit avoir une IP publique.
+    `sso-private` : même kubeconfig SSO, sur l'endpoint privé du VNet (celui de
+    `private`) : depuis le VPN ou le VNet, sans IP publique.
+    Les deux modes SSO imposent PKCE (`--oidc-pkce-method=S256`).
     """
     mode_norm = mode.lower()
     if mode_norm not in VALID_KUBECONFIG_MODES:
@@ -457,12 +482,14 @@ def kubeconfig(
         print(kc["kubeconfig"])
     else:
         print(kc)
-    if mode_norm == "sso":
+    if mode_norm in _SSO_KUBECONFIG_MODES:
         # Sur stderr : `> ~/.kube/config` ne doit recevoir que le YAML.
+        acces = (" Endpoint privé : joignable depuis le VPN ou le VNet du cluster."
+                 if mode_norm == "sso-private" else "")
         rprint(
             "[dim]Kubeconfig SSO : nécessite le plugin kubelogin "
             "(`kubectl krew install oidc-login`). Sans (Cluster)RoleBinding sur "
-            "vos groupes, l'utilisateur n'a aucun droit.[/dim]",
+            f"vos groupes, l'utilisateur n'a aucun droit.{acces}[/dim]",
             file=sys.stderr,
         )
 
@@ -1476,8 +1503,8 @@ def oidc_set(
     leur défaut si le SSO n'est pas encore configuré. La confirmation liste ce
     qui change. L'apiserver redémarre si la configuration change (coupure
     brève de l'API sur le plan Starter). Ensuite : `cetic k8s kubeconfig <ID>
-    --mode sso`, et des (Cluster)RoleBinding sur vos groupes préfixés (ex.
-    `oidc:admins`).
+    --mode sso` (ou `--mode sso-private` par l'endpoint privé), et des
+    (Cluster)RoleBinding sur vos groupes préfixés (ex. `oidc:admins`).
     """
     for a, b, msg in ((groups_claim, no_groups, "--groups-claim et --no-groups"),
                       (extra_scopes, no_scopes, "--scope et --no-scopes"),
@@ -1544,7 +1571,8 @@ def oidc_set(
     except client.APIError as e:
         _fail(e)
     rprint("[green]✓[/green] SSO configuré.")
-    rprint(f"[dim]Kubeconfig : cetic k8s kubeconfig {cluster_id} --mode sso[/dim]")
+    rprint(f"[dim]Kubeconfig : cetic k8s kubeconfig {cluster_id} --mode sso "
+           "(ou --mode sso-private depuis le VPN ou le VNet)[/dim]")
     rprint(f"[dim]Droits : kubectl create clusterrolebinding … "
            f"--group={body['groups_prefix']}<groupe>[/dim]")
 
@@ -1565,6 +1593,265 @@ def oidc_delete(
     except client.APIError as e:
         _fail(e)
     rprint("[green]✓[/green] SSO retiré.")
+
+
+# ── DNS personnalisé et DNS privé (cetic-cloud-platform#2181) ─────────────
+
+#: 5 domaines au plus, 1 ou 2 serveurs chacun (API : `CUSTOM_DNS_MAX`).
+CUSTOM_DNS_MAX = 5
+_DNS_SERVEURS_MAX = 2
+_DNS_LABEL = r"(?!-)[a-z0-9_-]{1,63}(?<!-)"
+_DNS_FQDN_RE = re.compile(rf"^{_DNS_LABEL}(\.{_DNS_LABEL})*$")
+
+_DNS_STATUTS = {
+    "applied": "appliqué",
+    "pending": "en attente",
+    "error": "erreur",
+    "unsupported": "non pris en charge",
+}
+_DNS_MOTIFS = {
+    "resolver_not_ready": "résolveur DNS du VPC pas encore prêt",
+    "resolver_unavailable": "résolveur DNS du VPC indisponible",
+    "suspended": "suspendu par la plateforme",
+    "nodes_outside_subnet": "nœuds hors du sous-réseau du résolveur",
+    "cluster_unreachable": "cluster injoignable",
+    "client_coredns_config_invalid": "configuration coredns-custom invalide",
+    "platform_render_suspended": "rendu suspendu par la plateforme",
+    "resolver_address_invalid": "adresse du résolveur invalide",
+    "denylisted": "domaine réservé",
+    "cluster_domain": "domaine du cluster",
+    "cluster_range": "plage du cluster",
+    "client_conflict": "déclaré dans votre coredns-custom",
+    "invalid_name": "nom invalide",
+    "custom_dns_conflict": "porté par le DNS personnalisé",
+    "invalid_server": "serveur refusé",
+}
+
+
+def _dns_statut(s: str | None) -> str:
+    return _DNS_STATUTS.get(s or "", s or "—")
+
+
+def _dns_motif(m: str | None) -> str:
+    return _DNS_MOTIFS.get(m or "", m or "")
+
+
+def _normaliser_domaine(d: str) -> str:
+    """Comme l'API : espaces retirés, minuscules, sans point final."""
+    return d.strip().lower().rstrip(".")
+
+
+def _domaine_valide(d: str) -> bool:
+    if not d or len(d) > 253 or not _DNS_FQDN_RE.match(d):
+        return False
+    # Dernier label tout numérique : CoreDNS le lirait comme une adresse.
+    return not d.rsplit(".", 1)[-1].isdigit()
+
+
+def _domaine_reserve(d: str) -> bool:
+    return d in ("local", "cluster.local", "arpa", "in-addr.arpa") or d.endswith(
+        ".cluster.local")
+
+
+def _ipv4_unicast(ip: str) -> bool:
+    import ipaddress
+
+    try:
+        a = ipaddress.IPv4Address(ip)
+    except ValueError:
+        return False
+    return not (a.is_unspecified or a.is_loopback or a.is_link_local or a.is_multicast
+                or a.is_reserved or int(a) >> 24 == 0)
+
+
+def _parse_custom_dns(valeurs: list[str]) -> list[dict[str, Any]]:
+    """`DOMAINE=IP[,IP]` (répétable) → corps de `PUT …/custom-dns`.
+
+    Contrôles locaux (forme seulement) ; l'API reste la référence : serveurs dans
+    un sous-réseau du VPC, adresses réservées, zones DNS privées du VPC."""
+    entrees: list[dict[str, Any]] = []
+    vus: set[str] = set()
+    for brut in valeurs:
+        domaine, sep, serveurs = brut.partition("=")
+        domaine = _normaliser_domaine(domaine)
+        if not sep or not domaine:
+            raise typer.BadParameter(
+                f"'{brut}' : forme attendue DOMAINE=IP[,IP] (ex. corp.example=10.0.1.10).")
+        if not _domaine_valide(domaine):
+            raise typer.BadParameter(f"'{domaine}' : nom de domaine invalide.")
+        if _domaine_reserve(domaine):
+            raise typer.BadParameter(
+                f"'{domaine}' : domaine réservé au cluster (cluster.local, local, arpa).")
+        if domaine in vus:
+            raise typer.BadParameter(f"'{domaine}' : domaine saisi deux fois.")
+        ips = [s.strip() for s in serveurs.split(",") if s.strip()]
+        if not 1 <= len(ips) <= _DNS_SERVEURS_MAX:
+            raise typer.BadParameter(
+                f"'{domaine}' : indiquez 1 ou 2 adresses de serveur DNS.")
+        if len(set(ips)) != len(ips):
+            raise typer.BadParameter(f"'{domaine}' : la même adresse est saisie deux fois.")
+        for ip in ips:
+            if not _ipv4_unicast(ip):
+                raise typer.BadParameter(f"'{ip}' : adresse IPv4 unicast attendue.")
+        vus.add(domaine)
+        entrees.append({"domain": domaine, "servers": ips})
+    if len(entrees) > CUSTOM_DNS_MAX:
+        raise typer.BadParameter(f"{CUSTOM_DNS_MAX} domaines au plus ({len(entrees)} saisis).")
+    return entrees
+
+
+def _fmt_custom_dns(entrees: list[dict] | None) -> str | None:
+    """`corp.example → 10.0.1.10, 10.0.1.11 ; …` (None : aucun)."""
+    lignes = [f"{e.get('domain')} → {', '.join(e.get('servers') or [])}"
+              for e in entrees or [] if isinstance(e, dict)]
+    return " ; ".join(lignes) or None
+
+
+def _fmt_private_dns(pd: dict | None) -> str | None:
+    """Résumé d'une ligne de `private_dns` pour `k8s get` (None : aucun DNS
+    privé ni personnalisé)."""
+    if not pd:
+        return None
+    statut = _dns_statut(pd.get("status"))
+    zones = pd.get("zones") or []
+    domaines = pd.get("custom_domains") or []
+    parts = [f"{len(zones)} zone(s) du VPC"]
+    if domaines:
+        parts.append(f"{len(domaines)} domaine(s) personnalisé(s)")
+    if pd.get("excluded"):
+        parts.append(f"{len(pd['excluded'])} exclue(s)")
+    detail = ""
+    if pd.get("status") == "error":
+        detail = f" : {pd.get('error') or _dns_motif(pd.get('error_code')) or '?'}"
+    elif pd.get("pending_reason"):
+        detail = f" ({_dns_motif(pd['pending_reason'])})"
+    return f"{statut}{detail} — {', '.join(parts)}"
+
+
+def _private_dns_view(c: dict) -> dict[str, Any]:
+    """Vue table de `dns get` : DNS personnalisé et état du DNS privé."""
+    pd = c.get("private_dns") or {}
+    etats = {d.get("domain"): d for d in pd.get("custom_domains") or []
+             if isinstance(d, dict)}
+
+    def _ligne(e: dict) -> str:
+        txt = f"{e.get('domain')} → {', '.join(e.get('servers') or [])}"
+        etat = etats.get(e.get("domain"))
+        if etat:
+            txt += f" ({_dns_statut(etat.get('status'))}"
+            txt += f" : {_dns_motif(etat['reason'])})" if etat.get("reason") else ")"
+        return txt
+
+    vue: dict[str, Any] = {
+        "DNS personnalisé": " ; ".join(_ligne(e) for e in c.get("custom_dns") or []) or None,
+        "État": _dns_statut(pd.get("status")) if pd else "aucun DNS privé ni personnalisé",
+    }
+    if pd.get("pending_reason"):
+        vue["En attente"] = _dns_motif(pd["pending_reason"])
+    if pd.get("error") or pd.get("error_code"):
+        vue["Erreur"] = pd.get("error") or _dns_motif(pd.get("error_code"))
+    if pd:
+        vue["Résolveur du VPC"] = pd.get("resolver_ip")
+        vue["Zones du VPC"] = " ; ".join(
+            f"{z.get('name')} ({_dns_statut(z.get('status'))})"
+            for z in pd.get("zones") or []) or None
+        if pd.get("excluded"):
+            vue["Zones exclues"] = " ; ".join(
+                f"{x.get('zone')} ({_dns_motif(x.get('reason'))})" for x in pd["excluded"])
+        vue["Appliqué le"] = pd.get("applied_at")
+        vue["Vérifié le"] = pd.get("checked_at")
+    return vue
+
+
+def _render_dns(c: dict, cluster_id: str) -> None:
+    if not _is_table():
+        brut = {"custom_dns": c.get("custom_dns") or [], "private_dns": c.get("private_dns")}
+        if config.get_output() == "yaml":
+            import yaml
+            print(yaml.safe_dump(brut, allow_unicode=True, sort_keys=False), end="")
+        else:
+            print(json.dumps(brut, ensure_ascii=False, indent=2, default=str))
+        return
+    render_one(_private_dns_view(c), title=f"DNS du cluster {c.get('name', cluster_id)}")
+
+
+@dns_app.command(name="get")
+def dns_get(cluster_id: str = typer.Argument(...)) -> None:
+    """Affiche le DNS personnalisé et l'état du DNS privé du cluster.
+
+    DNS privé : les zones DNS privées du VPC sont ajoutées d'office au CoreDNS
+    du cluster ; le DNS personnalisé renvoie des domaines vers vos serveurs."""
+    try:
+        c = client.get(f"/v1/k8s/clusters/{cluster_id}")
+    except client.APIError as e:
+        _fail(e)
+    _render_dns(c, cluster_id)
+
+
+def _put_custom_dns(cluster_id: str, entrees: list[dict[str, Any]]) -> dict:
+    try:
+        return client.put(f"/v1/k8s/clusters/{cluster_id}/custom-dns",
+                          json={"custom_dns": entrees}) or {}
+    except client.APIError as e:
+        _fail(e)
+
+
+@dns_app.command(name="set")
+def dns_set(
+    cluster_id: str = typer.Argument(...),
+    domain: list[str] = typer.Option(
+        ..., "--domain", "-d",
+        help=("DOMAINE=IP[,IP] : domaine résolu par 1 ou 2 de vos serveurs DNS (le "
+              "second en secours), dans un sous-réseau du VPC du cluster, port 53. "
+              f"Répétable, {CUSTOM_DNS_MAX} au plus.")),
+    yes: bool = typer.Option(False, "--yes", "-y"),
+) -> None:
+    """Définit le DNS personnalisé du cluster (remplace toute la liste).
+
+    Exemple : `cetic k8s dns set <ID> -d corp.example=10.0.1.10,10.0.1.11`.
+    Sans redémarrage : CoreDNS recharge sa configuration, active en 2 minutes au
+    plus. Pour tout retirer : `cetic k8s dns clear <ID>`."""
+    entrees = _parse_custom_dns(domain)
+    try:
+        c = client.get(f"/v1/k8s/clusters/{cluster_id}")
+    except client.APIError as e:
+        _fail(e)
+    actuelle = c.get("custom_dns") or []
+    if [{"domain": e.get("domain"), "servers": list(e.get("servers") or [])}
+            for e in actuelle] == entrees:
+        rprint("[yellow]DNS personnalisé identique : rien à changer.[/yellow]", file=sys.stderr)
+        if not _is_table():
+            _render_dns(c, cluster_id)
+        raise typer.Exit(0)
+    rprint(f"DNS personnalisé du cluster {cluster_id} :\n"
+           f"  actuel  : {_fmt_custom_dns(actuelle) or 'aucun'}\n"
+           f"  nouveau : {_fmt_custom_dns(entrees)}", file=sys.stderr)
+    if not yes and not typer.confirm("Appliquer ?", err=True):
+        raise typer.Abort()
+    c = _put_custom_dns(cluster_id, entrees)
+    if not _is_table():
+        _render_dns(c, cluster_id)
+        return
+    rprint("[green]✓[/green] DNS personnalisé enregistré (actif en 2 minutes au plus).")
+    rprint(f"[dim]Suivi : cetic k8s dns get {cluster_id}[/dim]")
+
+
+@dns_app.command(name="clear")
+def dns_clear(
+    cluster_id: str = typer.Argument(...),
+    yes: bool = typer.Option(False, "--yes", "-y"),
+) -> None:
+    """Vide le DNS personnalisé du cluster (idempotent). Les zones DNS privées
+    du VPC, ajoutées d'office, restent en place."""
+    if not yes and not typer.confirm(
+        f"Retirer tout le DNS personnalisé du cluster {cluster_id} ?", err=True
+    ):
+        raise typer.Abort()
+    c = _put_custom_dns(cluster_id, [])
+    if not _is_table():
+        _render_dns(c, cluster_id)
+        return
+    rprint("[green]✓[/green] DNS personnalisé retiré.")
 
 
 @app.command(name="attach-ip")
