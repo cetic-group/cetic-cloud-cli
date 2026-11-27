@@ -134,11 +134,14 @@ def test_ip_detach_d_une_ip_de_base_refuse_et_oriente(runner, mock_api):
 def test_ip_detach_uuid_en_majuscules_passe_par_le_lb(runner, mock_api):
     """Revue : un UUID en majuscules retombait en silence sur la route
     générique (détachement incomplet d'une IP de LB)."""
+    ip_hex = "abcdef12-3456-7890-abcd-ef1234567890"
     mock_api.get("/v1/public-ips").mock(return_value=httpx.Response(200, json=[
-        {"id": IP, "load_balancer_id": CIBLE}]))
+        {"id": ip_hex, "load_balancer_id": CIBLE}]))
     lb = mock_api.post(f"/v1/load-balancers/{CIBLE}/detach-ip").mock(
         return_value=httpx.Response(200, json={}))
-    result = runner.invoke(app, ["ip", "detach", IP.upper()])
+    mock_api.post(f"/v1/public-ips/{ip_hex.upper()}/detach").mock(
+        return_value=httpx.Response(200, json={}))
+    result = runner.invoke(app, ["ip", "detach", ip_hex.upper()])
     assert result.exit_code == 0, result.stdout + result.stderr
     assert lb.called
 
