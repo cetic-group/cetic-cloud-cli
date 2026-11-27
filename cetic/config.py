@@ -17,6 +17,7 @@ Variables d'environnement (prioritaires sur le fichier) :
 
 import json
 import os
+import re
 import stat
 from pathlib import Path
 from typing import Any
@@ -62,7 +63,7 @@ def _migrate_legacy_if_needed() -> None:
         # copie, pas à la prochaine écriture.
         # Lire AVANT de créer : un ancien fichier illisible (encodage, droits)
         # ne doit pas laisser un fichier vide, qui empêcherait toute nouvelle
-        # tentative (revue). Écriture par temporaire 0600 puis `os.link`
+        # tentative. Écriture par temporaire 0600 puis `os.link`
         # (échoue si la cible existe, comme `O_EXCL`), donc jamais partielle.
         contenu = old.read_text(encoding="utf-8")
         dossier = config_dir()
@@ -104,27 +105,69 @@ def set_value(key: str, value: str) -> None:
 
     Le fichier peut porter une clé d'API qui n'expire pas (`cetic auth login
     --api-key`) : dossier en 0700, fichier en 0600, même s'ils existaient avec
-    les droits de l'umask. Les valeurs sont échappées
-    (`json.dumps` produit une chaîne TOML valide) : un `"` ou un `\\` rendait
-    le fichier illisible, et le poste perdait TOUTE sa configuration."""
+    les droits de l'umask. Le reste du fichier est conservé tel quel
+    (`_nouveau_contenu`)."""
+    _migrate_legacy_if_needed()
+    contenu = _nouveau_contenu(key, value)
+    if contenu is None:
+        # SystemExit : message sur stderr et code 1, sans trace Python.
+        raise SystemExit(
+            f"Erreur : {config_file()} ne peut pas être réécrit sans perdre des "
+            f"valeurs (clé `{key}` sur plusieurs lignes ou entre guillemets ?). "
+            "Rien n'a été modifié : corrigez le fichier à la main.")
     dossier = config_dir()
     dossier.mkdir(mode=0o700, parents=True, exist_ok=True)
     _restreindre(dossier, 0o700)
-    data = _load_file()
-    data[key] = value
-    # `json.dumps` n'écrit du TOML valide que pour les chaînes, les entiers et
-    # les booléens. Une table ou une date ajoutée à la main rendait le fichier
-    # illisible, donc TOUTE la configuration perdue : refuser d'écrire plutôt
-    # que de la détruire (revue).
-    inconnues = [k for k, v in data.items() if not isinstance(v, (str, bool, int, float))]
-    if inconnues:
-        # SystemExit : message sur stderr et code 1, sans trace Python.
-        raise SystemExit(
-            f"Erreur : {config_file()} contient des valeurs que la CLI ne sait pas "
-            f"réécrire ({', '.join(inconnues)}). Rien n'a été modifié : retirez-les "
-            "ou modifiez le fichier à la main.")
-    lines = [f"{k} = {json.dumps(v, ensure_ascii=False)}" for k, v in data.items()]
-    _ecrire_atomique(config_file(), "\n".join(lines) + "\n", remplacer=True)
+    _ecrire_atomique(config_file(), contenu, remplacer=True)
+
+
+def reecrivable(*keys: str) -> bool:
+    """Vrai si `set_value` peut écrire ces clés. À vérifier AVANT un effet
+    côté serveur qu'on ne peut pas rejouer : le refresh token tourne à
+    chaque rafraîchissement, et un nouveau jeton non enregistré ferait
+    rejouer l'ancien, ce que la plateforme traite comme un vol (toutes les
+    sessions du compte révoquées)."""
+    try:
+        return all(_nouveau_contenu(k, "x") is not None for k in keys)
+    except Exception:
+        return False
+
+
+def _nouveau_contenu(key: str, value: str) -> str | None:
+    """Contenu du fichier avec `key = value`, ou None s'il ne peut pas être
+    produit sans perdre de valeur.
+
+    Seule la ligne `key = …` du niveau racine est remplacée (ou ajoutée) : les
+    tables, dates et commentaires ajoutés à la main restent tels quels.
+    `json.dumps` produit une chaîne TOML valide (un `"` ou un `\\` rendait le
+    fichier illisible). Un fichier déjà illisible est remplacé, comme avant."""
+    path = config_file()
+    try:
+        texte = path.read_text(encoding="utf-8") if path.exists() else ""
+        avant = tomllib.loads(texte)
+    except Exception:
+        texte, avant = "", {}
+    lignes = texte.splitlines()
+    fin_racine = next(
+        (i for i, ligne in enumerate(lignes) if ligne.lstrip().startswith("[")), len(lignes))
+    motif = re.compile(rf"^\s*{re.escape(key)}\s*=")
+    ligne = f"{key} = {json.dumps(value, ensure_ascii=False)}"
+    idx = next((i for i in range(fin_racine) if motif.match(lignes[i])), None)
+    if idx is None:
+        while fin_racine > 0 and not lignes[fin_racine - 1].strip():
+            fin_racine -= 1  # avant les lignes vides qui précèdent une table
+        lignes.insert(fin_racine, ligne)
+    else:
+        lignes[idx] = ligne
+    contenu = "\n".join(lignes) + "\n"
+    # Contrôle : le résultat se relit à l'identique, la clé en plus. Sinon
+    # (valeur sur plusieurs lignes, clé entre guillemets…), ne rien écrire.
+    try:
+        apres = tomllib.loads(contenu)
+    except Exception:
+        return None
+    avant[key] = value
+    return contenu if apres == avant else None
 
 
 def _ecrire_atomique(chemin: Path, contenu: str, *, remplacer: bool) -> None:

@@ -55,6 +55,11 @@ def _try_refresh() -> bool:
     refresh_token = config.get("refresh_token")
     if not refresh_token:
         return False
+    # Le serveur révoque l'ancien refresh token dès cet appel : si le nouveau
+    # ne peut pas être enregistré, ne pas rafraîchir. Rejouer l'ancien au
+    # lancement suivant révoquerait toutes les sessions du compte.
+    if not config.reecrivable("api_key", "refresh_token"):
+        return False
     url = config.get_api_url().rstrip("/") + "/v1/auth/refresh"
     try:
         with httpx.Client(timeout=30) as client:

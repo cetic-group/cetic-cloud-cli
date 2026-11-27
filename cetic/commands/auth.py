@@ -79,7 +79,7 @@ def login(
 
 # Clé d'API (`ccp_live_…`) ou jeton de service account (`ccp_sa_…`) : préfixe
 # puis base64 urlsafe. Toute autre forme est une erreur de collage, et un `"`
-# ou un `\` aurait en plus cassé le fichier de configuration (revue #85).
+# ou un `\` aurait en plus cassé le fichier de configuration.
 _FORME_CLE = re.compile(r"[A-Za-z0-9_\-]{16,512}")
 
 
@@ -130,7 +130,7 @@ def _verifier_cle(cle: str) -> str | None:
         detail = _detail_403(resp)
         if detail[0] == "email_non_verifie":
             # Toutes les commandes seraient refusées tant que l'adresse n'est
-            # pas vérifiée : ne rien enregistrer, et dire quoi faire (revue).
+            # pas vérifiée : ne rien enregistrer, et dire quoi faire.
             _err.print(f"[red]Clé refusée : {escape(detail[1])}[/red] Rien n'a été enregistré.")
             raise typer.Exit(1)
         # Authentifiée mais pas autorisée à lire le profil : la clé est

@@ -30,7 +30,7 @@ def runner() -> CliRunner:
 
 
 @pytest.fixture(autouse=True)
-def cfg_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def cfg_env(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory) -> None:
     """Isolation : pas de fichier config, env contrôlé."""
     monkeypatch.setenv("CCP_API_URL", API_URL)
     monkeypatch.setenv("CCP_API_KEY", "test-token")
@@ -39,6 +39,13 @@ def cfg_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "cetic.config._load_file", lambda: {}, raising=True
     )
+    # Ni lecture ni écriture du vrai `~/.ccp/config` (`set_value`, `reecrivable`).
+    from cetic import config
+
+    home = tmp_path_factory.mktemp("home")
+    monkeypatch.setattr(config.Path, "home", classmethod(lambda cls: home))
+    monkeypatch.setattr(config.platformdirs, "user_config_dir",
+                        lambda app: str(home / ".config" / app))
 
 
 @pytest.fixture

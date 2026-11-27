@@ -226,6 +226,7 @@ def test_rafraichissement_hors_environnement_temoin(mock_api, monkeypatch: pytes
     monkeypatch.setattr(client.config, "get", lambda k: "rt" if k == "refresh_token" else None)
     monkeypatch.setattr(client.config, "get_api_url", lambda: "https://api.test.cetic-group.com")
     monkeypatch.setattr(client.config, "set_value", lambda k, v: ecrits.__setitem__(k, v))
+    monkeypatch.setattr(client.config, "reecrivable", lambda *k: True)
     route = mock_api.post("/v1/auth/refresh").mock(
         return_value=httpx.Response(200, json={"access_token": "nouveau"}))
     monkeypatch.delenv("CCP_API_KEY", raising=False)
@@ -296,7 +297,7 @@ def test_ecriture_atomique_ne_suit_pas_un_lien(tmp_path, monkeypatch: pytest.Mon
 
 
 def test_migration_illisible_ne_laisse_pas_de_fichier_vide(tmp_path, monkeypatch: pytest.MonkeyPatch):
-    """Revue : un ancien fichier illisible (octet non UTF-8) ne doit pas laisser
+    """Un ancien fichier illisible (octet non UTF-8) ne doit pas laisser
     un `~/.ccp/config` vide, qui empêcherait toute nouvelle tentative. Une fois
     l'ancien fichier corrigé, la migration réussit."""
     from cetic import config
@@ -314,29 +315,71 @@ def test_migration_illisible_ne_laisse_pas_de_fichier_vide(tmp_path, monkeypatch
     assert (tmp_path / ".ccp" / "config").read_text() == 'api_key = "jeton"\n'
 
 
-def test_valeur_non_reecrivable_refusee_sans_toucher_le_fichier(
-        tmp_path, monkeypatch: pytest.MonkeyPatch):
-    """Revue : une table ajoutée à la main (`[profiles]`) ne se réécrit pas en
-    TOML par `json.dumps` ; `set_value` refuse au lieu de rendre le fichier
-    illisible (et toute la configuration perdue)."""
+def _config_tmp(tmp_path, monkeypatch, contenu: str):
     import tomllib
 
     from cetic import config
 
     (tmp_path / ".ccp").mkdir(mode=0o700)
     fichier = tmp_path / ".ccp" / "config"
-    contenu = 'region = "PAR"\n\n[profiles]\nx = "y"\n'
     fichier.write_text(contenu)
     monkeypatch.setattr(config, "config_dir", lambda: tmp_path / ".ccp")
     monkeypatch.setattr(config, "config_file", lambda: fichier)
     monkeypatch.setattr(config, "_load_file", lambda: tomllib.loads(fichier.read_text()))
+    return config, fichier
+
+
+def test_tables_ajoutees_a_la_main_conservees(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    """Une table, une date ou un commentaire ajoutés à la main ne se réécrivent
+    pas par `json.dumps` : seule la ligne de la clé change, le reste est gardé
+    tel quel (le refuser bloquait le refresh et `logout`)."""
+    import tomllib
+
+    config, fichier = _config_tmp(
+        tmp_path, monkeypatch,
+        '# perso\nregion = "PAR"\napi_key = "ancien"\nquand = 2026-01-01\n\n[profiles]\nx = "y"\n')
+    config.set_value("api_key", "nouveau")
+    config.set_value("output", "json")
+    data = tomllib.loads(fichier.read_text())
+    assert data["api_key"] == "nouveau" and data["output"] == "json"
+    assert data["profiles"] == {"x": "y"} and str(data["quand"]) == "2026-01-01"
+    assert fichier.read_text().startswith("# perso\n")
+    assert config.reecrivable("api_key", "refresh_token")
+
+
+def test_cle_non_reecrivable_refusee_sans_toucher_le_fichier(
+        tmp_path, monkeypatch: pytest.MonkeyPatch):
+    """Une clé sur plusieurs lignes ne se remplace pas ligne à ligne :
+    `set_value` refuse au lieu de rendre le fichier illisible."""
+    contenu = 'api_key = """a\nb"""\n'
+    config, fichier = _config_tmp(tmp_path, monkeypatch, contenu)
+    assert not config.reecrivable("api_key")
     with pytest.raises(SystemExit):
-        config.set_value("output", "json")
+        config.set_value("api_key", "c")
     assert fichier.read_text() == contenu
 
 
+def test_pas_de_rafraichissement_si_le_jeton_ne_peut_pas_etre_enregistre(
+        mock_api, monkeypatch: pytest.MonkeyPatch):
+    """Le serveur révoque l'ancien refresh token dès l'appel : si le nouveau ne
+    peut pas être enregistré, le rafraîchissement n'est pas tenté (rejouer
+    l'ancien révoquerait toutes les sessions du compte)."""
+    import httpx
+
+    from cetic import client
+
+    monkeypatch.setattr(client.config, "get", lambda k: "rt" if k == "refresh_token" else None)
+    monkeypatch.setattr(client.config, "get_api_url", lambda: "https://api.test.cetic-group.com")
+    monkeypatch.setattr(client.config, "reecrivable", lambda *k: False)
+    route = mock_api.post("/v1/auth/refresh").mock(
+        return_value=httpx.Response(200, json={"access_token": "nouveau", "refresh_token": "rt2"}))
+    monkeypatch.delenv("CCP_API_KEY", raising=False)
+    assert client._try_refresh() is False
+    assert not route.called
+
+
 def test_login_api_key_403_email_non_verifie_refuse(runner, mock_api, monkeypatch: pytest.MonkeyPatch):
-    """Revue : un 403 `email_non_verifie` refuserait TOUTES les commandes : la
+    """Un 403 `email_non_verifie` refuserait TOUTES les commandes : la
     clé n'est pas enregistrée et le message de l'API est affiché."""
     import httpx
 
