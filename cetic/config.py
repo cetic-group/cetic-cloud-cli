@@ -58,8 +58,15 @@ def _migrate_legacy_if_needed() -> None:
     if not old.exists():
         return
     try:
-        config_dir().mkdir(parents=True, exist_ok=True)
-        new.write_text(old.read_text(encoding="utf-8"), encoding="utf-8")
+        # Le fichier porte jeton d'accès et refresh token : 0700 / 0600 dès la
+        # copie, pas à la prochaine écriture.
+        dossier = config_dir()
+        dossier.mkdir(mode=0o700, parents=True, exist_ok=True)
+        _restreindre(dossier, 0o700)
+        fd = os.open(new, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(old.read_text(encoding="utf-8"))
+        _restreindre(new, 0o600)
     except Exception:
         pass  # best-effort — un échec de migration ne bloque pas la CLI
 
@@ -95,7 +102,7 @@ def set_value(key: str, value: str) -> None:
 
     Le fichier peut porter une clé d'API qui n'expire pas (`cetic auth login
     --api-key`) : dossier en 0700, fichier en 0600, même s'ils existaient avec
-    les droits de l'umask (revue de la PR #85). Les valeurs sont échappées
+    les droits de l'umask. Les valeurs sont échappées
     (`json.dumps` produit une chaîne TOML valide) : un `"` ou un `\\` rendait
     le fichier illisible, et le poste perdait TOUTE sa configuration."""
     dossier = config_dir()
@@ -105,9 +112,18 @@ def set_value(key: str, value: str) -> None:
     data[key] = value
     lines = [f"{k} = {json.dumps(v, ensure_ascii=False)}" for k, v in data.items()]
     chemin = config_file()
-    fd = os.open(chemin, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines) + "\n")
+    # Écriture atomique : fichier temporaire 0600 puis `os.replace`. Une
+    # interruption après `O_TRUNC` perdait toute la configuration, et un lien
+    # symbolique posé sur le fichier était suivi.
+    tmp = chemin.with_name(f".{chemin.name}.{os.getpid()}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+        os.replace(tmp, chemin)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
     _restreindre(chemin, 0o600)
 
 

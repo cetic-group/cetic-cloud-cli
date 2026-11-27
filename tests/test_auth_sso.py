@@ -43,7 +43,7 @@ def test_store_tokens_skips_empty_refresh(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_login_sans_sso_explique_et_n_appelle_pas_l_api(runner, monkeypatch: pytest.MonkeyPatch):
-    """cetic-cloud-platform#2004 : l'API refuse toujours en production un login
+    """L'API refuse toujours en production un login
     par mot de passe sans jeton anti-robot (403). La CLI ne le tente plus : elle
     oriente vers le SSO ou une clé d'API, sans demander de mot de passe."""
     appels: list[str] = []
@@ -63,7 +63,7 @@ def test_login_sans_sso_explique_et_n_appelle_pas_l_api(runner, monkeypatch: pyt
     assert stored == {}
 
 
-# ── Revue de la PR #85 ───────────────────────────────────────────────────────
+# ── Connexion par clé d'API ─────────────────────────────────────────
 
 
 def test_login_sans_option_ecrit_sur_stderr(runner):
@@ -163,7 +163,7 @@ def test_whoami_et_401_ne_renvoient_plus_vers_le_login_nu(runner, monkeypatch: p
     assert result.stdout.strip() == ""
 
 
-# ── Fichier de configuration (revue de la PR #85) ────────────────────────────
+# ── Fichier de configuration ────────────────────────────
 
 
 def test_fichier_de_config_prive_et_valeurs_echappees(tmp_path, monkeypatch: pytest.MonkeyPatch):
@@ -193,12 +193,102 @@ def test_fichier_de_config_prive_et_valeurs_echappees(tmp_path, monkeypatch: pyt
     assert data == {"region": "PAR", "api_key": 'ab"c\\d'}
 
 
-def test_pas_de_rafraichissement_quand_la_cle_vient_de_l_environnement(monkeypatch: pytest.MonkeyPatch):
+def test_pas_de_rafraichissement_quand_la_cle_vient_de_l_environnement(
+        mock_api, monkeypatch: pytest.MonkeyPatch):
     """Un 401 sur la clé de `CCP_API_KEY` ne déclenche pas de rafraîchissement,
-    qui réécrirait un fichier masqué."""
+    qui réécrirait un fichier masqué. Le rafraîchissement RÉUSSIRAIT (route
+    mockée qui rend un jeton) : sans le garde, `set_value` serait appelé et la
+    route touchée (l'ancien test passait sans le garde)."""
+    import httpx
+
     from cetic import client
 
+    ecrits: dict[str, str] = {}
     monkeypatch.setattr(client.config, "get", lambda k: "rt" if k == "refresh_token" else None)
-    monkeypatch.setattr(client.config, "set_value", lambda k, v: pytest.fail("fichier réécrit"))
+    monkeypatch.setattr(client.config, "get_api_url", lambda: "https://api.test.cetic-group.com")
+    monkeypatch.setattr(client.config, "set_value", lambda k, v: ecrits.__setitem__(k, v))
+    route = mock_api.post("/v1/auth/refresh").mock(
+        return_value=httpx.Response(200, json={"access_token": "nouveau", "refresh_token": "rt2"}))
     monkeypatch.setenv("CCP_API_KEY", "env-key")
     assert client._try_refresh() is False
+    assert not route.called
+    assert ecrits == {}
+
+
+def test_rafraichissement_hors_environnement_temoin(mock_api, monkeypatch: pytest.MonkeyPatch):
+    """Témoin du test précédent : sans `CCP_API_KEY`, le même montage
+    rafraîchit bien (le test précédent n'est donc pas vert par construction)."""
+    import httpx
+
+    from cetic import client
+
+    ecrits: dict[str, str] = {}
+    monkeypatch.setattr(client.config, "get", lambda k: "rt" if k == "refresh_token" else None)
+    monkeypatch.setattr(client.config, "get_api_url", lambda: "https://api.test.cetic-group.com")
+    monkeypatch.setattr(client.config, "set_value", lambda k, v: ecrits.__setitem__(k, v))
+    route = mock_api.post("/v1/auth/refresh").mock(
+        return_value=httpx.Response(200, json={"access_token": "nouveau"}))
+    monkeypatch.delenv("CCP_API_KEY", raising=False)
+    assert client._try_refresh() is True
+    assert route.called
+    assert ecrits.get("api_key") == "nouveau"
+
+
+def test_login_api_key_403_enregistre_avec_avertissement(
+        runner, mock_api, monkeypatch: pytest.MonkeyPatch):
+    """un 403 sur le profil (clé sans scope `read`, compte
+    de service sans `auth:GetProfile`) n'est pas « clé refusée » : la clé est
+    authentique, elle est enregistrée avec un avertissement."""
+    import httpx
+
+    stored: dict[str, str] = {}
+    monkeypatch.setattr(auth_cmd.config, "set_value", lambda k, v: stored.__setitem__(k, v))
+    monkeypatch.delenv("CCP_API_KEY", raising=False)
+    mock_api.get("/v1/tenants/me").mock(return_value=httpx.Response(403, json={"detail": "Forbidden"}))
+    result = runner.invoke(app, ["auth", "login", "--api-key"], input=f"{CLE}\n")
+    assert result.exit_code == 0, result.stdout + result.stderr
+    assert stored == {"api_key": CLE, "refresh_token": ""}
+    assert "lire le profil" in result.stderr
+    assert "Clé refusée" not in result.stderr
+
+
+def test_migration_legacy_en_0600(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    """le fichier migré (jeton + refresh token) naît en
+    0600 dans un dossier 0700, même si l'ancien était en 0644."""
+    import os
+    import stat
+
+    from cetic import config
+
+    ancien = tmp_path / "legacy" / "config.toml"
+    ancien.parent.mkdir()
+    ancien.write_text('api_key = "jeton"\n')
+    os.chmod(ancien, 0o644)
+    monkeypatch.setattr(config, "config_dir", lambda: tmp_path / ".ccp")
+    monkeypatch.setattr(config, "config_file", lambda: tmp_path / ".ccp" / "config")
+    monkeypatch.setattr(config, "_legacy_config_file", lambda: ancien)
+    config._migrate_legacy_if_needed()
+    nouveau = tmp_path / ".ccp" / "config"
+    assert nouveau.read_text() == 'api_key = "jeton"\n'
+    assert stat.S_IMODE(nouveau.stat().st_mode) == 0o600
+    assert stat.S_IMODE((tmp_path / ".ccp").stat().st_mode) == 0o700
+
+
+def test_ecriture_atomique_ne_suit_pas_un_lien(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    """Un lien symbolique posé sur le fichier de configuration est remplacé,
+    sa cible n'est pas écrasée."""
+    import tomllib
+
+    from cetic import config
+
+    cible = tmp_path / "ailleurs"
+    cible.write_text("intact\n")
+    (tmp_path / ".ccp").mkdir(mode=0o700)
+    (tmp_path / ".ccp" / "config").symlink_to(cible)
+    monkeypatch.setattr(config, "config_dir", lambda: tmp_path / ".ccp")
+    monkeypatch.setattr(config, "config_file", lambda: tmp_path / ".ccp" / "config")
+    monkeypatch.setattr(config, "_load_file", lambda: {})
+    config.set_value("region", "PAR")
+    assert cible.read_text() == "intact\n"
+    assert not (tmp_path / ".ccp" / "config").is_symlink()
+    assert tomllib.loads((tmp_path / ".ccp" / "config").read_text()) == {"region": "PAR"}

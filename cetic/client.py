@@ -49,7 +49,7 @@ def _try_refresh() -> bool:
     récursion de refresh. Retourne True si un nouveau token a été persisté.
     """
     # Une clé de `CCP_API_KEY` prime sur le fichier : un rafraîchissement ne
-    # peut rien pour elle, et réécrirait un fichier masqué (revue de la PR #85).
+    # peut rien pour elle, et réécrirait un fichier masqué.
     if os.environ.get("CCP_API_KEY"):
         return False
     refresh_token = config.get("refresh_token")

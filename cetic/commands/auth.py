@@ -15,6 +15,7 @@ import httpx
 import typer
 from rich import print as rprint
 from rich.console import Console
+from rich.markup import escape
 
 from cetic import client, config
 from cetic._auth_hint import CONNEXION
@@ -61,7 +62,7 @@ def login(
     # de la page de connexion de la console : l'API la refuse toujours en
     # production à un client qui n'est pas un navigateur (403 « Vérification
     # anti-robot échouée »). La CLI ne la propose donc plus
-    # (cetic-cloud-platform#2004). Message sur stderr : la sortie standard
+    #. Message sur stderr : la sortie standard
     # reste propre pour un script.
     _err.print(
         "[red]La connexion par e-mail et mot de passe n'est pas disponible "
@@ -101,14 +102,22 @@ def _login_api_key() -> None:
     # un 401 déclencherait un rafraîchissement qui remplacerait la clé.
     config.set_value("api_key", cle)
     config.set_value("refresh_token", "")
-    rprint(f"[green]Clé d'API enregistrée[/green] (compte {email}).")
+    if email is None:
+        rprint("[green]Clé d'API enregistrée.[/green]")
+        _err.print("[yellow]⚠ La clé est authentique mais n'a pas le droit de lire le profil "
+                   "du compte (scope ou rôle restreint) : les commandes hors de ses droits "
+                   "seront refusées.[/yellow]")
+    else:
+        rprint(f"[green]Clé d'API enregistrée[/green] (compte {escape(email)}).")
 
 
-def _verifier_cle(cle: str) -> str:
+def _verifier_cle(cle: str) -> str | None:
     """`GET /v1/tenants/me` avec CETTE clé, hors de `client._request` (aucun
     rafraîchissement, aucune lecture de la configuration). Rend l'e-mail du
-    compte ; sort en 1 sans rien écrire si la clé est refusée ou si l'API est
-    injoignable."""
+    compte, ou None si la clé est authentique mais sans droit de lire le
+    profil (403 : clé sans scope `read`, jeton de compte de service sans
+    `auth:GetProfile`). Sort en 1 sans rien écrire si la clé est refusée (401)
+    ou si l'API est injoignable."""
     from cetic import __version__  # import local : évite le cycle cetic → commands
 
     url = config.get_api_url().rstrip("/") + "/v1/tenants/me"
@@ -121,7 +130,11 @@ def _verifier_cle(cle: str) -> str:
         _err.print(f"[red]API injoignable ({type(exc).__name__}) : la clé n'a pas pu être "
                    "vérifiée. Rien n'a été enregistré.[/red]")
         raise typer.Exit(1) from None
-    if resp.status_code in (401, 403):
+    if resp.status_code == 403:
+        # Authentifiée mais pas autorisée à lire le profil : la clé est valide
+        #, `export CCP_API_KEY=…` fonctionnerait.
+        return None
+    if resp.status_code == 401:
         _err.print("[red]Clé refusée par l'API[/red] (inconnue, révoquée ou expirée). "
                    "Rien n'a été enregistré.")
         raise typer.Exit(1)
@@ -138,7 +151,7 @@ def _verifier_cle(cle: str) -> str:
 def _avertir_si_env() -> None:
     """`CCP_API_KEY` est lue avant le fichier de configuration : la signaler,
     sinon l'identifiant qui vient d'être enregistré serait ignoré en silence
-    (revue de la PR #85)."""
+   ."""
     if os.environ.get("CCP_API_KEY"):
         _err.print("[yellow]⚠ La variable CCP_API_KEY est définie : elle prime sur "
                    "l'identifiant enregistré. `unset CCP_API_KEY` pour utiliser celui-ci.[/yellow]")
@@ -228,7 +241,9 @@ def _login_sso(provider: str) -> None:
         server.shutdown()
 
     if result.get("error"):
-        _err.print(f"[red]Erreur SSO : {result['error']}[/red]")
+        # Valeur reçue dans l'URL de rappel : un `[` serait lu comme du
+        # balisage Rich.
+        _err.print(f"[red]Erreur SSO : {escape(result['error'])}[/red]")
         raise typer.Exit(1)
     if not result.get("access_token"):
         _err.print("[red]Erreur : aucun jeton reçu du fournisseur.[/red]")
