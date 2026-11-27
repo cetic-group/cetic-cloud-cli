@@ -111,7 +111,7 @@ def _tags(tag: list[str], label: list[str]) -> list[str]:
     option, était ignoré par l'API ; il reste accepté et devient le tag
     `key:value`.
 
-    Compatibilité (revue) : un label qui ne donne pas un tag valide
+    Compatibilité : un label qui ne donne pas un tag valide
     (`owner=Jean Dupont`, `url=https://x?y`) est ignoré avec un avertissement,
     comme l'API l'ignorait, au lieu de faire échouer la commande en 422 ; et
     `--label` sans `=` reste refusé, comme avant."""
@@ -378,8 +378,12 @@ def update(
     body: dict[str, Any] = {}
     if description is not None:
         body["description"] = description if description else None
-    if tag or label:
-        body["tags"] = _tags(tag, label)
+    # Seulement si au moins un tag reste : l'API remplace la liste, et un
+    # `--label` entièrement ignoré enverrait `tags: []`, ce qui effacerait les
+    # tags existants alors que le message dit « ignoré ».
+    tags = _tags(tag, label)
+    if tags:
+        body["tags"] = tags
     if not body:
         rprint("[yellow]Rien à modifier (passez --description ou --tag).[/yellow]")
         raise typer.Exit(0)

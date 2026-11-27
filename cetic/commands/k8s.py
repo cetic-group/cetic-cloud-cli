@@ -830,13 +830,13 @@ def create(
                 _fail(e)
             # Avec `--template`, la liste ne sert qu'à lire la version et l'OS
             # du template : son échec (droit IAM manquant…) n'empêche pas une
-            # création qui donne `--version` (revue).
+            # création qui donne `--version`.
             templates = []
         if os_template_key:
             # `--template` fourni : sa version (pas la plus récente de la
             # région) et son OS. ⚠️ `os_key` (`kube-v1-34-8`) ne porte PAS
             # l'OS : flatcar, ubuntu et rocky10 en 1.34.8 partagent la même
-            # clé. L'entrée se cherche donc sur le couple (clé, OS) (revue).
+            # clé. L'entrée se cherche donc sur le couple (clé, OS).
             entrees = [t for t in templates if t.get("os_key") == os_template_key]
             if os_norm is None:
                 oses = {t.get("os") or "flatcar" for t in entrees}

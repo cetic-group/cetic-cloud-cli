@@ -22,7 +22,7 @@ def test_secret_tags_et_ancien_label(runner, mock_api):
 
 
 def test_ancien_label_invalide_ignore_avec_avertissement(runner, mock_api):
-    """Revue : `--label "owner=Jean Dupont"` passait (l'API ignorait les
+    """`--label "owner=Jean Dupont"` passait (l'API ignorait les
     labels) ; converti en tag invalide, il ferait échouer la commande en 422.
     Il est ignoré avec un avertissement, les autres tags partent."""
     route = mock_api.post("/v1/secrets").mock(return_value=httpx.Response(201, json={
@@ -145,3 +145,34 @@ def test_service_account_expires_in_days_et_expires_at_exclusifs(runner, mock_ap
     assert result.exit_code == 2
     assert "pas les deux" in result.stderr
     assert not post.called
+
+
+SID = "44444444-4444-4444-4444-444444444444"
+
+
+def test_update_label_ignore_ne_vide_pas_les_tags(runner, mock_api):
+    """Un `--label` entièrement ignoré ne doit pas envoyer `tags: []` : l'API
+    remplace la liste et effacerait les tags existants."""
+    route = mock_api.patch(f"/v1/secrets/{SID}").mock(return_value=httpx.Response(200, json={
+        "id": SID, "name": "db"}))
+    result = runner.invoke(app, ["secret", "update", SID, "--label", "owner=Jean Dupont"])
+    assert result.exit_code == 0, result.stdout + result.stderr
+    assert not route.called
+    assert "ignoré" in result.stdout and "Rien à modifier" in result.stdout
+
+
+def test_update_label_ignore_avec_description_sans_tags(runner, mock_api):
+    route = mock_api.patch(f"/v1/secrets/{SID}").mock(return_value=httpx.Response(200, json={
+        "id": SID, "name": "db"}))
+    result = runner.invoke(app, ["secret", "update", SID, "--label", "owner=Jean Dupont",
+                                 "--description", "base"])
+    assert result.exit_code == 0, result.stdout + result.stderr
+    assert json.loads(route.calls.last.request.content) == {"description": "base"}
+
+
+def test_update_label_valide_remplace_les_tags(runner, mock_api):
+    route = mock_api.patch(f"/v1/secrets/{SID}").mock(return_value=httpx.Response(200, json={
+        "id": SID, "name": "db"}))
+    result = runner.invoke(app, ["secret", "update", SID, "--label", "app=web"])
+    assert result.exit_code == 0, result.stdout + result.stderr
+    assert json.loads(route.calls.last.request.content) == {"tags": ["app:web"]}
